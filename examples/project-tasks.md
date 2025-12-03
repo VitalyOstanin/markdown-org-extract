@@ -2,11 +2,11 @@
 
 ## Sprint Planning
 
-### TODO Design database schema
+### TODO [#A] Design database schema
 `SCHEDULED: <2024-12-05 Ср>`
 Need to finalize the database structure before implementation.
 
-### TODO Setup CI/CD pipeline
+### TODO [#B] Setup CI/CD pipeline
 `DEADLINE: <2024-12-10 Sun>`
 Configure GitHub Actions for automated testing and deployment.
 
@@ -16,12 +16,12 @@ Repository created and initial structure set up.
 
 ## Development Tasks
 
-### TODO Implement user authentication
+### TODO [#A] Implement user authentication
 `SCHEDULED: <2024-12-08 Fri>`
 `DEADLINE: <2024-12-15 Вс>`
 Add JWT-based authentication system.
 
-### TODO Write API documentation
+### TODO [#C] Write API documentation
 Need to document all REST endpoints.
 
 ### DONE Setup development environment

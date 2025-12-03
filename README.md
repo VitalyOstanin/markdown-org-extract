@@ -137,6 +137,24 @@ markdown-extract --dir ./notes --locale en
 ### DONE Complete task
 ```
 
+### Приоритеты задач
+
+Поддерживаются приоритеты в формате org-mode (буквы A-Z в квадратных скобках):
+
+```markdown
+### TODO [#A] Критическая задача
+### TODO [#B] Важная задача
+### TODO [#C] Обычная задача
+### DONE [#A] Завершенная задача высокого приоритета
+```
+
+Приоритет указывается после метки TODO/DONE и перед текстом задачи. Наиболее распространенные приоритеты:
+- `[#A]` - высокий приоритет (критические задачи)
+- `[#B]` - средний приоритет (важные задачи)
+- `[#C]` - низкий приоритет (обычные задачи)
+
+Приоритет является необязательным параметром.
+
 ### Временные метки
 
 Временные метки должны быть заключены в обратные кавычки:
@@ -201,6 +219,7 @@ markdown-extract --dir ./notes --locale en
     "heading": "Task title",
     "content": "Task description",
     "task_type": "TODO",
+    "priority": "A",
     "timestamp": "DEADLINE: <2024-12-15 Sun>"
   }
 ]
@@ -214,6 +233,7 @@ markdown-extract --dir ./notes --locale en
 ## Task title
 **File:** /path/to/file.md:42
 **Type:** TODO
+**Priority:** [#A]
 **Time:** DEADLINE: <2024-12-15 Sun>
 
 Task description
@@ -226,6 +246,7 @@ Task description
 <h2>Task title</h2>
 <p><strong>File:</strong> /path/to/file.md:42</p>
 <p><strong>Type:</strong> TODO</p>
+<p><strong>Priority:</strong> [#A]</p>
 <p><strong>Time:</strong> DEADLINE: <2024-12-15 Sun></p>
 <p>Task description</p>
 </body></html>

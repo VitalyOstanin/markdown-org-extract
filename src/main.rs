@@ -35,6 +35,7 @@ struct Task {
     heading: String,
     content: String,
     task_type: Option<String>,
+    priority: Option<String>,
     timestamp: Option<String>,
 }
 
@@ -119,7 +120,7 @@ fn extract_tasks(path: &PathBuf, content: &str, mappings: &[(&str, &str)]) -> Ve
     let root = parse_document(&arena, content, &Options::default());
 
     let mut tasks = Vec::new();
-    let mut current_heading: Option<(String, Option<String>, u32)> = None;
+    let mut current_heading: Option<(String, Option<String>, Option<String>, u32)> = None;
     
     for node in root.children() {
         process_top_level_node(node, path, &mut tasks, &mut current_heading, mappings);
@@ -132,18 +133,18 @@ fn process_top_level_node<'a>(
     node: &'a AstNode<'a>,
     path: &PathBuf,
     tasks: &mut Vec<Task>,
-    current_heading: &mut Option<(String, Option<String>, u32)>,
+    current_heading: &mut Option<(String, Option<String>, Option<String>, u32)>,
     mappings: &[(&str, &str)],
 ) {
     match &node.data.borrow().value {
         NodeValue::Heading(_) => {
             let text = extract_text(node);
-            let (task_type, heading) = parse_heading(&text);
+            let (task_type, priority, heading) = parse_heading(&text);
             let line = node.data.borrow().sourcepos.start.line as u32;
-            *current_heading = Some((heading, task_type, line));
+            *current_heading = Some((heading, task_type, priority, line));
         }
         NodeValue::Paragraph => {
-            if let Some((heading, task_type, line)) = current_heading {
+            if let Some((heading, task_type, priority, line)) = current_heading {
                 if let Some(timestamp) = extract_timestamp_from_node(node, mappings) {
                     let content = extract_paragraph_text(node);
                     tasks.push(Task {
@@ -152,6 +153,7 @@ fn process_top_level_node<'a>(
                         heading: heading.clone(),
                         content,
                         task_type: task_type.clone(),
+                        priority: priority.clone(),
                         timestamp: Some(timestamp),
                     });
                     *current_heading = None;
@@ -163,7 +165,7 @@ fn process_top_level_node<'a>(
     
     // Also check if heading itself should be added (TODO/DONE without timestamp)
     if let NodeValue::Heading(_) = &node.data.borrow().value {
-        if let Some((heading, Some(task_type), line)) = current_heading {
+        if let Some((heading, Some(task_type), priority, line)) = current_heading {
             // Check next sibling for timestamp
             let mut has_timestamp = false;
             if let Some(next) = node.next_sibling() {
@@ -181,6 +183,7 @@ fn process_top_level_node<'a>(
                     heading: heading.clone(),
                     content: String::new(),
                     task_type: Some(task_type.clone()),
+                    priority: priority.clone(),
                     timestamp: None,
                 });
                 *current_heading = None;
@@ -189,12 +192,15 @@ fn process_top_level_node<'a>(
     }
 }
 
-fn parse_heading(text: &str) -> (Option<String>, String) {
-    let re = Regex::new(r"^(TODO|DONE)\s+(.+)$").unwrap();
+fn parse_heading(text: &str) -> (Option<String>, Option<String>, String) {
+    let re = Regex::new(r"^(TODO|DONE)\s+(?:\[#([A-Z])\]\s+)?(.+)$").unwrap();
     if let Some(caps) = re.captures(text) {
-        (Some(caps[1].to_string()), caps[2].to_string())
+        let task_type = Some(caps[1].to_string());
+        let priority = caps.get(2).map(|m| m.as_str().to_string());
+        let heading = caps[3].to_string();
+        (task_type, priority, heading)
     } else {
-        (None, text.to_string())
+        (None, None, text.to_string())
     }
 }
 
@@ -281,6 +287,9 @@ fn render_markdown(tasks: &[Task]) -> String {
         if let Some(ref t) = task.task_type {
             output.push_str(&format!("**Type:** {}\n", t));
         }
+        if let Some(ref p) = task.priority {
+            output.push_str(&format!("**Priority:** [#{}]\n", p));
+        }
         if let Some(ref ts) = task.timestamp {
             output.push_str(&format!("**Time:** {}\n", ts));
         }
@@ -297,6 +306,9 @@ fn render_html(tasks: &[Task]) -> String {
         if let Some(ref t) = task.task_type {
             output.push_str(&format!("<p><strong>Type:</strong> {}</p>\n", t));
         }
+        if let Some(ref p) = task.priority {
+            output.push_str(&format!("<p><strong>Priority:</strong> [#{}]</p>\n", p));
+        }
         if let Some(ref ts) = task.timestamp {
             output.push_str(&format!("<p><strong>Time:</strong> {}</p>\n", ts));
         }
@@ -304,4 +316,51 @@ fn render_html(tasks: &[Task]) -> String {
     }
     output.push_str("</body></html>");
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_heading_with_priority() {
+        let (task_type, priority, heading) = parse_heading("TODO [#A] High priority task");
+        assert_eq!(task_type, Some("TODO".to_string()));
+        assert_eq!(priority, Some("A".to_string()));
+        assert_eq!(heading, "High priority task");
+    }
+
+    #[test]
+    fn test_parse_heading_without_priority() {
+        let (task_type, priority, heading) = parse_heading("TODO Regular task");
+        assert_eq!(task_type, Some("TODO".to_string()));
+        assert_eq!(priority, None);
+        assert_eq!(heading, "Regular task");
+    }
+
+    #[test]
+    fn test_parse_heading_done_with_priority() {
+        let (task_type, priority, heading) = parse_heading("DONE [#B] Completed task");
+        assert_eq!(task_type, Some("DONE".to_string()));
+        assert_eq!(priority, Some("B".to_string()));
+        assert_eq!(heading, "Completed task");
+    }
+
+    #[test]
+    fn test_parse_heading_no_task_type() {
+        let (task_type, priority, heading) = parse_heading("Just a heading");
+        assert_eq!(task_type, None);
+        assert_eq!(priority, None);
+        assert_eq!(heading, "Just a heading");
+    }
+
+    #[test]
+    fn test_parse_heading_various_priorities() {
+        for letter in 'A'..='Z' {
+            let input = format!("TODO [#{}] Task", letter);
+            let (task_type, priority, _) = parse_heading(&input);
+            assert_eq!(task_type, Some("TODO".to_string()));
+            assert_eq!(priority, Some(letter.to_string()));
+        }
+    }
 }

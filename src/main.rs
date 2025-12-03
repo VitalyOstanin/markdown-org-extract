@@ -57,6 +57,46 @@ struct Task {
     timestamp: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct ParsedTimestamp {
+    timestamp_type: TimestampType,
+    date: NaiveDate,
+    #[allow(dead_code)]
+    time: Option<String>,
+    end_date: Option<NaiveDate>,
+    #[allow(dead_code)]
+    end_time: Option<String>,
+    repeater: Option<Repeater>,
+    warning: Option<Warning>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum TimestampType {
+    Scheduled,
+    Deadline,
+    Closed,
+    Plain,
+}
+
+#[derive(Debug, Clone)]
+struct Repeater {
+    interval: i64,
+    unit: RepeatUnit,
+}
+
+#[derive(Debug, Clone)]
+enum RepeatUnit {
+    Day,
+    Week,
+    Month,
+    Year,
+}
+
+#[derive(Debug, Clone)]
+struct Warning {
+    days: i64,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let mappings = get_weekday_mappings(&cli.locale);
@@ -170,28 +210,204 @@ fn get_current_week(tz: &Tz) -> (NaiveDate, NaiveDate) {
 
 fn task_matches_date(task: &Task, target_date: &NaiveDate) -> bool {
     if let Some(ref ts) = task.timestamp {
-        extract_date_from_timestamp(ts)
-            .map(|d| d == *target_date)
-            .unwrap_or(false)
-    } else {
-        false
+        if let Some(parsed) = parse_org_timestamp(ts) {
+            return timestamp_matches_date(&parsed, target_date);
+        }
     }
+    false
 }
 
 fn task_in_range(task: &Task, start: &NaiveDate, end: &NaiveDate) -> bool {
     if let Some(ref ts) = task.timestamp {
-        extract_date_from_timestamp(ts)
-            .map(|d| d >= *start && d <= *end)
-            .unwrap_or(false)
-    } else {
-        false
+        if let Some(parsed) = parse_org_timestamp(ts) {
+            return timestamp_in_range(&parsed, start, end);
+        }
+    }
+    false
+}
+
+fn timestamp_matches_date(parsed: &ParsedTimestamp, target_date: &NaiveDate) -> bool {
+    match parsed.timestamp_type {
+        TimestampType::Deadline => {
+            // DEADLINE shows warning days before
+            let warning_days = parsed.warning.as_ref().map(|w| w.days).unwrap_or(14); // default 14 days
+            let warning_start = parsed.date - chrono::Duration::days(warning_days);
+            *target_date >= warning_start && *target_date <= parsed.date
+        }
+        TimestampType::Scheduled => {
+            // SCHEDULED shows from date onwards (with repeater support)
+            if let Some(ref repeater) = parsed.repeater {
+                check_repeater_match(&parsed.date, repeater, target_date)
+            } else {
+                *target_date >= parsed.date
+            }
+        }
+        TimestampType::Closed => {
+            // CLOSED shows only on exact date
+            parsed.date == *target_date
+        }
+        TimestampType::Plain => {
+            // Plain timestamp or date range
+            if let Some(end_date) = parsed.end_date {
+                *target_date >= parsed.date && *target_date <= end_date
+            } else {
+                parsed.date == *target_date
+            }
+        }
     }
 }
 
+fn timestamp_in_range(parsed: &ParsedTimestamp, start: &NaiveDate, end: &NaiveDate) -> bool {
+    match parsed.timestamp_type {
+        TimestampType::Deadline => {
+            let warning_days = parsed.warning.as_ref().map(|w| w.days).unwrap_or(14);
+            let warning_start = parsed.date - chrono::Duration::days(warning_days);
+            !(parsed.date < *start || warning_start > *end)
+        }
+        TimestampType::Scheduled => {
+            if let Some(ref repeater) = parsed.repeater {
+                check_repeater_in_range(&parsed.date, repeater, start, end)
+            } else {
+                parsed.date >= *start && parsed.date <= *end
+            }
+        }
+        TimestampType::Closed => {
+            parsed.date >= *start && parsed.date <= *end
+        }
+        TimestampType::Plain => {
+            if let Some(end_date) = parsed.end_date {
+                !(end_date < *start || parsed.date > *end)
+            } else {
+                parsed.date >= *start && parsed.date <= *end
+            }
+        }
+    }
+}
+
+fn check_repeater_match(base_date: &NaiveDate, repeater: &Repeater, target_date: &NaiveDate) -> bool {
+    if *target_date < *base_date {
+        return false;
+    }
+    
+    let days_diff = (*target_date - *base_date).num_days();
+    let interval_days = match repeater.unit {
+        RepeatUnit::Day => repeater.interval,
+        RepeatUnit::Week => repeater.interval * 7,
+        RepeatUnit::Month => repeater.interval * 30, // approximate
+        RepeatUnit::Year => repeater.interval * 365, // approximate
+    };
+    
+    days_diff % interval_days == 0
+}
+
+fn check_repeater_in_range(base_date: &NaiveDate, repeater: &Repeater, start: &NaiveDate, end: &NaiveDate) -> bool {
+    if *base_date > *end {
+        return false;
+    }
+    
+    let mut current = *base_date;
+    while current <= *end {
+        if current >= *start && current <= *end {
+            return true;
+        }
+        current = match repeater.unit {
+            RepeatUnit::Day => current + chrono::Duration::days(repeater.interval),
+            RepeatUnit::Week => current + chrono::Duration::weeks(repeater.interval),
+            RepeatUnit::Month => {
+                let month = current.month() as i64 + repeater.interval;
+                let year = current.year() as i64 + (month - 1) / 12;
+                let month = ((month - 1) % 12 + 1) as u32;
+                NaiveDate::from_ymd_opt(year as i32, month, current.day()).unwrap_or(current)
+            }
+            RepeatUnit::Year => {
+                NaiveDate::from_ymd_opt(
+                    current.year() + repeater.interval as i32,
+                    current.month(),
+                    current.day()
+                ).unwrap_or(current)
+            }
+        };
+    }
+    false
+}
+
+#[allow(dead_code)]
 fn extract_date_from_timestamp(ts: &str) -> Option<NaiveDate> {
     let re = Regex::new(r"(\d{4}-\d{2}-\d{2})").unwrap();
     re.captures(ts)
         .and_then(|caps| NaiveDate::parse_from_str(&caps[1], "%Y-%m-%d").ok())
+}
+
+fn parse_org_timestamp(ts: &str) -> Option<ParsedTimestamp> {
+    // Determine timestamp type
+    let timestamp_type = if ts.contains("SCHEDULED:") {
+        TimestampType::Scheduled
+    } else if ts.contains("DEADLINE:") {
+        TimestampType::Deadline
+    } else if ts.contains("CLOSED:") {
+        TimestampType::Closed
+    } else {
+        TimestampType::Plain
+    };
+
+    // Extract date range: <date>--<date>
+    let range_re = Regex::new(r"<(\d{4}-\d{2}-\d{2})(?: [A-Za-z]+)?(?: (\d{1,2}:\d{2})(?:-(\d{1,2}:\d{2}))?)?(?:\s+([+.]+\d+[dwmy]))?(?:\s+-(\d+)d)?>--<(\d{4}-\d{2}-\d{2})(?: [A-Za-z]+)?(?: (\d{1,2}:\d{2})(?:-(\d{1,2}:\d{2}))?)?>").unwrap();
+    
+    if let Some(caps) = range_re.captures(ts) {
+        let date = NaiveDate::parse_from_str(&caps[1], "%Y-%m-%d").ok()?;
+        let time = caps.get(2).map(|m| m.as_str().to_string());
+        let end_date = NaiveDate::parse_from_str(&caps[6], "%Y-%m-%d").ok();
+        let end_time = caps.get(7).map(|m| m.as_str().to_string());
+        let repeater = caps.get(4).and_then(|m| parse_repeater(m.as_str()));
+        let warning = caps.get(5).map(|m| Warning { days: m.as_str().parse().unwrap_or(0) });
+        
+        return Some(ParsedTimestamp {
+            timestamp_type,
+            date,
+            time,
+            end_date,
+            end_time,
+            repeater,
+            warning,
+        });
+    }
+
+    // Extract single timestamp: <date time repeater warning>
+    let single_re = Regex::new(r"<(\d{4}-\d{2}-\d{2})(?: [A-Za-z]+)?(?: (\d{1,2}:\d{2})(?:-(\d{1,2}:\d{2}))?)?(?:\s+([+.]+\d+[dwmy]))?(?:\s+-(\d+)d)?>").unwrap();
+    
+    if let Some(caps) = single_re.captures(ts) {
+        let date = NaiveDate::parse_from_str(&caps[1], "%Y-%m-%d").ok()?;
+        let time = caps.get(2).map(|m| m.as_str().to_string());
+        let end_time = caps.get(3).map(|m| m.as_str().to_string());
+        let repeater = caps.get(4).and_then(|m| parse_repeater(m.as_str()));
+        let warning = caps.get(5).map(|m| Warning { days: m.as_str().parse().unwrap_or(0) });
+        
+        return Some(ParsedTimestamp {
+            timestamp_type,
+            date,
+            time,
+            end_date: None,
+            end_time,
+            repeater,
+            warning,
+        });
+    }
+
+    None
+}
+
+fn parse_repeater(s: &str) -> Option<Repeater> {
+    let re = Regex::new(r"[+.](\d+)([dwmy])").unwrap();
+    let caps = re.captures(s)?;
+    let interval: i64 = caps[1].parse().ok()?;
+    let unit = match &caps[2] {
+        "d" => RepeatUnit::Day,
+        "w" => RepeatUnit::Week,
+        "m" => RepeatUnit::Month,
+        "y" => RepeatUnit::Year,
+        _ => return None,
+    };
+    Some(Repeater { interval, unit })
 }
 
 
@@ -512,5 +728,205 @@ mod tests {
         let mappings = vec![];
         let result = extract_created("`DEADLINE: <2024-12-01 Mon>`", &mappings);
         assert_eq!(result, None);
+    }
+
+    // Org-mode timestamp parsing tests
+    #[test]
+    fn test_parse_deadline_with_warning() {
+        let ts = "DEADLINE: <2024-12-15 Sun -7d>";
+        let parsed = parse_org_timestamp(ts).unwrap();
+        assert_eq!(parsed.timestamp_type, TimestampType::Deadline);
+        assert_eq!(parsed.date, NaiveDate::from_ymd_opt(2024, 12, 15).unwrap());
+        assert_eq!(parsed.warning.unwrap().days, 7);
+    }
+
+    #[test]
+    fn test_parse_scheduled_with_repeater() {
+        let ts = "SCHEDULED: <2024-12-01 Mon +1w>";
+        let parsed = parse_org_timestamp(ts).unwrap();
+        assert_eq!(parsed.timestamp_type, TimestampType::Scheduled);
+        assert_eq!(parsed.date, NaiveDate::from_ymd_opt(2024, 12, 1).unwrap());
+        assert!(parsed.repeater.is_some());
+        let repeater = parsed.repeater.unwrap();
+        assert_eq!(repeater.interval, 1);
+    }
+
+    #[test]
+    fn test_parse_date_range() {
+        let ts = "<2024-12-20 Fri>--<2024-12-22 Sun>";
+        let parsed = parse_org_timestamp(ts).unwrap();
+        assert_eq!(parsed.date, NaiveDate::from_ymd_opt(2024, 12, 20).unwrap());
+        assert_eq!(parsed.end_date, Some(NaiveDate::from_ymd_opt(2024, 12, 22).unwrap()));
+    }
+
+    #[test]
+    fn test_parse_timestamp_with_time() {
+        let ts = "<2024-12-05 Wed 10:00-12:00>";
+        let parsed = parse_org_timestamp(ts).unwrap();
+        assert_eq!(parsed.date, NaiveDate::from_ymd_opt(2024, 12, 5).unwrap());
+        assert_eq!(parsed.time, Some("10:00".to_string()));
+        assert_eq!(parsed.end_time, Some("12:00".to_string()));
+    }
+
+    // Deadline warning logic tests
+    #[test]
+    fn test_deadline_shows_before_date() {
+        let parsed = ParsedTimestamp {
+            timestamp_type: TimestampType::Deadline,
+            date: NaiveDate::from_ymd_opt(2024, 12, 15).unwrap(),
+            time: None,
+            end_date: None,
+            end_time: None,
+            repeater: None,
+            warning: Some(Warning { days: 7 }),
+        };
+        
+        // Should show 7 days before
+        let target = NaiveDate::from_ymd_opt(2024, 12, 10).unwrap();
+        assert!(timestamp_matches_date(&parsed, &target));
+        
+        // Should show on deadline day
+        let target = NaiveDate::from_ymd_opt(2024, 12, 15).unwrap();
+        assert!(timestamp_matches_date(&parsed, &target));
+        
+        // Should NOT show 8 days before
+        let target = NaiveDate::from_ymd_opt(2024, 12, 7).unwrap();
+        assert!(!timestamp_matches_date(&parsed, &target));
+        
+        // Should NOT show after deadline
+        let target = NaiveDate::from_ymd_opt(2024, 12, 16).unwrap();
+        assert!(!timestamp_matches_date(&parsed, &target));
+    }
+
+    #[test]
+    fn test_deadline_default_warning() {
+        let parsed = ParsedTimestamp {
+            timestamp_type: TimestampType::Deadline,
+            date: NaiveDate::from_ymd_opt(2024, 12, 15).unwrap(),
+            time: None,
+            end_date: None,
+            end_time: None,
+            repeater: None,
+            warning: None, // No warning specified, should use default 14 days
+        };
+        
+        // Should show 14 days before (default)
+        let target = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        assert!(timestamp_matches_date(&parsed, &target));
+    }
+
+    // Scheduled logic tests
+    #[test]
+    fn test_scheduled_shows_from_date() {
+        let parsed = ParsedTimestamp {
+            timestamp_type: TimestampType::Scheduled,
+            date: NaiveDate::from_ymd_opt(2024, 12, 10).unwrap(),
+            time: None,
+            end_date: None,
+            end_time: None,
+            repeater: None,
+            warning: None,
+        };
+        
+        // Should NOT show before scheduled date
+        let target = NaiveDate::from_ymd_opt(2024, 12, 9).unwrap();
+        assert!(!timestamp_matches_date(&parsed, &target));
+        
+        // Should show on scheduled date
+        let target = NaiveDate::from_ymd_opt(2024, 12, 10).unwrap();
+        assert!(timestamp_matches_date(&parsed, &target));
+        
+        // Should show after scheduled date
+        let target = NaiveDate::from_ymd_opt(2024, 12, 15).unwrap();
+        assert!(timestamp_matches_date(&parsed, &target));
+    }
+
+    // Repeater tests
+    #[test]
+    fn test_repeater_daily() {
+        let parsed = ParsedTimestamp {
+            timestamp_type: TimestampType::Scheduled,
+            date: NaiveDate::from_ymd_opt(2024, 12, 1).unwrap(),
+            time: None,
+            end_date: None,
+            end_time: None,
+            repeater: Some(Repeater { interval: 2, unit: RepeatUnit::Day }),
+            warning: None,
+        };
+        
+        // Should match on base date
+        assert!(timestamp_matches_date(&parsed, &NaiveDate::from_ymd_opt(2024, 12, 1).unwrap()));
+        
+        // Should match every 2 days
+        assert!(timestamp_matches_date(&parsed, &NaiveDate::from_ymd_opt(2024, 12, 3).unwrap()));
+        assert!(timestamp_matches_date(&parsed, &NaiveDate::from_ymd_opt(2024, 12, 5).unwrap()));
+        
+        // Should NOT match on off days
+        assert!(!timestamp_matches_date(&parsed, &NaiveDate::from_ymd_opt(2024, 12, 2).unwrap()));
+        assert!(!timestamp_matches_date(&parsed, &NaiveDate::from_ymd_opt(2024, 12, 4).unwrap()));
+    }
+
+    #[test]
+    fn test_repeater_weekly() {
+        let parsed = ParsedTimestamp {
+            timestamp_type: TimestampType::Scheduled,
+            date: NaiveDate::from_ymd_opt(2024, 12, 1).unwrap(), // Sunday
+            time: None,
+            end_date: None,
+            end_time: None,
+            repeater: Some(Repeater { interval: 1, unit: RepeatUnit::Week }),
+            warning: None,
+        };
+        
+        // Should match every Sunday
+        assert!(timestamp_matches_date(&parsed, &NaiveDate::from_ymd_opt(2024, 12, 1).unwrap()));
+        assert!(timestamp_matches_date(&parsed, &NaiveDate::from_ymd_opt(2024, 12, 8).unwrap()));
+        assert!(timestamp_matches_date(&parsed, &NaiveDate::from_ymd_opt(2024, 12, 15).unwrap()));
+        
+        // Should NOT match other days
+        assert!(!timestamp_matches_date(&parsed, &NaiveDate::from_ymd_opt(2024, 12, 2).unwrap()));
+    }
+
+    // Date range tests
+    #[test]
+    fn test_date_range_coverage() {
+        let parsed = ParsedTimestamp {
+            timestamp_type: TimestampType::Plain,
+            date: NaiveDate::from_ymd_opt(2024, 12, 20).unwrap(),
+            time: None,
+            end_date: Some(NaiveDate::from_ymd_opt(2024, 12, 22).unwrap()),
+            end_time: None,
+            repeater: None,
+            warning: None,
+        };
+        
+        // Should NOT match before range
+        assert!(!timestamp_matches_date(&parsed, &NaiveDate::from_ymd_opt(2024, 12, 19).unwrap()));
+        
+        // Should match all days in range
+        assert!(timestamp_matches_date(&parsed, &NaiveDate::from_ymd_opt(2024, 12, 20).unwrap()));
+        assert!(timestamp_matches_date(&parsed, &NaiveDate::from_ymd_opt(2024, 12, 21).unwrap()));
+        assert!(timestamp_matches_date(&parsed, &NaiveDate::from_ymd_opt(2024, 12, 22).unwrap()));
+        
+        // Should NOT match after range
+        assert!(!timestamp_matches_date(&parsed, &NaiveDate::from_ymd_opt(2024, 12, 23).unwrap()));
+    }
+
+    #[test]
+    fn test_closed_exact_date_only() {
+        let parsed = ParsedTimestamp {
+            timestamp_type: TimestampType::Closed,
+            date: NaiveDate::from_ymd_opt(2024, 12, 10).unwrap(),
+            time: None,
+            end_date: None,
+            end_time: None,
+            repeater: None,
+            warning: None,
+        };
+        
+        // Should only match exact date
+        assert!(timestamp_matches_date(&parsed, &NaiveDate::from_ymd_opt(2024, 12, 10).unwrap()));
+        assert!(!timestamp_matches_date(&parsed, &NaiveDate::from_ymd_opt(2024, 12, 9).unwrap()));
+        assert!(!timestamp_matches_date(&parsed, &NaiveDate::from_ymd_opt(2024, 12, 11).unwrap()));
     }
 }

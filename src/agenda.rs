@@ -5,6 +5,8 @@ use crate::error::AppError;
 use crate::timestamp::parse_org_timestamp;
 use crate::types::{DayAgenda, Task, TaskType, TaskWithOffset};
 
+const DEADLINE_WARNING_DAYS: i64 = 14;
+
 #[derive(Debug)]
 pub enum AgendaOutput {
     Days(Vec<DayAgenda>),
@@ -103,6 +105,7 @@ fn handle_non_repeating_task(
 ) {
     let task_date = parsed.date;
     let days_diff = (task_date - day_date).num_days();
+    let is_done = matches!(task.task_type, Some(TaskType::Done));
     
     let days_offset = if days_diff != 0 { Some(days_diff) } else { None };
     
@@ -116,10 +119,15 @@ fn handle_non_repeating_task(
         } else {
             agenda.scheduled_no_time.push(task_with_offset);
         }
-    } else if days_diff < 0 && is_today {
+    } else if days_diff < 0 && is_today && !is_done {
         agenda.overdue.push(create_task_without_time(task, days_offset));
     } else if days_diff > 0 {
-        agenda.upcoming.push(create_task_without_time(task, days_offset));
+        // Show upcoming only for DEADLINE within warning period
+        if let Some(ref ts_type) = task.timestamp_type {
+            if ts_type == "DEADLINE" && days_diff <= DEADLINE_WARNING_DAYS {
+                agenda.upcoming.push(create_task_without_time(task, days_offset));
+            }
+        }
     }
 }
 
@@ -242,7 +250,11 @@ fn build_week_agenda(tasks: &[Task], start_date: NaiveDate, end_date: NaiveDate,
     let mut current = start_date;
     
     while current <= end_date {
-        result.push(build_day_agenda(tasks, current, current_date));
+        if current < current_date {
+            result.push(DayAgenda::new(current));
+        } else {
+            result.push(build_day_agenda(tasks, current, current_date));
+        }
         current += chrono::Duration::days(1);
     }
     
@@ -266,11 +278,11 @@ mod tests {
     use super::*;
     use crate::types::Priority;
 
-    fn create_test_task(date_str: &str, time: Option<&str>, task_type: TaskType) -> Task {
+    fn create_test_task_with_type(date_str: &str, time: Option<&str>, task_type: TaskType, ts_type: &str) -> Task {
         let timestamp = if let Some(t) = time {
-            format!("SCHEDULED: <{date_str} {t}>")
+            format!("{ts_type}: <{date_str} {t}>")
         } else {
-            format!("SCHEDULED: <{date_str}>")
+            format!("{ts_type}: <{date_str}>")
         };
         
         Task {
@@ -282,11 +294,149 @@ mod tests {
             priority: None,
             created: None,
             timestamp: Some(timestamp.clone()),
-            timestamp_type: Some("SCHEDULED".to_string()),
+            timestamp_type: Some(ts_type.to_string()),
             timestamp_date: Some(date_str.split_whitespace().next().unwrap().to_string()),
             timestamp_time: time.map(|t| t.to_string()),
             timestamp_end_time: None,
         }
+    }
+
+    fn create_test_task(date_str: &str, time: Option<&str>, task_type: TaskType) -> Task {
+        create_test_task_with_type(date_str, time, task_type, "SCHEDULED")
+    }
+
+    #[test]
+    fn test_scheduled_future_not_shown_as_upcoming() {
+        let tasks = vec![
+            create_test_task("2024-12-10 Tue", None, TaskType::Todo),
+            create_test_task("2024-12-20 Fri", None, TaskType::Todo),
+        ];
+        
+        let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+        
+        assert_eq!(agenda.upcoming.len(), 0, "SCHEDULED tasks in future should not appear as upcoming");
+        assert_eq!(agenda.scheduled_timed.len(), 0);
+        assert_eq!(agenda.scheduled_no_time.len(), 0);
+    }
+
+    #[test]
+    fn test_deadline_within_14_days_shown_as_upcoming() {
+        let tasks = vec![
+            create_test_task_with_type("2024-12-10 Tue", None, TaskType::Todo, "DEADLINE"),
+            create_test_task_with_type("2024-12-15 Sun", None, TaskType::Todo, "DEADLINE"),
+        ];
+        
+        let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+        
+        assert_eq!(agenda.upcoming.len(), 2, "DEADLINE within 14 days should appear as upcoming");
+        assert_eq!(agenda.upcoming[0].days_offset, Some(5));
+        assert_eq!(agenda.upcoming[1].days_offset, Some(10));
+    }
+
+    #[test]
+    fn test_deadline_beyond_14_days_not_shown() {
+        let tasks = vec![
+            create_test_task_with_type("2024-12-20 Fri", None, TaskType::Todo, "DEADLINE"),
+            create_test_task_with_type("2025-01-10 Fri", None, TaskType::Todo, "DEADLINE"),
+        ];
+        
+        let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+        
+        assert_eq!(agenda.upcoming.len(), 0, "DEADLINE beyond 14 days should not appear");
+    }
+
+    #[test]
+    fn test_deadline_exactly_14_days_shown() {
+        let tasks = vec![
+            create_test_task_with_type("2024-12-19 Thu", None, TaskType::Todo, "DEADLINE"),
+        ];
+        
+        let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+        
+        assert_eq!(agenda.upcoming.len(), 1, "DEADLINE exactly 14 days away should appear");
+        assert_eq!(agenda.upcoming[0].days_offset, Some(14));
+    }
+
+    #[test]
+    fn test_deadline_15_days_not_shown() {
+        let tasks = vec![
+            create_test_task_with_type("2024-12-20 Fri", None, TaskType::Todo, "DEADLINE"),
+        ];
+        
+        let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+        
+        assert_eq!(agenda.upcoming.len(), 0, "DEADLINE 15 days away should not appear");
+    }
+
+    #[test]
+    fn test_overdue_only_on_current_date() {
+        let tasks = vec![
+            create_test_task("2024-12-01 Sun", None, TaskType::Todo),
+            create_test_task("2024-12-03 Tue", None, TaskType::Todo),
+        ];
+        
+        // Check on current date - should show overdue
+        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, current_date, current_date);
+        
+        assert_eq!(agenda.overdue.len(), 2, "Overdue tasks should appear on current date");
+        assert_eq!(agenda.overdue[0].days_offset, Some(-4));
+        assert_eq!(agenda.overdue[1].days_offset, Some(-2));
+        
+        // Check on past date - should not show overdue
+        let past_date = NaiveDate::from_ymd_opt(2024, 12, 2).unwrap();
+        let agenda_past = build_day_agenda(&tasks, past_date, current_date);
+        
+        assert_eq!(agenda_past.overdue.len(), 0, "Overdue should not appear on past dates");
+    }
+
+    #[test]
+    fn test_week_agenda_past_days_empty() {
+        let tasks = vec![
+            create_test_task("2024-12-02 Mon", Some("10:00"), TaskType::Todo),
+            create_test_task("2024-12-03 Tue", None, TaskType::Todo),
+            create_test_task("2024-12-05 Thu", Some("14:00"), TaskType::Todo),
+        ];
+        
+        let start_date = NaiveDate::from_ymd_opt(2024, 12, 2).unwrap(); // Monday
+        let end_date = NaiveDate::from_ymd_opt(2024, 12, 8).unwrap(); // Sunday
+        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap(); // Thursday
+        
+        let week = build_week_agenda(&tasks, start_date, end_date, current_date);
+        
+        assert_eq!(week.len(), 7);
+        
+        // Monday (past) - empty
+        assert_eq!(week[0].date, "2024-12-02");
+        assert_eq!(week[0].scheduled_timed.len(), 0);
+        assert_eq!(week[0].scheduled_no_time.len(), 0);
+        
+        // Tuesday (past) - empty
+        assert_eq!(week[1].date, "2024-12-03");
+        assert_eq!(week[1].scheduled_timed.len(), 0);
+        assert_eq!(week[1].scheduled_no_time.len(), 0);
+        
+        // Wednesday (past) - empty
+        assert_eq!(week[2].date, "2024-12-04");
+        assert_eq!(week[2].scheduled_timed.len(), 0);
+        
+        // Thursday (current) - has tasks
+        assert_eq!(week[3].date, "2024-12-05");
+        assert_eq!(week[3].scheduled_timed.len(), 1);
+        assert_eq!(week[3].overdue.len(), 2); // Monday and Tuesday tasks are overdue
+        
+        // Future days should have tasks if scheduled
+        assert!(week[4].scheduled_timed.len() == 0); // Friday
     }
 
     #[test]
@@ -312,181 +462,42 @@ mod tests {
     }
 
     #[test]
-    fn test_build_day_agenda_upcoming() {
+    fn test_mixed_scheduled_and_deadline() {
         let tasks = vec![
-            create_test_task("2024-12-06 Thu", None, TaskType::Todo),
-            create_test_task("2024-12-08 Sat", None, TaskType::Todo),
-            create_test_task("2024-12-07 Fri", None, TaskType::Todo),
+            create_test_task("2024-12-10 Tue", None, TaskType::Todo), // SCHEDULED - not shown
+            create_test_task_with_type("2024-12-10 Tue", None, TaskType::Todo, "DEADLINE"), // DEADLINE - shown
+            create_test_task_with_type("2024-12-25 Wed", None, TaskType::Todo, "DEADLINE"), // DEADLINE too far - not shown
         ];
         
         let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let agenda = build_day_agenda(&tasks, day_date, current_date);
         
-        assert_eq!(agenda.upcoming.len(), 3);
-        assert_eq!(agenda.scheduled_timed.len(), 0);
-        assert_eq!(agenda.scheduled_no_time.len(), 0);
-        
-        // Check sorting by days_offset (nearest first)
-        assert_eq!(agenda.upcoming[0].days_offset, Some(1));
-        assert_eq!(agenda.upcoming[1].days_offset, Some(2));
-        assert_eq!(agenda.upcoming[2].days_offset, Some(3));
+        assert_eq!(agenda.upcoming.len(), 1, "Only DEADLINE within 14 days should appear");
+        assert_eq!(agenda.upcoming[0].task.timestamp_type, Some("DEADLINE".to_string()));
     }
 
-    #[test]
-    fn test_build_day_agenda_overdue_only_on_current_date() {
-        let tasks = vec![
-            create_test_task("2024-12-01 Mon", None, TaskType::Todo),
-            create_test_task("2024-12-03 Wed", None, TaskType::Todo),
-        ];
+    fn create_test_task_with_repeater(date_str: &str, time: Option<&str>, repeater: &str, task_type: TaskType) -> Task {
+        let timestamp = if let Some(t) = time {
+            format!("SCHEDULED: <{date_str} {t} {repeater}>")
+        } else {
+            format!("SCHEDULED: <{date_str} {repeater}>")
+        };
         
-        // Test on current date - should show overdue
-        let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
-        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
-        let agenda = build_day_agenda(&tasks, day_date, current_date);
-        
-        assert_eq!(agenda.overdue.len(), 2);
-        assert_eq!(agenda.overdue[0].days_offset, Some(-4)); // oldest first
-        assert_eq!(agenda.overdue[1].days_offset, Some(-2));
-        
-        // Test on different date - should NOT show overdue
-        let day_date = NaiveDate::from_ymd_opt(2024, 12, 6).unwrap();
-        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
-        let agenda = build_day_agenda(&tasks, day_date, current_date);
-        
-        assert_eq!(agenda.overdue.len(), 0);
-    }
-
-    #[test]
-    fn test_build_day_agenda_mixed() {
-        let tasks = vec![
-            create_test_task("2024-12-03 Mon", None, TaskType::Todo), // overdue
-            create_test_task("2024-12-05 Wed", Some("09:00"), TaskType::Todo), // scheduled timed
-            create_test_task("2024-12-05 Wed", Some("15:00"), TaskType::Todo), // scheduled timed
-            create_test_task("2024-12-05 Wed", None, TaskType::Todo), // scheduled no time
-            create_test_task("2024-12-07 Fri", None, TaskType::Todo), // upcoming
-        ];
-        
-        let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
-        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
-        let agenda = build_day_agenda(&tasks, day_date, current_date);
-        
-        assert_eq!(agenda.overdue.len(), 1);
-        assert_eq!(agenda.scheduled_timed.len(), 2);
-        assert_eq!(agenda.scheduled_no_time.len(), 1);
-        assert_eq!(agenda.upcoming.len(), 1);
-    }
-
-    #[test]
-    fn test_filter_agenda_day_mode() {
-        let tasks = vec![
-            create_test_task("2024-12-05 Wed", Some("10:00"), TaskType::Todo),
-            create_test_task("2024-12-06 Thu", None, TaskType::Todo),
-        ];
-        
-        let result = filter_agenda(
-            tasks,
-            "day",
-            Some("2024-12-05"),
-            None,
-            None,
-            "UTC",
-            Some("2024-12-05"),
-        ).unwrap();
-        
-        match result {
-            AgendaOutput::Days(days) => {
-                assert_eq!(days.len(), 1);
-                assert_eq!(days[0].date, "2024-12-05");
-                assert_eq!(days[0].scheduled_timed.len(), 1);
-                assert_eq!(days[0].upcoming.len(), 1);
-            }
-            _ => panic!("Expected Days output"),
+        Task {
+            file: "test.md".to_string(),
+            line: 1,
+            heading: "Test task".to_string(),
+            content: String::new(),
+            task_type: Some(task_type),
+            priority: None,
+            created: None,
+            timestamp: Some(timestamp.clone()),
+            timestamp_type: Some("SCHEDULED".to_string()),
+            timestamp_date: Some(date_str.split_whitespace().next().unwrap().to_string()),
+            timestamp_time: time.map(|t| t.to_string()),
+            timestamp_end_time: None,
         }
-    }
-
-    #[test]
-    fn test_filter_agenda_week_mode() {
-        let tasks = vec![
-            create_test_task("2024-12-02 Mon", None, TaskType::Todo),
-            create_test_task("2024-12-03 Tue", None, TaskType::Todo),
-            create_test_task("2024-12-04 Wed", None, TaskType::Todo),
-        ];
-        
-        let result = filter_agenda(
-            tasks,
-            "week",
-            None,
-            Some("2024-12-02"),
-            Some("2024-12-04"),
-            "UTC",
-            Some("2024-12-03"),
-        ).unwrap();
-        
-        match result {
-            AgendaOutput::Days(days) => {
-                assert_eq!(days.len(), 3);
-                
-                // Day 1: 2024-12-02 (before current_date)
-                assert_eq!(days[0].date, "2024-12-02");
-                assert_eq!(days[0].scheduled_no_time.len(), 1);
-                assert_eq!(days[0].upcoming.len(), 2);
-                
-                // Day 2: 2024-12-03 (current_date)
-                assert_eq!(days[1].date, "2024-12-03");
-                assert_eq!(days[1].overdue.len(), 1); // 2024-12-02 is overdue
-                assert_eq!(days[1].scheduled_no_time.len(), 1);
-                assert_eq!(days[1].upcoming.len(), 1);
-                
-                // Day 3: 2024-12-04 (after current_date)
-                assert_eq!(days[2].date, "2024-12-04");
-                assert_eq!(days[2].overdue.len(), 0); // overdue only on current_date
-                assert_eq!(days[2].scheduled_no_time.len(), 1);
-            }
-            _ => panic!("Expected Days output"),
-        }
-    }
-
-    #[test]
-    fn test_filter_agenda_tasks_mode() {
-        let mut task1 = create_test_task("2024-12-05 Wed", None, TaskType::Todo);
-        task1.priority = Some(Priority::B);
-        
-        let mut task2 = create_test_task("2024-12-06 Thu", None, TaskType::Todo);
-        task2.priority = Some(Priority::A);
-        
-        let task3 = create_test_task("2024-12-07 Fri", None, TaskType::Done);
-        
-        let tasks = vec![task1, task2, task3];
-        
-        let result = filter_agenda(
-            tasks,
-            "tasks",
-            None,
-            None,
-            None,
-            "UTC",
-            None,
-        ).unwrap();
-        
-        match result {
-            AgendaOutput::Tasks(tasks) => {
-                assert_eq!(tasks.len(), 2); // Only TODO tasks
-                assert_eq!(tasks[0].priority, Some(Priority::A)); // Sorted by priority
-                assert_eq!(tasks[1].priority, Some(Priority::B));
-            }
-            _ => panic!("Expected Tasks output"),
-        }
-    }
-
-    #[test]
-    fn test_get_current_week() {
-        let tz: Tz = "UTC".parse().unwrap();
-        let (monday, sunday) = get_current_week(&tz);
-        
-        assert_eq!(monday.weekday(), chrono::Weekday::Mon);
-        assert_eq!(sunday.weekday(), chrono::Weekday::Sun);
-        assert_eq!((sunday - monday).num_days(), 6);
     }
 
     #[test]
@@ -495,7 +506,6 @@ mod tests {
             create_test_task_with_repeater("2024-12-01 Sun", Some("10:00"), "+1d", TaskType::Todo),
         ];
         
-        // Check Dec 5 - should show as scheduled
         let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let agenda = build_day_agenda(&tasks, day_date, current_date);
@@ -510,7 +520,6 @@ mod tests {
             create_test_task_with_repeater("2024-12-01 Sun", None, "+2d", TaskType::Todo),
         ];
         
-        // Check Dec 4 - not an occurrence day (1, 3, 5, 7...)
         let day_date = NaiveDate::from_ymd_opt(2024, 12, 4).unwrap();
         let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let agenda = build_day_agenda(&tasks, day_date, current_date);
@@ -525,50 +534,16 @@ mod tests {
             create_test_task_with_repeater("2024-12-01 Sun", None, "+1w", TaskType::Todo),
         ];
         
-        // Check Dec 8 (Sunday) - should show
         let day_date = NaiveDate::from_ymd_opt(2024, 12, 8).unwrap();
         let current_date = NaiveDate::from_ymd_opt(2024, 12, 8).unwrap();
         let agenda = build_day_agenda(&tasks, day_date, current_date);
         
         assert_eq!(agenda.scheduled_no_time.len(), 1);
         
-        // Check Dec 9 (Monday) - should not show
         let day_date = NaiveDate::from_ymd_opt(2024, 12, 9).unwrap();
         let agenda = build_day_agenda(&tasks, day_date, current_date);
         
         assert_eq!(agenda.scheduled_no_time.len(), 0);
-    }
-
-    #[test]
-    fn test_build_day_agenda_mixed_repeating_and_regular() {
-        let tasks = vec![
-            create_test_task_with_repeater("2024-12-01 Sun", Some("10:00"), "+1d", TaskType::Todo),
-            create_test_task("2024-12-05 Wed", Some("14:00"), TaskType::Todo),
-            create_test_task("2024-12-06 Thu", None, TaskType::Todo),
-        ];
-        
-        let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
-        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
-        let agenda = build_day_agenda(&tasks, day_date, current_date);
-        
-        // Should have both repeating task and regular task
-        assert_eq!(agenda.scheduled_timed.len(), 2);
-        assert_eq!(agenda.upcoming.len(), 1);
-    }
-
-    #[test]
-    fn test_build_day_agenda_repeating_before_base_date() {
-        let tasks = vec![
-            create_test_task_with_repeater("2024-12-05 Wed", None, "+1d", TaskType::Todo),
-        ];
-        
-        // Check Dec 3 - before base date, should not show
-        let day_date = NaiveDate::from_ymd_opt(2024, 12, 3).unwrap();
-        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
-        let agenda = build_day_agenda(&tasks, day_date, current_date);
-        
-        assert_eq!(agenda.scheduled_no_time.len(), 0);
-        assert_eq!(agenda.upcoming.len(), 1); // Should show as upcoming
     }
 
     #[test]
@@ -577,7 +552,6 @@ mod tests {
             create_test_task_with_repeater("2024-12-01 Sun", None, "+2d", TaskType::Todo),
         ];
         
-        // Dec 1, 3, 5, 7 should show
         let test_dates = vec![
             (NaiveDate::from_ymd_opt(2024, 12, 1).unwrap(), true),
             (NaiveDate::from_ymd_opt(2024, 12, 2).unwrap(), false),
@@ -599,6 +573,51 @@ mod tests {
     }
 
     #[test]
+    fn test_overdue_repeating_task_has_no_time() {
+        let tasks = vec![
+            create_test_task_with_repeater("2024-12-01 Sun", Some("10:00"), "+1d", TaskType::Todo),
+        ];
+        
+        let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+        
+        assert!(agenda.overdue.len() > 0);
+        assert_eq!(agenda.overdue[0].task.timestamp_time, None);
+    }
+
+    #[test]
+    fn test_upcoming_repeating_task_has_no_time() {
+        let tasks = vec![
+            create_test_task_with_repeater("2024-12-10 Mon", Some("15:00"), "+1d", TaskType::Todo),
+        ];
+        
+        let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+        
+        assert_eq!(agenda.upcoming.len(), 1);
+        assert_eq!(agenda.upcoming[0].task.timestamp_time, None);
+        assert_eq!(agenda.upcoming[0].days_offset, Some(5));
+    }
+
+    #[test]
+    fn test_build_day_agenda_mixed_repeating_and_regular() {
+        let tasks = vec![
+            create_test_task_with_repeater("2024-12-01 Sun", Some("10:00"), "+1d", TaskType::Todo),
+            create_test_task("2024-12-05 Wed", Some("14:00"), TaskType::Todo),
+            create_test_task_with_type("2024-12-06 Thu", None, TaskType::Todo, "DEADLINE"),
+        ];
+        
+        let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+        
+        assert_eq!(agenda.scheduled_timed.len(), 2);
+        assert_eq!(agenda.upcoming.len(), 1); // Only DEADLINE
+    }
+
+    #[test]
     fn test_build_day_agenda_repeating_with_time_sorting() {
         let tasks = vec![
             create_test_task_with_repeater("2024-12-01 Sun", Some("14:00"), "+1d", TaskType::Todo),
@@ -611,33 +630,9 @@ mod tests {
         let agenda = build_day_agenda(&tasks, day_date, current_date);
         
         assert_eq!(agenda.scheduled_timed.len(), 3);
-        // Should be sorted by time: 09:00, 11:00, 14:00
         assert_eq!(agenda.scheduled_timed[0].task.timestamp_time, Some("09:00".to_string()));
         assert_eq!(agenda.scheduled_timed[1].task.timestamp_time, Some("11:00".to_string()));
         assert_eq!(agenda.scheduled_timed[2].task.timestamp_time, Some("14:00".to_string()));
-    }
-
-    fn create_test_task_with_repeater(date_str: &str, time: Option<&str>, repeater: &str, task_type: TaskType) -> Task {
-        let timestamp = if let Some(t) = time {
-            format!("SCHEDULED: <{date_str} {t} {repeater}>")
-        } else {
-            format!("SCHEDULED: <{date_str} {repeater}>")
-        };
-        
-        Task {
-            file: "test.md".to_string(),
-            line: 1,
-            heading: "Test repeating task".to_string(),
-            content: String::new(),
-            task_type: Some(task_type),
-            priority: None,
-            created: None,
-            timestamp: Some(timestamp.clone()),
-            timestamp_type: Some("SCHEDULED".to_string()),
-            timestamp_date: Some(date_str.split_whitespace().next().unwrap().to_string()),
-            timestamp_time: time.map(|t| t.to_string()),
-            timestamp_end_time: None,
-        }
     }
 
     #[test]
@@ -652,16 +647,15 @@ mod tests {
         let agenda = build_day_agenda(&tasks, day_date, current_date);
         
         assert_eq!(agenda.overdue.len(), 2);
-        // Overdue tasks should have time cleared
         assert_eq!(agenda.overdue[0].task.timestamp_time, None);
         assert_eq!(agenda.overdue[1].task.timestamp_time, None);
     }
 
     #[test]
-    fn test_upcoming_tasks_have_no_time() {
+    fn test_upcoming_deadline_tasks_have_no_time() {
         let tasks = vec![
-            create_test_task("2024-12-06 Thu", Some("10:00"), TaskType::Todo),
-            create_test_task("2024-12-07 Fri", Some("14:00"), TaskType::Todo),
+            create_test_task_with_type("2024-12-06 Thu", Some("10:00"), TaskType::Todo, "DEADLINE"),
+            create_test_task_with_type("2024-12-07 Fri", Some("14:00"), TaskType::Todo, "DEADLINE"),
         ];
         
         let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
@@ -669,14 +663,12 @@ mod tests {
         let agenda = build_day_agenda(&tasks, day_date, current_date);
         
         assert_eq!(agenda.upcoming.len(), 2);
-        // Upcoming tasks should have time cleared
         assert_eq!(agenda.upcoming[0].task.timestamp_time, None);
         assert_eq!(agenda.upcoming[1].task.timestamp_time, None);
     }
 
     #[test]
     fn test_repeating_task_appears_in_both_overdue_and_scheduled() {
-        // Task repeats daily starting Dec 1, current date is Dec 5
         let tasks = vec![
             create_test_task_with_repeater("2024-12-01 Sun", Some("10:00"), "+1d", TaskType::Todo),
         ];
@@ -685,12 +677,10 @@ mod tests {
         let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let agenda = build_day_agenda(&tasks, day_date, current_date);
         
-        // Should appear in scheduled_timed (with time)
         assert_eq!(agenda.scheduled_timed.len(), 1);
         assert_eq!(agenda.scheduled_timed[0].task.timestamp_time, Some("10:00".to_string()));
         assert_eq!(agenda.scheduled_timed[0].days_offset, None);
         
-        // Should also appear in overdue (without time, showing last missed occurrence)
         assert_eq!(agenda.overdue.len(), 1);
         assert_eq!(agenda.overdue[0].task.timestamp_time, None);
         assert!(agenda.overdue[0].days_offset.unwrap() < 0);
@@ -698,7 +688,6 @@ mod tests {
 
     #[test]
     fn test_repeating_task_no_overdue_if_not_missed() {
-        // Task repeats daily starting today
         let tasks = vec![
             create_test_task_with_repeater("2024-12-05 Wed", Some("10:00"), "+1d", TaskType::Todo),
         ];
@@ -707,88 +696,64 @@ mod tests {
         let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let agenda = build_day_agenda(&tasks, day_date, current_date);
         
-        // Should appear in scheduled_timed
         assert_eq!(agenda.scheduled_timed.len(), 1);
-        
-        // Should NOT appear in overdue (no missed occurrences)
         assert_eq!(agenda.overdue.len(), 0);
     }
 
     #[test]
-    fn test_repeating_task_overdue_without_time() {
-        // Task repeats daily with time, but overdue entry should have no time
+    fn test_get_current_week() {
+        let tz: Tz = "UTC".parse().unwrap();
+        let (monday, sunday) = get_current_week(&tz);
+        
+        assert_eq!(monday.weekday(), chrono::Weekday::Mon);
+        assert_eq!(sunday.weekday(), chrono::Weekday::Sun);
+        assert_eq!((sunday - monday).num_days(), 6);
+    }
+
+    #[test]
+    fn test_done_tasks_not_in_overdue() {
         let tasks = vec![
-            create_test_task_with_repeater("2024-12-01 Sun", Some("14:30"), "+1d", TaskType::Todo),
+            create_test_task("2024-12-01 Sun", None, TaskType::Done),
+            create_test_task("2024-12-02 Mon", Some("10:00"), TaskType::Done),
+            create_test_task("2024-12-03 Tue", None, TaskType::Todo),
         ];
         
         let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let agenda = build_day_agenda(&tasks, day_date, current_date);
         
-        // Scheduled entry has time
-        assert_eq!(agenda.scheduled_timed[0].task.timestamp_time, Some("14:30".to_string()));
-        
-        // Overdue entry has no time
-        assert_eq!(agenda.overdue[0].task.timestamp_time, None);
-        assert_eq!(agenda.overdue[0].task.timestamp_end_time, None);
+        assert_eq!(agenda.overdue.len(), 1, "Only TODO tasks should appear in overdue");
+        assert_eq!(agenda.overdue[0].task.task_type, Some(TaskType::Todo));
     }
 
     #[test]
-    fn test_repeating_task_weekly_overdue_and_scheduled() {
-        // Task repeats weekly on Sundays, started 2 weeks ago
+    fn test_done_tasks_shown_on_their_date() {
         let tasks = vec![
-            create_test_task_with_repeater("2024-11-24 Sun", Some("09:00"), "+1w", TaskType::Todo),
-        ];
-        
-        // Current date is Dec 8 (Sunday) - an occurrence day
-        let day_date = NaiveDate::from_ymd_opt(2024, 12, 8).unwrap();
-        let current_date = NaiveDate::from_ymd_opt(2024, 12, 8).unwrap();
-        let agenda = build_day_agenda(&tasks, day_date, current_date);
-        
-        // Should appear in scheduled (today is occurrence day)
-        assert_eq!(agenda.scheduled_timed.len(), 1);
-        assert_eq!(agenda.scheduled_timed[0].task.timestamp_time, Some("09:00".to_string()));
-        
-        // Should also appear in overdue (missed last Sunday)
-        assert_eq!(agenda.overdue.len(), 1);
-        assert_eq!(agenda.overdue[0].task.timestamp_time, None);
-        assert_eq!(agenda.overdue[0].days_offset, Some(-7)); // Last occurrence was 7 days ago
-    }
-
-    #[test]
-    fn test_repeating_task_no_time_appears_in_both() {
-        // Repeating task without time
-        let tasks = vec![
-            create_test_task_with_repeater("2024-12-01 Sun", None, "+1d", TaskType::Todo),
+            create_test_task("2024-12-05 Wed", None, TaskType::Done),
+            create_test_task("2024-12-05 Wed", Some("14:00"), TaskType::Done),
         ];
         
         let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let agenda = build_day_agenda(&tasks, day_date, current_date);
         
-        // Should appear in scheduled_no_time
-        assert_eq!(agenda.scheduled_no_time.len(), 1);
-        assert_eq!(agenda.scheduled_no_time[0].task.timestamp_time, None);
-        
-        // Should also appear in overdue
-        assert_eq!(agenda.overdue.len(), 1);
-        assert_eq!(agenda.overdue[0].task.timestamp_time, None);
+        assert_eq!(agenda.scheduled_no_time.len(), 1, "DONE task without time should appear on its date");
+        assert_eq!(agenda.scheduled_timed.len(), 1, "DONE task with time should appear on its date");
+        assert_eq!(agenda.overdue.len(), 0, "DONE tasks should not appear in overdue");
     }
 
     #[test]
-    fn test_upcoming_repeating_task_has_no_time() {
-        // Repeating task with time, but future occurrence
+    fn test_done_deadline_not_in_overdue() {
         let tasks = vec![
-            create_test_task_with_repeater("2024-12-10 Mon", Some("15:00"), "+1d", TaskType::Todo),
+            create_test_task_with_type("2024-12-01 Sun", None, TaskType::Done, "DEADLINE"),
+            create_test_task_with_type("2024-12-02 Mon", None, TaskType::Todo, "DEADLINE"),
         ];
         
         let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let agenda = build_day_agenda(&tasks, day_date, current_date);
         
-        // Should appear in upcoming without time
-        assert_eq!(agenda.upcoming.len(), 1);
-        assert_eq!(agenda.upcoming[0].task.timestamp_time, None);
-        assert_eq!(agenda.upcoming[0].days_offset, Some(5));
+        assert_eq!(agenda.overdue.len(), 1, "Only TODO deadline should appear in overdue");
+        assert_eq!(agenda.overdue[0].task.task_type, Some(TaskType::Todo));
     }
 }

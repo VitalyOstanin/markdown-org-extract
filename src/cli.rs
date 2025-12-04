@@ -1,3 +1,4 @@
+use chrono::NaiveDate;
 use clap::Parser;
 use std::path::PathBuf;
 
@@ -32,20 +33,27 @@ pub struct Cli {
     pub agenda: String,
 
     /// Date for 'day' mode (YYYY-MM-DD format)
-    #[arg(long)]
+    #[arg(long, value_parser = validate_date)]
     pub date: Option<String>,
 
     /// Start date for 'week' mode (YYYY-MM-DD format)
-    #[arg(long)]
+    #[arg(long, value_parser = validate_date)]
     pub from: Option<String>,
 
     /// End date for 'week' mode (YYYY-MM-DD format)
-    #[arg(long)]
+    #[arg(long, value_parser = validate_date)]
     pub to: Option<String>,
 
     /// Timezone for date calculations (IANA timezone, e.g., "Europe/Moscow")
     #[arg(long, default_value = "Europe/Moscow")]
     pub tz: String,
+}
+
+/// Validate date format (YYYY-MM-DD)
+fn validate_date(s: &str) -> Result<String, String> {
+    NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .map(|_| s.to_string())
+        .map_err(|e| format!("Invalid date '{s}': {e}. Use YYYY-MM-DD format"))
 }
 
 /// Get weekday name mappings for the specified locales

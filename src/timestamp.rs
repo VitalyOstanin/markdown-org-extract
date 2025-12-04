@@ -187,13 +187,21 @@ fn parse_repeater(s: &str) -> Option<Repeater> {
 ///
 /// Uses Cow to avoid allocation when no replacements are needed
 pub fn normalize_weekdays<'a>(text: &'a str, mappings: &[(&str, &str)]) -> Cow<'a, str> {
-    let mut result = Cow::Borrowed(text);
+    // Check if any mapping matches
+    let has_match = mappings.iter().any(|(from, _)| text.contains(from));
+    
+    if !has_match {
+        return Cow::Borrowed(text);
+    }
+    
+    // Perform all replacements in one pass
+    let mut result = text.to_string();
     for (from, to) in mappings {
         if result.contains(from) {
-            result = Cow::Owned(result.replace(from, to));
+            result = result.replace(from, to);
         }
     }
-    result
+    Cow::Owned(result)
 }
 
 /// Extract timestamp from text (excluding CREATED)

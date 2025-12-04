@@ -124,7 +124,8 @@ fn parse_heading(text: &str) -> (Option<TaskType>, Option<Priority>, String) {
         let task_type = TaskType::from_str(&caps[1]);
         let priority = caps
             .get(2)
-            .map(|m| Priority::from_char(m.as_str().chars().next().unwrap()));
+            .and_then(|m| m.as_str().chars().next())
+            .and_then(Priority::from_char);
         let heading = caps[3].to_string();
         (task_type, priority, heading)
     } else {

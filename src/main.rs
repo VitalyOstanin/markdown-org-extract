@@ -17,7 +17,7 @@ use crate::agenda::filter_agenda;
 use crate::cli::{get_weekday_mappings, Cli};
 use crate::parser::extract_tasks;
 use crate::render::{render_html, render_markdown};
-use crate::types::MAX_FILE_SIZE;
+use crate::types::{ProcessingStats, MAX_FILE_SIZE};
 
 fn main() {
     if let Err(e) = run() {
@@ -40,6 +40,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut tasks = Vec::new();
+    let mut stats = ProcessingStats::default();
     let matcher = RegexMatcher::new(r"(?m)^[#*]+\s+(TODO|DONE)\s")
         .map_err(|e| format!("Failed to create regex matcher: {e}"))?;
 
@@ -66,6 +67,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     metadata.len(),
                     MAX_FILE_SIZE
                 );
+                stats.files_skipped_size += 1;
                 continue;
             }
         }
@@ -76,6 +78,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
         if let Err(e) = search_result {
             eprintln!("Warning: Failed to search {}: {}", path.display(), e);
+            stats.files_failed_search += 1;
             continue;
         }
 
@@ -83,13 +86,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             match fs::read_to_string(path) {
                 Ok(content) => {
                     tasks.extend(extract_tasks(path, &content, &mappings));
+                    stats.files_processed += 1;
                 }
                 Err(e) => {
                     eprintln!("Warning: Failed to read {}: {}", path.display(), e);
+                    stats.files_failed_read += 1;
                 }
             }
         }
     }
+
+    stats.print_summary();
 
     tasks = filter_agenda(
         tasks,
@@ -139,17 +146,11 @@ impl<'a> Sink for FoundSink<'a> {
 /// # Errors
 /// Returns error if pattern is invalid
 fn matches_glob(path: &Path, pattern: &str) -> Result<bool, Box<dyn std::error::Error>> {
-    if pattern == "*.md" {
-        return Ok(path.extension().is_some_and(|ext| ext == "md"));
-    }
-
     if let Some(ext) = pattern.strip_prefix("*.") {
         if ext.is_empty() {
             return Err("Invalid glob pattern: extension cannot be empty".into());
         }
-        return Ok(path
-            .extension()
-            .and_then(|e| e.to_str()) == Some(ext));
+        return Ok(path.extension().and_then(|e| e.to_str()) == Some(ext));
     }
 
     if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {

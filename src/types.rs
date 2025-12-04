@@ -29,13 +29,17 @@ pub enum Priority {
 }
 
 impl Priority {
-    /// Create priority from character
-    pub fn from_char(c: char) -> Self {
+    /// Create priority from character (validates A-Z only)
+    pub fn from_char(c: char) -> Option<Self> {
+        if !c.is_ascii_uppercase() {
+            return None;
+        }
         match c {
-            'A' => Priority::A,
-            'B' => Priority::B,
-            'C' => Priority::C,
-            _ => Priority::Other(c),
+            'A' => Some(Priority::A),
+            'B' => Some(Priority::B),
+            'C' => Some(Priority::C),
+            'D'..='Z' => Some(Priority::Other(c)),
+            _ => None,
         }
     }
 
@@ -45,7 +49,7 @@ impl Priority {
             Priority::A => 0,
             Priority::B => 1,
             Priority::C => 2,
-            Priority::Other(c) => (*c as u32).saturating_sub('A' as u32),
+            Priority::Other(c) => (*c as u32) - ('A' as u32),
         }
     }
 }
@@ -80,3 +84,34 @@ pub const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
 /// Maximum number of tasks to extract
 pub const MAX_TASKS: usize = 10_000;
+
+/// Statistics for file processing
+#[derive(Debug, Default)]
+pub struct ProcessingStats {
+    pub files_processed: usize,
+    pub files_skipped_size: usize,
+    pub files_failed_search: usize,
+    pub files_failed_read: usize,
+}
+
+impl ProcessingStats {
+    pub fn has_warnings(&self) -> bool {
+        self.files_skipped_size > 0 || self.files_failed_search > 0 || self.files_failed_read > 0
+    }
+
+    pub fn print_summary(&self) {
+        if self.has_warnings() {
+            eprintln!("\nProcessing summary:");
+            eprintln!("  Files processed: {}", self.files_processed);
+            if self.files_skipped_size > 0 {
+                eprintln!("  Files skipped (too large): {}", self.files_skipped_size);
+            }
+            if self.files_failed_search > 0 {
+                eprintln!("  Files failed to search: {}", self.files_failed_search);
+            }
+            if self.files_failed_read > 0 {
+                eprintln!("  Files failed to read: {}", self.files_failed_read);
+            }
+        }
+    }
+}

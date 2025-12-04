@@ -59,15 +59,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Check file size before processing
-        if let Ok(metadata) = fs::metadata(path) {
-            if metadata.len() > MAX_FILE_SIZE {
-                eprintln!(
-                    "Warning: Skipping large file {} ({} bytes, max {} bytes)",
-                    path.display(),
-                    metadata.len(),
-                    MAX_FILE_SIZE
-                );
-                stats.files_skipped_size += 1;
+        match fs::metadata(path) {
+            Ok(metadata) => {
+                if metadata.len() > MAX_FILE_SIZE {
+                    eprintln!(
+                        "Warning: Skipping large file {} ({} bytes, max {} bytes)",
+                        path.display(),
+                        metadata.len(),
+                        MAX_FILE_SIZE
+                    );
+                    stats.files_skipped_size += 1;
+                    continue;
+                }
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to get metadata for {}: {}", path.display(), e);
+                stats.files_failed_read += 1;
                 continue;
             }
         }

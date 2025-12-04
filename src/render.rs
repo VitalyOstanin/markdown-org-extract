@@ -51,7 +51,7 @@ fn render_task_with_offset_md(output: &mut String, task_with_offset: &TaskWithOf
     output.push_str(&format!("#### {}", task.heading));
     if let Some(offset) = task_with_offset.days_offset {
         let label = if offset > 0 {
-            format!(" (in {} days)", offset)
+            format!(" (in {offset} days)")
         } else {
             format!(" ({} days ago)", -offset)
         };
@@ -124,7 +124,7 @@ fn render_task_with_offset_html(output: &mut String, task_with_offset: &TaskWith
     output.push_str(&format!("<h4>{}", html_escape(&task.heading)));
     if let Some(offset) = task_with_offset.days_offset {
         let label = if offset > 0 {
-            format!(" (in {} days)", offset)
+            format!(" (in {offset} days)")
         } else {
             format!(" ({} days ago)", -offset)
         };

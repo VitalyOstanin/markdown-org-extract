@@ -49,7 +49,7 @@ pub struct Cli {
     pub to: Option<String>,
 
     /// Timezone for date calculations (IANA timezone, e.g., "Europe/Moscow")
-    #[arg(long, default_value = "Europe/Moscow")]
+    #[arg(long, default_value = "Europe/Moscow", value_parser = validate_timezone)]
     pub tz: String,
 
     /// Current date for overdue calculation (YYYY-MM-DD format, defaults to today in specified timezone)
@@ -73,6 +73,13 @@ fn validate_date(s: &str) -> Result<String, String> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .map(|_| s.to_string())
         .map_err(|e| format!("Invalid date '{s}': {e}. Use YYYY-MM-DD format"))
+}
+
+/// Validate timezone (IANA timezone name)
+fn validate_timezone(s: &str) -> Result<String, String> {
+    s.parse::<chrono_tz::Tz>()
+        .map(|_| s.to_string())
+        .map_err(|_| format!("Invalid timezone '{s}'. Use IANA timezone names (e.g., 'Europe/Moscow', 'UTC')"))
 }
 
 /// Get weekday name mappings for the specified locales

@@ -628,6 +628,7 @@ dependencies = [
  "grep-regex",
  "grep-searcher",
  "ignore",
+ "once_cell",
  "regex",
  "serde",
  "serde_json",

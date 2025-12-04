@@ -3,12 +3,14 @@ use chrono_tz::Tz;
 use clap::Parser;
 use comrak::nodes::{AstNode, NodeValue};
 use comrak::{parse_document, Arena, Options};
-use glob::glob;
+use grep_regex::RegexMatcher;
+use grep_searcher::{Searcher, Sink, SinkMatch};
+use ignore::WalkBuilder;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "markdown-extract")]
@@ -105,14 +107,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let mappings = get_weekday_mappings(&cli.locale);
 
-    let pattern = format!("{}/**/{}", cli.dir.display(), cli.glob);
     let mut tasks = Vec::new();
-
-    for entry in glob(&pattern)? {
-        let path = entry?;
-        if let Ok(content) = fs::read_to_string(&path) {
-            if has_pattern(&content) {
-                tasks.extend(extract_tasks(&path, &content, &mappings));
+    
+    // Create matcher for TODO/DONE pattern
+    let matcher = RegexMatcher::new(r"(?m)^[#*]+\s+(TODO|DONE)\s")?;
+    
+    // Walk directory with .gitignore support
+    let walker = WalkBuilder::new(&cli.dir)
+        .standard_filters(true)
+        .build();
+    
+    for result in walker {
+        let entry = result?;
+        if !entry.file_type().map_or(false, |ft| ft.is_file()) {
+            continue;
+        }
+        
+        let path = entry.path();
+        
+        // Check if file matches glob pattern
+        if !matches_glob(path, &cli.glob) {
+            continue;
+        }
+        
+        // Fast check if file contains TODO/DONE pattern
+        let mut found = false;
+        let mut searcher = Searcher::new();
+        let _ = searcher.search_path(
+            &matcher,
+            path,
+            FoundSink { found: &mut found }
+        );
+        
+        if found {
+            if let Ok(content) = fs::read_to_string(path) {
+                tasks.extend(extract_tasks(&path.to_path_buf(), &content, &mappings));
             }
         }
     }
@@ -430,14 +459,33 @@ fn normalize_weekdays(text: &str, mappings: &[(&str, &str)]) -> String {
     result
 }
 
-fn has_pattern(content: &str) -> bool {
-    let re = Regex::new(r"(?m)^[#*]+\s+(TODO|DONE)\s").unwrap();
-    if re.is_match(content) {
-        return true;
-    }
+struct FoundSink<'a> {
+    found: &'a mut bool,
+}
 
-    let time_re = Regex::new(r"`(?:SCHEDULED|DEADLINE|CLOSED)?:?\s*<\d{4}-\d{2}-\d{2}").unwrap();
-    time_re.is_match(content)
+impl<'a> Sink for FoundSink<'a> {
+    type Error = std::io::Error;
+
+    fn matched(&mut self, _searcher: &Searcher, _mat: &SinkMatch) -> Result<bool, Self::Error> {
+        *self.found = true;
+        Ok(false) // Stop searching after first match
+    }
+}
+
+fn matches_glob(path: &Path, pattern: &str) -> bool {
+    if pattern == "*.md" {
+        return path.extension().map_or(false, |ext| ext == "md");
+    }
+    
+    // Simple glob matching for common patterns
+    if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+        if pattern.starts_with("*.") {
+            let ext = &pattern[2..];
+            return file_name.ends_with(ext);
+        }
+        return file_name == pattern;
+    }
+    false
 }
 
 fn extract_tasks(path: &PathBuf, content: &str, mappings: &[(&str, &str)]) -> Vec<Task> {

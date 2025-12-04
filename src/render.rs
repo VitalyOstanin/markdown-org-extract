@@ -15,9 +15,19 @@ pub fn render_days_markdown(days: &[DayAgenda]) -> String {
             output.push('\n');
         }
         
-        if !day.scheduled.is_empty() {
+        if !day.scheduled_timed.is_empty() {
             output.push_str("### Scheduled\n\n");
-            for task_with_offset in &day.scheduled {
+            for task_with_offset in &day.scheduled_timed {
+                render_task_with_offset_md(&mut output, task_with_offset);
+            }
+            output.push('\n');
+        }
+        
+        if !day.scheduled_no_time.is_empty() {
+            if day.scheduled_timed.is_empty() {
+                output.push_str("### Scheduled\n\n");
+            }
+            for task_with_offset in &day.scheduled_no_time {
                 render_task_with_offset_md(&mut output, task_with_offset);
             }
             output.push('\n');
@@ -80,9 +90,18 @@ pub fn render_days_html(days: &[DayAgenda]) -> String {
             }
         }
         
-        if !day.scheduled.is_empty() {
+        if !day.scheduled_timed.is_empty() {
             output.push_str("<h3>Scheduled</h3>\n");
-            for task_with_offset in &day.scheduled {
+            for task_with_offset in &day.scheduled_timed {
+                render_task_with_offset_html(&mut output, task_with_offset);
+            }
+        }
+        
+        if !day.scheduled_no_time.is_empty() {
+            if day.scheduled_timed.is_empty() {
+                output.push_str("<h3>Scheduled</h3>\n");
+            }
+            for task_with_offset in &day.scheduled_no_time {
                 render_task_with_offset_html(&mut output, task_with_offset);
             }
         }

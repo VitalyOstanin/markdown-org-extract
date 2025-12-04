@@ -34,7 +34,7 @@ pub fn filter_agenda(
             } else {
                 today
             };
-            Ok(AgendaOutput::Days(vec![build_day_agenda(tasks, target_date, target_date)]))
+            Ok(AgendaOutput::Days(vec![build_day_agenda(tasks, target_date, today)]))
         }
         "week" => {
             let (start_date, end_date) = if let (Some(from_str), Some(to_str)) = (from, to) {
@@ -52,12 +52,7 @@ pub fn filter_agenda(
                 get_current_week(&tz)
             };
             
-            // Use --date if specified, otherwise use start_date of the range
-            let reference_date = date
-                .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
-                .unwrap_or(start_date);
-            
-            Ok(AgendaOutput::Days(build_week_agenda(tasks, start_date, end_date, reference_date)))
+            Ok(AgendaOutput::Days(build_week_agenda(tasks, start_date, end_date, today)))
         }
         "tasks" => {
             let mut filtered: Vec<Task> = tasks
@@ -72,61 +67,60 @@ pub fn filter_agenda(
 }
 
 /// Build agenda for a single day
-fn build_day_agenda(tasks: Vec<Task>, day_date: NaiveDate, reference_date: NaiveDate) -> DayAgenda {
+fn build_day_agenda(tasks: Vec<Task>, day_date: NaiveDate, current_date: NaiveDate) -> DayAgenda {
     let mut agenda = DayAgenda::new(day_date);
+    let is_today = day_date == current_date;
     
     for task in tasks {
         if let Some(ref ts) = task.timestamp {
             if let Some(parsed) = parse_org_timestamp(ts, None) {
                 let task_date = parsed.date;
+                let days_diff = (task_date - day_date).num_days();
                 
-                // For day mode (day_date == reference_date), show all tasks categorized by reference_date
-                // For week mode (day_date != reference_date), only show tasks scheduled for day_date
-                let should_include = if day_date == reference_date {
-                    true // day mode: include all tasks
-                } else {
-                    task_date == day_date // week mode: only tasks for this specific day
+                let task_with_offset = TaskWithOffset {
+                    task,
+                    days_offset: if days_diff != 0 { Some(days_diff) } else { None },
                 };
                 
-                if should_include {
-                    let days_diff = (task_date - reference_date).num_days();
-                    
-                    let task_with_offset = TaskWithOffset {
-                        task,
-                        days_offset: if days_diff != 0 { Some(days_diff) } else { None },
-                    };
-                    
-                    match days_diff {
-                        0 => agenda.scheduled.push(task_with_offset),
-                        d if d > 0 => agenda.upcoming.push(task_with_offset),
-                        _ => agenda.overdue.push(task_with_offset),
+                if task_date == day_date {
+                    // Tasks scheduled for this day
+                    if task_with_offset.task.timestamp_time.is_some() {
+                        agenda.scheduled_timed.push(task_with_offset);
+                    } else {
+                        agenda.scheduled_no_time.push(task_with_offset);
                     }
+                } else if days_diff < 0 && is_today {
+                    // Overdue tasks (only show on current date)
+                    agenda.overdue.push(task_with_offset);
+                } else if days_diff > 0 {
+                    // Upcoming tasks
+                    agenda.upcoming.push(task_with_offset);
                 }
             }
         }
     }
     
-    // Sort scheduled by time
-    agenda.scheduled.sort_by(|a, b| {
+    // Sort overdue: oldest first
+    agenda.overdue.sort_by_key(|t| t.days_offset);
+    
+    // Sort scheduled_timed: earliest time first
+    agenda.scheduled_timed.sort_by(|a, b| {
         a.task.timestamp_time.cmp(&b.task.timestamp_time)
     });
     
-    // Sort upcoming by days offset
+    // Sort upcoming: nearest first
     agenda.upcoming.sort_by_key(|t| t.days_offset);
-    
-    // Sort overdue by days offset (most overdue first)
-    agenda.overdue.sort_by_key(|t| t.days_offset);
     
     agenda
 }
 
 /// Build agenda for a week
-fn build_week_agenda(tasks: Vec<Task>, start_date: NaiveDate, end_date: NaiveDate, reference_date: NaiveDate) -> Vec<DayAgenda> {
+fn build_week_agenda(tasks: Vec<Task>, start_date: NaiveDate, end_date: NaiveDate, current_date: NaiveDate) -> Vec<DayAgenda> {
     let mut result = Vec::new();
     let mut current = start_date;
     
     while current <= end_date {
-        result.push(build_day_agenda(tasks.clone(), current, reference_date));
+        result.push(build_day_agenda(tasks.clone(), current, current_date));
         current += chrono::Duration::days(1);
     }
     

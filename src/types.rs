@@ -130,18 +130,21 @@ pub struct TaskWithOffset {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DayAgenda {
     pub date: String,
-    pub scheduled: Vec<TaskWithOffset>,
-    pub upcoming: Vec<TaskWithOffset>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub overdue: Vec<TaskWithOffset>,
+    pub scheduled_timed: Vec<TaskWithOffset>,
+    pub scheduled_no_time: Vec<TaskWithOffset>,
+    pub upcoming: Vec<TaskWithOffset>,
 }
 
 impl DayAgenda {
     pub fn new(date: NaiveDate) -> Self {
         Self {
             date: date.format("%Y-%m-%d").to_string(),
-            scheduled: Vec::new(),
-            upcoming: Vec::new(),
             overdue: Vec::new(),
+            scheduled_timed: Vec::new(),
+            scheduled_no_time: Vec::new(),
+            upcoming: Vec::new(),
         }
     }
 }

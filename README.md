@@ -185,19 +185,17 @@ markdown-extract --agenda day --date 2025-12-10
 
 Показывает задачи с временными метками в диапазоне дат. По умолчанию используется текущая неделя (понедельник-воскресенье).
 
-Каждый день показывает только задачи, запланированные на этот день. Категоризация задач (overdue/scheduled/upcoming) выполняется относительно референсной даты:
-- По умолчанию референсная дата = первый день диапазона
-- Можно явно указать референсную дату через `--date`
+Каждый день показывает:
+- Задачи, запланированные на этот день (scheduled)
+- Предстоящие задачи относительно этого дня (upcoming)
+- Просроченные задачи (overdue) - только для текущей даты
 
 ```bash
-# Задачи на текущую неделю (референсная дата = понедельник)
+# Задачи на текущую неделю
 markdown-extract --agenda week
 
-# Задачи на конкретный диапазон (референсная дата = 2025-12-01)
+# Задачи на конкретный диапазон
 markdown-extract --agenda week --from 2025-12-01 --to 2025-12-07
-
-# Задачи на диапазон с явной референсной датой
-markdown-extract --agenda week --from 2025-12-01 --to 2025-12-07 --date 2025-12-05
 ```
 
 ### tasks - Все TODO задачи
@@ -352,11 +350,14 @@ Task description
 
 ### Режимы `--agenda day` и `--agenda week` (дневная agenda)
 
-В этих режимах задачи группируются по дням. Каждый день содержит три категории задач:
+В этих режимах задачи группируются по дням. Каждый день содержит категории задач (в порядке отображения):
 
-- **Overdue** - просроченные задачи (с указанием количества дней просрочки)
-- **Scheduled** - задачи на текущий день (отсортированные по времени)
-- **Upcoming** - предстоящие задачи (с указанием количества дней до срока)
+1. **Overdue** (только для текущей даты) - просроченные задачи, самые старые наверху
+2. **Scheduled (with time)** - задачи дня со временем, отсортированные по времени (ранние наверху)
+3. **Scheduled (no time)** - задачи дня без времени
+4. **Upcoming** - предстоящие задачи относительно этого дня, ближайшие наверху
+
+**Важно:** Каждый день показывает upcoming задачи относительно себя, а не относительно общей референсной даты.
 
 #### JSON
 
@@ -364,7 +365,8 @@ Task description
 [
   {
     "date": "2024-12-05",
-    "scheduled": [
+    "overdue": [],
+    "scheduled_timed": [
       {
         "file": "./examples/project-tasks.md",
         "line": 5,
@@ -372,6 +374,19 @@ Task description
         "content": "Need to finalize the database structure.",
         "task_type": "TODO",
         "priority": "A",
+        "timestamp": "SCHEDULED: <2024-12-05 Wed 10:00>",
+        "timestamp_type": "SCHEDULED",
+        "timestamp_date": "2024-12-05",
+        "timestamp_time": "10:00"
+      }
+    ],
+    "scheduled_no_time": [
+      {
+        "file": "./examples/project-tasks.md",
+        "line": 10,
+        "heading": "Review code",
+        "content": "Code review needed.",
+        "task_type": "TODO",
         "timestamp": "SCHEDULED: <2024-12-05 Wed>",
         "timestamp_type": "SCHEDULED",
         "timestamp_date": "2024-12-05"
@@ -388,19 +403,6 @@ Task description
         "timestamp_type": "DEADLINE",
         "timestamp_date": "2024-12-06",
         "days_offset": 1
-      }
-    ],
-    "overdue": [
-      {
-        "file": "./examples/project-tasks.md",
-        "line": 13,
-        "heading": "Create project repository",
-        "content": "Repository created and initial structure set up.",
-        "task_type": "DONE",
-        "timestamp": "CLOSED: <2024-12-01 Mon>",
-        "timestamp_type": "CLOSED",
-        "timestamp_date": "2024-12-01",
-        "days_offset": -4
       }
     ]
   }

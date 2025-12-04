@@ -172,7 +172,8 @@ fn handle_repeating_task(
         }
         
         // Also show as overdue on current date if there are missed occurrences
-        if day_date == current_date && day_date > base_date {
+        // But only if today is NOT an occurrence day (to avoid duplicates)
+        if day_date == current_date && day_date > base_date && !is_occurrence_day(base_date, repeater, current_date) {
             let last_occurrence = find_last_occurrence(base_date, repeater, current_date);
             if let Some(last_occ) = last_occurrence {
                 if last_occ < current_date {
@@ -189,18 +190,24 @@ fn handle_repeating_task(
             }
         }
     } else {
-        // Future occurrence - show as upcoming
-        if let Some(next_occ) = next_occurrence(base_date, repeater, day_date) {
-            if next_occ > day_date {
-                let days_diff = (next_occ - day_date).num_days();
-                let mut task_copy = task.clone();
-                task_copy.timestamp_time = None;
-                task_copy.timestamp_end_time = None;
-                let task_with_offset = TaskWithOffset {
-                    task: task_copy,
-                    days_offset: Some(days_diff),
-                };
-                agenda.upcoming.push(task_with_offset);
+        // Future occurrence - show as upcoming only for DEADLINE within warning period
+        if let Some(ref ts_type) = task.timestamp_type {
+            if ts_type == "DEADLINE" {
+                if let Some(next_occ) = next_occurrence(base_date, repeater, day_date) {
+                    if next_occ > day_date {
+                        let days_diff = (next_occ - day_date).num_days();
+                        if days_diff <= DEADLINE_WARNING_DAYS {
+                            let mut task_copy = task.clone();
+                            task_copy.timestamp_time = None;
+                            task_copy.timestamp_end_time = None;
+                            let task_with_offset = TaskWithOffset {
+                                task: task_copy,
+                                days_offset: Some(days_diff),
+                            };
+                            agenda.upcoming.push(task_with_offset);
+                        }
+                    }
+                }
             }
         }
     }
@@ -500,6 +507,29 @@ mod tests {
         }
     }
 
+    fn create_test_task_with_repeater_deadline(date_str: &str, time: Option<&str>, repeater: &str, task_type: TaskType) -> Task {
+        let timestamp = if let Some(t) = time {
+            format!("DEADLINE: <{date_str} {t} {repeater}>")
+        } else {
+            format!("DEADLINE: <{date_str} {repeater}>")
+        };
+        
+        Task {
+            file: "test.md".to_string(),
+            line: 1,
+            heading: "Test task".to_string(),
+            content: String::new(),
+            task_type: Some(task_type),
+            priority: None,
+            created: None,
+            timestamp: Some(timestamp.clone()),
+            timestamp_type: Some("DEADLINE".to_string()),
+            timestamp_date: Some(date_str.split_whitespace().next().unwrap().to_string()),
+            timestamp_time: time.map(|t| t.to_string()),
+            timestamp_end_time: None,
+        }
+    }
+
     #[test]
     fn test_build_day_agenda_repeating_daily() {
         let tasks = vec![
@@ -573,15 +603,17 @@ mod tests {
     }
 
     #[test]
-    fn test_overdue_repeating_task_has_no_time() {
+    fn test_overdue_repeating_task_on_non_occurrence_day() {
         let tasks = vec![
-            create_test_task_with_repeater("2024-12-01 Sun", Some("10:00"), "+1d", TaskType::Todo),
+            create_test_task_with_repeater("2024-12-01 Sun", Some("10:00"), "+2d", TaskType::Todo),
         ];
         
-        let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
-        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        // 2024-12-05 is NOT an occurrence day (+2d from 2024-12-01: 12-01, 12-03, 12-05 would be, but let's use 12-04)
+        let day_date = NaiveDate::from_ymd_opt(2024, 12, 4).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2024, 12, 4).unwrap();
         let agenda = build_day_agenda(&tasks, day_date, current_date);
         
+        // Should appear in overdue (missed occurrence on 12-03)
         assert!(agenda.overdue.len() > 0);
         assert_eq!(agenda.overdue[0].task.timestamp_time, None);
     }
@@ -589,7 +621,7 @@ mod tests {
     #[test]
     fn test_upcoming_repeating_task_has_no_time() {
         let tasks = vec![
-            create_test_task_with_repeater("2024-12-10 Mon", Some("15:00"), "+1d", TaskType::Todo),
+            create_test_task_with_repeater_deadline("2024-12-10 Mon", Some("15:00"), "+1d", TaskType::Todo),
         ];
         
         let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
@@ -599,6 +631,19 @@ mod tests {
         assert_eq!(agenda.upcoming.len(), 1);
         assert_eq!(agenda.upcoming[0].task.timestamp_time, None);
         assert_eq!(agenda.upcoming[0].days_offset, Some(5));
+    }
+
+    #[test]
+    fn test_repeating_deadline_beyond_warning_not_shown() {
+        let tasks = vec![
+            create_test_task_with_repeater_deadline("2026-08-24 Mon", None, "+1y", TaskType::Todo),
+        ];
+        
+        let day_date = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+        
+        assert_eq!(agenda.upcoming.len(), 0, "DEADLINE beyond 14 days should not appear in upcoming");
     }
 
     #[test]
@@ -668,7 +713,7 @@ mod tests {
     }
 
     #[test]
-    fn test_repeating_task_appears_in_both_overdue_and_scheduled() {
+    fn test_repeating_task_on_occurrence_day_not_in_overdue() {
         let tasks = vec![
             create_test_task_with_repeater("2024-12-01 Sun", Some("10:00"), "+1d", TaskType::Todo),
         ];
@@ -677,13 +722,13 @@ mod tests {
         let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let agenda = build_day_agenda(&tasks, day_date, current_date);
         
+        // Should appear in scheduled (it's an occurrence day)
         assert_eq!(agenda.scheduled_timed.len(), 1);
         assert_eq!(agenda.scheduled_timed[0].task.timestamp_time, Some("10:00".to_string()));
         assert_eq!(agenda.scheduled_timed[0].days_offset, None);
         
-        assert_eq!(agenda.overdue.len(), 1);
-        assert_eq!(agenda.overdue[0].task.timestamp_time, None);
-        assert!(agenda.overdue[0].days_offset.unwrap() < 0);
+        // Should NOT appear in overdue (to avoid duplicate)
+        assert_eq!(agenda.overdue.len(), 0);
     }
 
     #[test]

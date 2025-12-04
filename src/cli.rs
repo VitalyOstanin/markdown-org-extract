@@ -44,6 +44,9 @@ pub struct Cli {
 
     #[arg(long, value_parser = validate_date)]
     pub current_date: Option<String>,
+
+    #[arg(long, default_value = "14")]
+    pub deadline_warning_days: i64,
 }
 
 impl Cli {

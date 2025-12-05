@@ -1,4 +1,5 @@
 use chrono::NaiveDate;
+use crate::holidays::HolidayCalendar;
 
 /// Repeater type and interval
 #[derive(Debug, Clone, PartialEq)]
@@ -24,9 +25,10 @@ pub enum RepeaterUnit {
     Month,
     Year,
     Hour,
+    Workday,
 }
 
-/// Parse repeater string like "+1d", "++2w", ".+1m"
+/// Parse repeater string like "+1d", "++2w", ".+1m", "+1wd"
 pub fn parse_repeater(s: &str) -> Option<Repeater> {
     let s = s.trim();
     
@@ -42,6 +44,16 @@ pub fn parse_repeater(s: &str) -> Option<Repeater> {
     
     if rest.is_empty() {
         return None;
+    }
+    
+    // Check for "wd" suffix first
+    if let Some(value_str) = rest.strip_suffix("wd") {
+        let value: u32 = value_str.parse().ok()?;
+        return Some(Repeater {
+            repeater_type,
+            value,
+            unit: RepeaterUnit::Workday,
+        });
     }
     
     let unit_char = rest.chars().last()?;
@@ -68,51 +80,83 @@ pub fn parse_repeater(s: &str) -> Option<Repeater> {
 pub fn next_occurrence(base_date: NaiveDate, repeater: &Repeater, from_date: NaiveDate) -> Option<NaiveDate> {
     use chrono::Datelike;
     
-    match repeater.repeater_type {
-        RepeaterType::Cumulative => {
-            let mut current = base_date;
-            let days = match repeater.unit {
-                RepeaterUnit::Day => repeater.value as i64,
-                RepeaterUnit::Week => (repeater.value * 7) as i64,
-                RepeaterUnit::Month => return add_months(base_date, repeater.value as i32),
-                RepeaterUnit::Year => return add_months(base_date, (repeater.value * 12) as i32),
-                RepeaterUnit::Hour => 1,
-            };
-            
-            while current < from_date {
-                current += chrono::Duration::days(days);
-            }
-            Some(current)
-        }
-        RepeaterType::CatchUp => {
-            let days = match repeater.unit {
-                RepeaterUnit::Day => repeater.value as i64,
-                RepeaterUnit::Week => (repeater.value * 7) as i64,
-                RepeaterUnit::Month => return add_months(from_date, repeater.value as i32),
-                RepeaterUnit::Year => return add_months(from_date, (repeater.value * 12) as i32),
-                RepeaterUnit::Hour => 1,
-            };
-            
-            if repeater.unit == RepeaterUnit::Week {
-                let target_weekday = base_date.weekday();
-                let mut current = from_date;
-                while current.weekday() != target_weekday || current <= base_date {
-                    current += chrono::Duration::days(1);
+    if repeater.unit == RepeaterUnit::Workday {
+        let calendar = HolidayCalendar::load().ok()?;
+        let mut current = base_date;
+        let mut count = 0u32;
+        
+        match repeater.repeater_type {
+            RepeaterType::Cumulative => {
+                while current < from_date {
+                    current = calendar.next_workday(current);
+                    count += 1;
+                    if count >= repeater.value {
+                        count = 0;
+                    }
+                }
+                for _ in 0..repeater.value.saturating_sub(count) {
+                    current = calendar.next_workday(current);
                 }
                 Some(current)
-            } else {
-                Some(from_date + chrono::Duration::days(days))
+            }
+            RepeaterType::CatchUp | RepeaterType::Restart => {
+                current = from_date;
+                for _ in 0..repeater.value {
+                    current = calendar.next_workday(current);
+                }
+                Some(current)
             }
         }
-        RepeaterType::Restart => {
-            let days = match repeater.unit {
-                RepeaterUnit::Day => repeater.value as i64,
-                RepeaterUnit::Week => (repeater.value * 7) as i64,
-                RepeaterUnit::Month => return add_months(from_date, repeater.value as i32),
-                RepeaterUnit::Year => return add_months(from_date, (repeater.value * 12) as i32),
-                RepeaterUnit::Hour => 1,
-            };
-            Some(from_date + chrono::Duration::days(days))
+    } else {
+        match repeater.repeater_type {
+            RepeaterType::Cumulative => {
+                let mut current = base_date;
+                let days = match repeater.unit {
+                    RepeaterUnit::Day => repeater.value as i64,
+                    RepeaterUnit::Week => (repeater.value * 7) as i64,
+                    RepeaterUnit::Month => return add_months(base_date, repeater.value as i32),
+                    RepeaterUnit::Year => return add_months(base_date, (repeater.value * 12) as i32),
+                    RepeaterUnit::Hour => 1,
+                    RepeaterUnit::Workday => unreachable!(),
+                };
+                
+                while current < from_date {
+                    current += chrono::Duration::days(days);
+                }
+                Some(current)
+            }
+            RepeaterType::CatchUp => {
+                let days = match repeater.unit {
+                    RepeaterUnit::Day => repeater.value as i64,
+                    RepeaterUnit::Week => (repeater.value * 7) as i64,
+                    RepeaterUnit::Month => return add_months(from_date, repeater.value as i32),
+                    RepeaterUnit::Year => return add_months(from_date, (repeater.value * 12) as i32),
+                    RepeaterUnit::Hour => 1,
+                    RepeaterUnit::Workday => unreachable!(),
+                };
+                
+                if repeater.unit == RepeaterUnit::Week {
+                    let target_weekday = base_date.weekday();
+                    let mut current = from_date;
+                    while current.weekday() != target_weekday || current <= base_date {
+                        current += chrono::Duration::days(1);
+                    }
+                    Some(current)
+                } else {
+                    Some(from_date + chrono::Duration::days(days))
+                }
+            }
+            RepeaterType::Restart => {
+                let days = match repeater.unit {
+                    RepeaterUnit::Day => repeater.value as i64,
+                    RepeaterUnit::Week => (repeater.value * 7) as i64,
+                    RepeaterUnit::Month => return add_months(from_date, repeater.value as i32),
+                    RepeaterUnit::Year => return add_months(from_date, (repeater.value * 12) as i32),
+                    RepeaterUnit::Hour => 1,
+                    RepeaterUnit::Workday => unreachable!(),
+                };
+                Some(from_date + chrono::Duration::days(days))
+            }
         }
     }
 }
@@ -148,5 +192,73 @@ fn days_in_month(year: i32, month: u32) -> u32 {
             }
         }
         _ => 30,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_workday_repeater() {
+        let r = parse_repeater("+1wd").unwrap();
+        assert_eq!(r.repeater_type, RepeaterType::Cumulative);
+        assert_eq!(r.value, 1);
+        assert_eq!(r.unit, RepeaterUnit::Workday);
+    }
+
+    #[test]
+    fn test_parse_workday_repeater_multiple() {
+        let r = parse_repeater("+2wd").unwrap();
+        assert_eq!(r.value, 2);
+        assert_eq!(r.unit, RepeaterUnit::Workday);
+    }
+
+    #[test]
+    fn test_parse_workday_catchup() {
+        let r = parse_repeater("++1wd").unwrap();
+        assert_eq!(r.repeater_type, RepeaterType::CatchUp);
+        assert_eq!(r.unit, RepeaterUnit::Workday);
+    }
+
+    #[test]
+    fn test_parse_workday_restart() {
+        let r = parse_repeater(".+1wd").unwrap();
+        assert_eq!(r.repeater_type, RepeaterType::Restart);
+        assert_eq!(r.unit, RepeaterUnit::Workday);
+    }
+
+    #[test]
+    fn test_parse_regular_day() {
+        let r = parse_repeater("+1d").unwrap();
+        assert_eq!(r.unit, RepeaterUnit::Day);
+    }
+
+    #[test]
+    fn test_next_occurrence_workday() {
+        let base = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap(); // Friday
+        let repeater = Repeater {
+            repeater_type: RepeaterType::Cumulative,
+            value: 1,
+            unit: RepeaterUnit::Workday,
+        };
+        let from = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap();
+        let next = next_occurrence(base, &repeater, from).unwrap();
+        let expected = NaiveDate::from_ymd_opt(2025, 12, 8).unwrap(); // Monday
+        assert_eq!(next, expected);
+    }
+
+    #[test]
+    fn test_next_occurrence_workday_skip_holidays() {
+        let base = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap(); // Monday in holidays
+        let repeater = Repeater {
+            repeater_type: RepeaterType::Cumulative,
+            value: 1,
+            unit: RepeaterUnit::Workday,
+        };
+        let from = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+        let next = next_occurrence(base, &repeater, from).unwrap();
+        let expected = NaiveDate::from_ymd_opt(2026, 1, 12).unwrap(); // First workday after holidays
+        assert_eq!(next, expected);
     }
 }

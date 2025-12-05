@@ -2,6 +2,7 @@ mod agenda;
 mod cli;
 mod error;
 mod format;
+mod holidays;
 mod parser;
 mod render;
 mod timestamp;

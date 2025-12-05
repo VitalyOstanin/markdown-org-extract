@@ -230,6 +230,30 @@ fn is_occurrence_day(base_date: NaiveDate, repeater: &crate::timestamp::Repeater
             // For month/year, check if it's the right day of month
             check_date.day() == base_date.day()
         }
+        RepeaterUnit::Workday => {
+            use crate::holidays::HolidayCalendar;
+            if let Ok(calendar) = HolidayCalendar::load() {
+                if !calendar.is_workday(check_date) {
+                    return false;
+                }
+                if check_date == base_date {
+                    return true;
+                }
+                let mut current = calendar.next_workday(base_date);
+                let mut workday_count = 1u32;
+                while current < check_date {
+                    current = calendar.next_workday(current);
+                    workday_count += 1;
+                }
+                if current == check_date {
+                    workday_count % repeater.value == 0
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }
     }
 }
 

@@ -10,7 +10,7 @@ static RANGE_RE: Lazy<Regex> = Lazy::new(|| {
         r"<(\d{4}-\d{2}-\d{2})",
         r"(?: (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday))?",
         r"(?: (\d{1,2}:\d{2})(?:-(\d{1,2}:\d{2}))?)?",
-        r"(?:\s*([.+]+\d+[dwmyh]))?",
+        r"(?:\s*([.+]+\d+(?:wd|[dwmyh])))?",
         r"(?:\s+-(\d+)d)?>",
         r"--",
         r"<(\d{4}-\d{2}-\d{2})",
@@ -24,7 +24,7 @@ static SINGLE_RE: Lazy<Regex> = Lazy::new(|| {
         r"<(\d{4}-\d{2}-\d{2})",
         r"(?: (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday))?",
         r"(?: (\d{1,2}:\d{2})(?:-(\d{1,2}:\d{2}))?)?",
-        r"(?:\s*([.+]+\d+[dwmyh]))?",
+        r"(?:\s*([.+]+\d+(?:wd|[dwmyh])))?",
         r"(?:\s+-(\d+)d)?>",
     )).expect("Invalid SINGLE_RE regex")
 });
@@ -67,4 +67,37 @@ fn normalize_weekdays<'a>(text: &'a str, mappings: &[(&str, &str)]) -> Cow<'a, s
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_timestamp_with_workday_repeater() {
+        let ts = "<2025-12-05 Thu +1wd>";
+        let parsed = parse_org_timestamp(ts, None).unwrap();
+        assert_eq!(parsed.date, NaiveDate::from_ymd_opt(2025, 12, 5).unwrap());
+        assert!(parsed.repeater.is_some());
+        let repeater = parsed.repeater.unwrap();
+        assert_eq!(repeater.value, 1);
+        assert_eq!(repeater.unit, super::super::repeater::RepeaterUnit::Workday);
+    }
+
+    #[test]
+    fn test_parse_timestamp_with_workday_repeater_multiple() {
+        let ts = "<2025-12-09 Mon +2wd>";
+        let parsed = parse_org_timestamp(ts, None).unwrap();
+        let repeater = parsed.repeater.unwrap();
+        assert_eq!(repeater.value, 2);
+        assert_eq!(repeater.unit, super::super::repeater::RepeaterUnit::Workday);
+    }
+
+    #[test]
+    fn test_parse_timestamp_with_regular_repeater() {
+        let ts = "<2025-12-05 Thu +1d>";
+        let parsed = parse_org_timestamp(ts, None).unwrap();
+        let repeater = parsed.repeater.unwrap();
+        assert_eq!(repeater.unit, super::super::repeater::RepeaterUnit::Day);
+    }
 }

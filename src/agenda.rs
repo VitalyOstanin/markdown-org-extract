@@ -55,6 +55,10 @@ pub fn filter_agenda(
                 }
                 
                 (start, end)
+            } else if let Some(date_str) = date {
+                let target_date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
+                    .map_err(|e| AppError::InvalidDate(format!("date '{date_str}': {e}")))?;
+                get_week_for_date(target_date)
             } else {
                 get_current_week(&tz)
             };
@@ -73,6 +77,10 @@ pub fn filter_agenda(
                 }
                 
                 (start, end)
+            } else if let Some(date_str) = date {
+                let target_date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
+                    .map_err(|e| AppError::InvalidDate(format!("date '{date_str}': {e}")))?;
+                get_month_for_date(target_date)
             } else {
                 get_current_month(&tz)
             };
@@ -310,16 +318,32 @@ fn build_week_agenda(tasks: &[Task], start_date: NaiveDate, end_date: NaiveDate,
     result
 }
 
+/// Get week boundaries (Monday to Sunday) for a specific date
+fn get_week_for_date(date: NaiveDate) -> (NaiveDate, NaiveDate) {
+    let weekday = date.weekday();
+    let days_from_monday = weekday.num_days_from_monday();
+    let monday = date - chrono::Duration::days(days_from_monday as i64);
+    let sunday = monday + chrono::Duration::days(6);
+    (monday, sunday)
+}
+
 /// Get current week (Monday to Sunday) in the given timezone
 fn get_current_week(tz: &Tz) -> (NaiveDate, NaiveDate) {
     let today = tz
         .from_utc_datetime(&chrono::Utc::now().naive_utc())
         .date_naive();
-    let weekday = today.weekday();
-    let days_from_monday = weekday.num_days_from_monday();
-    let monday = today - chrono::Duration::days(days_from_monday as i64);
-    let sunday = monday + chrono::Duration::days(6);
-    (monday, sunday)
+    get_week_for_date(today)
+}
+
+/// Get month boundaries (first to last day) for a specific date
+fn get_month_for_date(date: NaiveDate) -> (NaiveDate, NaiveDate) {
+    let first_day = NaiveDate::from_ymd_opt(date.year(), date.month(), 1).unwrap();
+    let last_day = if date.month() == 12 {
+        NaiveDate::from_ymd_opt(date.year(), 12, 31).unwrap()
+    } else {
+        NaiveDate::from_ymd_opt(date.year(), date.month() + 1, 1).unwrap() - chrono::Duration::days(1)
+    };
+    (first_day, last_day)
 }
 
 /// Get current month (first to last day) in the given timezone
@@ -327,13 +351,7 @@ fn get_current_month(tz: &Tz) -> (NaiveDate, NaiveDate) {
     let today = tz
         .from_utc_datetime(&chrono::Utc::now().naive_utc())
         .date_naive();
-    let first_day = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap();
-    let last_day = if today.month() == 12 {
-        NaiveDate::from_ymd_opt(today.year(), 12, 31).unwrap()
-    } else {
-        NaiveDate::from_ymd_opt(today.year(), today.month() + 1, 1).unwrap() - chrono::Duration::days(1)
-    };
-    (first_day, last_day)
+    get_month_for_date(today)
 }
 
 #[cfg(test)]

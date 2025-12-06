@@ -1,4 +1,4 @@
-# markdown-extract
+# markdown-org-extract
 
 CLI утилита для извлечения задач из markdown файлов с поддержкой меток Emacs Org-mode.
 
@@ -22,8 +22,8 @@ cargo build --release
 ```
 
 Бинарный файл будет создан в:
-- Debug: `target/debug/markdown-extract`
-- Release: `target/release/markdown-extract`
+- Debug: `target/debug/markdown-org-extract`
+- Release: `target/release/markdown-org-extract`
 
 ### Запуск
 
@@ -31,10 +31,10 @@ cargo build --release
 
 ```bash
 # Debug версия
-./target/debug/markdown-extract [OPTIONS]
+./target/debug/markdown-org-extract [OPTIONS]
 
 # Release версия
-./target/release/markdown-extract [OPTIONS]
+./target/release/markdown-org-extract [OPTIONS]
 ```
 
 Или используйте cargo для запуска без явной сборки:
@@ -80,7 +80,7 @@ cargo clippy
 ## Использование
 
 ```bash
-markdown-extract [OPTIONS]
+markdown-org-extract [OPTIONS]
 ```
 
 ### Параметры
@@ -102,83 +102,83 @@ markdown-extract [OPTIONS]
 
 Извлечь задачи из текущего каталога в JSON:
 ```bash
-markdown-extract
+markdown-org-extract
 ```
 
 Извлечь задачи из конкретного каталога:
 ```bash
-markdown-extract --dir ./notes
+markdown-org-extract --dir ./notes
 ```
 
 Сохранить результат в HTML файл:
 ```bash
-markdown-extract --dir ./notes --format html --output agenda.html
+markdown-org-extract --dir ./notes --format html --output agenda.html
 ```
 
 Вывести в markdown формате:
 ```bash
-markdown-extract --dir ./notes --format md
+markdown-org-extract --dir ./notes --format md
 ```
 
 Использовать примеры из проекта:
 ```bash
-markdown-extract --dir ./examples
-markdown-extract --dir ./examples --format md
-markdown-extract --dir ./examples --format html --output examples-agenda.html
+markdown-org-extract --dir ./examples
+markdown-org-extract --dir ./examples --format md
+markdown-org-extract --dir ./examples --format html --output examples-agenda.html
 ```
 
 Использовать только русские дни недели:
 ```bash
-markdown-extract --dir ./notes --locale ru
+markdown-org-extract --dir ./notes --locale ru
 ```
 
 Использовать только английские дни недели:
 ```bash
-markdown-extract --dir ./notes --locale en
+markdown-org-extract --dir ./notes --locale en
 ```
 
 #### Примеры работы с agenda
 
 Задачи на сегодня (по умолчанию):
 ```bash
-markdown-extract --dir ./notes
+markdown-org-extract --dir ./notes
 ```
 
 Задачи на конкретную дату:
 ```bash
-markdown-extract --dir ./notes --agenda day --date 2025-12-10
+markdown-org-extract --dir ./notes --agenda day --date 2025-12-10
 ```
 
 Задачи на текущую неделю:
 ```bash
-markdown-extract --dir ./notes --agenda week
+markdown-org-extract --dir ./notes --agenda week
 ```
 
 Задачи на текущий месяц:
 ```bash
-markdown-extract --dir ./notes --agenda month
+markdown-org-extract --dir ./notes --agenda month
 ```
 
 Задачи на диапазон дат:
 ```bash
-markdown-extract --dir ./notes --agenda week --from 2025-12-01 --to 2025-12-07
-markdown-extract --dir ./notes --agenda month --from 2025-12-01 --to 2025-12-31
+markdown-org-extract --dir ./notes --agenda week --from 2025-12-01 --to 2025-12-07
+markdown-org-extract --dir ./notes --agenda month --from 2025-12-01 --to 2025-12-31
 ```
 
 Все TODO задачи, отсортированные по приоритету:
 ```bash
-markdown-extract --dir ./notes --tasks
+markdown-org-extract --dir ./notes --tasks
 ```
 
 Использовать другой часовой пояс:
 ```bash
-markdown-extract --dir ./notes --tz UTC
-markdown-extract --dir ./notes --tz America/New_York
+markdown-org-extract --dir ./notes --tz UTC
+markdown-org-extract --dir ./notes --tz America/New_York
 ```
 
 Использовать явную текущую дату (для тестов):
 ```bash
-markdown-extract --dir ./notes --agenda week --current-date 2024-12-05
+markdown-org-extract --dir ./notes --agenda week --current-date 2024-12-05
 ```
 
 ## Примеры файлов
@@ -191,7 +191,7 @@ markdown-extract --dir ./notes --agenda week --current-date 2024-12-05
 
 Попробуйте запустить:
 ```bash
-./target/release/markdown-extract --dir ./examples --format md
+./target/release/markdown-org-extract --dir ./examples --format md
 ```
 
 ## Режимы Agenda
@@ -204,10 +204,10 @@ markdown-extract --dir ./notes --agenda week --current-date 2024-12-05
 
 ```bash
 # Задачи на сегодня
-markdown-extract --agenda day
+markdown-org-extract --agenda day
 
 # Задачи на конкретную дату
-markdown-extract --agenda day --date 2025-12-10
+markdown-org-extract --agenda day --date 2025-12-10
 ```
 
 ### week - Задачи на неделю
@@ -221,10 +221,10 @@ markdown-extract --agenda day --date 2025-12-10
 
 ```bash
 # Задачи на текущую неделю
-markdown-extract --agenda week
+markdown-org-extract --agenda week
 
 # Задачи на конкретный диапазон
-markdown-extract --agenda week --from 2025-12-01 --to 2025-12-07
+markdown-org-extract --agenda week --from 2025-12-01 --to 2025-12-07
 ```
 
 ### month - Задачи на месяц
@@ -235,10 +235,10 @@ markdown-extract --agenda week --from 2025-12-01 --to 2025-12-07
 
 ```bash
 # Задачи на текущий месяц
-markdown-extract --agenda month
+markdown-org-extract --agenda month
 
 # Задачи на конкретный диапазон
-markdown-extract --agenda month --from 2025-12-01 --to 2025-12-31
+markdown-org-extract --agenda month --from 2025-12-01 --to 2025-12-31
 ```
 
 ### tasks - Все TODO задачи
@@ -247,7 +247,7 @@ markdown-extract --agenda month --from 2025-12-01 --to 2025-12-31
 
 ```bash
 # Все TODO задачи по приоритетам
-markdown-extract --tasks
+markdown-org-extract --tasks
 ```
 
 ### Часовые пояса
@@ -256,13 +256,13 @@ markdown-extract --tasks
 
 ```bash
 # Московское время (по умолчанию)
-markdown-extract --agenda day --tz Europe/Moscow
+markdown-org-extract --agenda day --tz Europe/Moscow
 
 # UTC
-markdown-extract --agenda day --tz UTC
+markdown-org-extract --agenda day --tz UTC
 
 # Нью-Йорк
-markdown-extract --agenda day --tz America/New_York
+markdown-org-extract --agenda day --tz America/New_York
 ```
 
 ## Поддерживаемые метки
@@ -561,7 +561,7 @@ Critical bug fix needs review.
 ## Структура проекта
 
 ```
-markdown-extract/
+markdown-org-extract/
 ├── src/
 │   └── main.rs          # Основной код приложения
 ├── examples/            # Примеры markdown файлов

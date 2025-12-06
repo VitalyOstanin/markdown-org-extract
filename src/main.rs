@@ -44,7 +44,7 @@ fn run() -> Result<(), AppError> {
 
     let mut tasks = Vec::new();
     let mut stats = ProcessingStats::default();
-    let matcher = RegexMatcher::new(r"(?m)^[#*]+\s+(TODO|DONE)\s")
+    let matcher = RegexMatcher::new(r"(?m)(^[#*]+\s+(TODO|DONE)\s|DEADLINE:|SCHEDULED:|CREATED:|CLOSED:)")
         .map_err(|e| AppError::Regex(e.to_string()))?;
 
     let walker = WalkBuilder::new(&cli.dir).standard_filters(true).build();

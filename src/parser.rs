@@ -71,7 +71,7 @@ fn process_node<'a>(
             });
         }
         NodeValue::Paragraph => {
-            if let Some(info) = current_heading.take() {
+            if let Some(ref info) = current_heading {
                 let (created, timestamp) = extract_timestamps_from_node(node, mappings);
 
                 if created.is_some() || timestamp.is_some() {
@@ -85,10 +85,10 @@ fn process_node<'a>(
                     tasks.push(Task {
                         file: path.display().to_string(),
                         line: info.line,
-                        heading: info.heading,
+                        heading: info.heading.clone(),
                         content,
-                        task_type: info.task_type,
-                        priority: info.priority,
+                        task_type: info.task_type.clone(),
+                        priority: info.priority.clone(),
                         created,
                         timestamp,
                         timestamp_type: ts_type,
@@ -96,14 +96,15 @@ fn process_node<'a>(
                         timestamp_time: ts_time,
                         timestamp_end_time: ts_end_time,
                     });
+                    *current_heading = None;
                 } else if info.task_type.is_some() {
                     tasks.push(Task {
                         file: path.display().to_string(),
                         line: info.line,
-                        heading: info.heading,
+                        heading: info.heading.clone(),
                         content: String::new(),
-                        task_type: info.task_type,
-                        priority: info.priority,
+                        task_type: info.task_type.clone(),
+                        priority: info.priority.clone(),
                         created: None,
                         timestamp: None,
                         timestamp_type: None,
@@ -111,6 +112,54 @@ fn process_node<'a>(
                         timestamp_time: None,
                         timestamp_end_time: None,
                     });
+                    *current_heading = None;
+                }
+            }
+        }
+        NodeValue::CodeBlock(code) => {
+            if let Some(ref info) = current_heading {
+                let literal = code.literal.trim().trim_matches('`');
+                let created = extract_created(literal, mappings);
+                let timestamp = extract_timestamp(literal, mappings);
+
+                if created.is_some() || timestamp.is_some() {
+                    let (ts_type, ts_date, ts_time, ts_end_time) = if let Some(ref ts) = timestamp {
+                        parse_timestamp_fields(ts, mappings)
+                    } else {
+                        (None, None, None, None)
+                    };
+
+                    tasks.push(Task {
+                        file: path.display().to_string(),
+                        line: info.line,
+                        heading: info.heading.clone(),
+                        content: String::new(),
+                        task_type: info.task_type.clone(),
+                        priority: info.priority.clone(),
+                        created,
+                        timestamp,
+                        timestamp_type: ts_type,
+                        timestamp_date: ts_date,
+                        timestamp_time: ts_time,
+                        timestamp_end_time: ts_end_time,
+                    });
+                    *current_heading = None;
+                } else if info.task_type.is_some() {
+                    tasks.push(Task {
+                        file: path.display().to_string(),
+                        line: info.line,
+                        heading: info.heading.clone(),
+                        content: String::new(),
+                        task_type: info.task_type.clone(),
+                        priority: info.priority.clone(),
+                        created: None,
+                        timestamp: None,
+                        timestamp_type: None,
+                        timestamp_date: None,
+                        timestamp_time: None,
+                        timestamp_end_time: None,
+                    });
+                    *current_heading = None;
                 }
             }
         }
@@ -181,6 +230,41 @@ fn extract_text<'a>(node: &'a AstNode<'a>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_comrak_indented_code() {
+        let arena = Arena::new();
+        let content = "### День Рождения тест\n    `DEADLINE: <2025-12-11 Thu +1y>`\n";
+        let root = parse_document(&arena, content, &Options::default());
+        
+        eprintln!("=== Tree structure ===");
+        for (i, node) in root.children().enumerate() {
+            eprintln!("Child {}: {:?}", i, node.data.borrow().value);
+            for (j, child) in node.children().enumerate() {
+                eprintln!("  Grandchild {}: {:?}", j, child.data.borrow().value);
+            }
+        }
+        
+        let mut found_codeblock = false;
+        let mut found_paragraph = false;
+        
+        for node in root.descendants() {
+            match &node.data.borrow().value {
+                NodeValue::CodeBlock(c) => {
+                    found_codeblock = true;
+                    eprintln!("CodeBlock: {:?}", c.literal);
+                }
+                NodeValue::Paragraph => {
+                    found_paragraph = true;
+                    eprintln!("Paragraph found");
+                }
+                _ => {}
+            }
+        }
+        
+        eprintln!("found_codeblock={}, found_paragraph={}", found_codeblock, found_paragraph);
+        assert!(found_codeblock || found_paragraph, "Should find either code block or paragraph");
+    }
 
     #[test]
     fn test_parse_heading_with_priority() {

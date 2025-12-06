@@ -110,20 +110,41 @@ pub fn next_occurrence(base_date: NaiveDate, repeater: &Repeater, from_date: Nai
     } else {
         match repeater.repeater_type {
             RepeaterType::Cumulative => {
-                let mut current = base_date;
-                let days = match repeater.unit {
-                    RepeaterUnit::Day => repeater.value as i64,
-                    RepeaterUnit::Week => (repeater.value * 7) as i64,
-                    RepeaterUnit::Month => return add_months(base_date, repeater.value as i32),
-                    RepeaterUnit::Year => return add_months(base_date, (repeater.value * 12) as i32),
-                    RepeaterUnit::Hour => 1,
-                    RepeaterUnit::Workday => unreachable!(),
-                };
-                
-                while current < from_date {
-                    current += chrono::Duration::days(days);
+                match repeater.unit {
+                    RepeaterUnit::Month | RepeaterUnit::Year => {
+                        let months_to_add = if repeater.unit == RepeaterUnit::Year {
+                            (repeater.value * 12) as i32
+                        } else {
+                            repeater.value as i32
+                        };
+                        
+                        // If from_date is before base_date, the next occurrence is base_date itself
+                        if from_date < base_date {
+                            return Some(base_date);
+                        }
+                        
+                        let mut current = base_date;
+                        while current <= from_date {
+                            current = add_months(current, months_to_add)?;
+                        }
+                        Some(current)
+                    }
+                    _ => {
+                        let days = match repeater.unit {
+                            RepeaterUnit::Day => repeater.value as i64,
+                            RepeaterUnit::Week => (repeater.value * 7) as i64,
+                            RepeaterUnit::Hour => 1,
+                            RepeaterUnit::Workday => unreachable!(),
+                            _ => unreachable!(),
+                        };
+                        
+                        let mut current = base_date;
+                        while current <= from_date {
+                            current += chrono::Duration::days(days);
+                        }
+                        Some(current)
+                    }
                 }
-                Some(current)
             }
             RepeaterType::CatchUp => {
                 let days = match repeater.unit {
@@ -161,7 +182,7 @@ pub fn next_occurrence(base_date: NaiveDate, repeater: &Repeater, from_date: Nai
     }
 }
 
-fn add_months(date: NaiveDate, months: i32) -> Option<NaiveDate> {
+pub fn add_months(date: NaiveDate, months: i32) -> Option<NaiveDate> {
     use chrono::Datelike;
     
     let mut year = date.year();
@@ -259,6 +280,66 @@ mod tests {
         let from = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
         let next = next_occurrence(base, &repeater, from).unwrap();
         let expected = NaiveDate::from_ymd_opt(2026, 1, 12).unwrap(); // First workday after holidays
+        assert_eq!(next, expected);
+    }
+
+    #[test]
+    fn test_parse_year_repeater() {
+        let r = parse_repeater("+1y").unwrap();
+        assert_eq!(r.repeater_type, RepeaterType::Cumulative);
+        assert_eq!(r.value, 1);
+        assert_eq!(r.unit, RepeaterUnit::Year);
+    }
+
+    #[test]
+    fn test_parse_hour_repeater() {
+        let r = parse_repeater("+1h").unwrap();
+        assert_eq!(r.repeater_type, RepeaterType::Cumulative);
+        assert_eq!(r.value, 1);
+        assert_eq!(r.unit, RepeaterUnit::Hour);
+    }
+
+    #[test]
+    fn test_next_occurrence_year() {
+        let base = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let repeater = Repeater {
+            repeater_type: RepeaterType::Cumulative,
+            value: 1,
+            unit: RepeaterUnit::Year,
+        };
+        let from = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let next = next_occurrence(base, &repeater, from).unwrap();
+        let expected = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap();
+        assert_eq!(next, expected);
+    }
+
+    #[test]
+    fn test_next_occurrence_year_before_base() {
+        let base = NaiveDate::from_ymd_opt(2025, 12, 11).unwrap();
+        let repeater = Repeater {
+            repeater_type: RepeaterType::Cumulative,
+            value: 1,
+            unit: RepeaterUnit::Year,
+        };
+        let from = NaiveDate::from_ymd_opt(2025, 12, 6).unwrap();
+        let next = next_occurrence(base, &repeater, from).unwrap();
+        eprintln!("base: {}, from: {}, next: {}", base, from, next);
+        // When from < base, next occurrence is base itself (first occurrence)
+        let expected = NaiveDate::from_ymd_opt(2025, 12, 11).unwrap();
+        assert_eq!(next, expected, "Next occurrence should be base date when from < base");
+    }
+
+    #[test]
+    fn test_next_occurrence_month() {
+        let base = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let repeater = Repeater {
+            repeater_type: RepeaterType::Cumulative,
+            value: 1,
+            unit: RepeaterUnit::Month,
+        };
+        let from = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let next = next_occurrence(base, &repeater, from).unwrap();
+        let expected = NaiveDate::from_ymd_opt(2025, 1, 5).unwrap();
         assert_eq!(next, expected);
     }
 }

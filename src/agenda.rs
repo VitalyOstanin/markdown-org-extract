@@ -197,22 +197,33 @@ fn handle_repeating_task(
             }
         }
         
-        // Show as overdue on current date only if next occurrence is in the past
+        // Show as overdue on current date only if last occurrence is in the past
         if day_date == current_date && day_date > base_date && !is_occurrence_day(base_date, repeater, current_date) {
             if let Some(last_occ) = find_last_occurrence_before(base_date, repeater, current_date) {
                 if last_occ < current_date {
-                    if let Some(next) = next_occurrence(base_date, repeater, last_occ) {
-                        if next < current_date {
-                            let days_diff = (next - current_date).num_days();
-                            let mut task_copy = task.clone();
-                            task_copy.timestamp_time = None;
-                            task_copy.timestamp_end_time = None;
-                            let task_with_offset = TaskWithOffset {
-                                task: task_copy,
-                                days_offset: Some(days_diff),
-                            };
-                            agenda.overdue.push(task_with_offset);
+                    // For workday repeaters, only show as overdue if current_date is a workday
+                    let should_show_overdue = if repeater.unit == crate::timestamp::RepeaterUnit::Workday {
+                        use crate::holidays::HolidayCalendar;
+                        if let Ok(calendar) = HolidayCalendar::load() {
+                            calendar.is_workday(current_date)
+                        } else {
+                            true // If calendar fails to load, show overdue
                         }
+                    } else {
+                        true
+                    };
+                    
+                    if should_show_overdue {
+                        // Last occurrence was in the past, so task is overdue
+                        let days_diff = (last_occ - current_date).num_days();
+                        let mut task_copy = task.clone();
+                        task_copy.timestamp_time = None;
+                        task_copy.timestamp_end_time = None;
+                        let task_with_offset = TaskWithOffset {
+                            task: task_copy,
+                            days_offset: Some(days_diff),
+                        };
+                        agenda.overdue.push(task_with_offset);
                     }
                 }
             }
@@ -267,22 +278,56 @@ fn find_last_occurrence_before(base_date: NaiveDate, repeater: &crate::timestamp
         last_found
     } else {
         // For regular repeaters, calculate directly
-        let mut current = base_date;
-        let days = match repeater.unit {
-            RepeaterUnit::Day => repeater.value as i64,
-            RepeaterUnit::Week => (repeater.value * 7) as i64,
-            RepeaterUnit::Hour => 1,
-            _ => return Some(base_date),
-        };
-        
-        while current + chrono::Duration::days(days) < before_date {
-            current += chrono::Duration::days(days);
-        }
-        
-        if current < before_date {
-            Some(current)
-        } else {
-            None
+        match repeater.unit {
+            RepeaterUnit::Day | RepeaterUnit::Week | RepeaterUnit::Hour => {
+                let mut current = base_date;
+                let days = match repeater.unit {
+                    RepeaterUnit::Day => repeater.value as i64,
+                    RepeaterUnit::Week => (repeater.value * 7) as i64,
+                    RepeaterUnit::Hour => 1,
+                    _ => unreachable!(),
+                };
+                
+                while current + chrono::Duration::days(days) < before_date {
+                    current += chrono::Duration::days(days);
+                }
+                
+                if current < before_date {
+                    Some(current)
+                } else {
+                    None
+                }
+            }
+            RepeaterUnit::Month | RepeaterUnit::Year => {
+                use crate::timestamp::next_occurrence;
+                
+                // Find the next occurrence after before_date, then step back
+                if let Some(next) = next_occurrence(base_date, repeater, before_date) {
+                    if next > before_date {
+                        use crate::timestamp::add_months;
+                        let months_to_subtract = if repeater.unit == RepeaterUnit::Year {
+                            -((repeater.value * 12) as i32)
+                        } else {
+                            -(repeater.value as i32)
+                        };
+                        
+                        if let Some(last) = add_months(next, months_to_subtract) {
+                            if last >= base_date && last < before_date {
+                                Some(last)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
     }
 }
@@ -717,6 +762,10 @@ mod tests {
         let current_date = NaiveDate::from_ymd_opt(2024, 12, 6).unwrap();
         let agenda = build_day_agenda(&tasks, day_date, current_date);
         
+        eprintln!("overdue: {:?}", agenda.overdue.len());
+        eprintln!("scheduled_timed: {:?}", agenda.scheduled_timed.len());
+        eprintln!("scheduled_no_time: {:?}", agenda.scheduled_no_time.len());
+        
         // Should appear in overdue (next occurrence 12-05 is in the past)
         assert!(agenda.overdue.len() > 0);
         assert_eq!(agenda.overdue[0].task.timestamp_time, None);
@@ -1060,6 +1109,60 @@ mod tests {
         let agenda = build_day_agenda(&tasks, day_date, current_date);
         
         assert_eq!(agenda.overdue.len(), 0, "Task with +1wd should not be overdue on Sunday");
+    }
+
+    #[test]
+    fn test_year_repeater_shows_on_occurrence_day() {
+        let tasks = vec![
+            create_test_task_with_repeater_deadline("2025-12-11 Thu", None, "+1y", TaskType::Todo),
+        ];
+        
+        let day_date = NaiveDate::from_ymd_opt(2025, 12, 11).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2025, 12, 11).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+        
+        assert_eq!(agenda.scheduled_no_time.len(), 1);
+        assert_eq!(agenda.overdue.len(), 0);
+    }
+
+    #[test]
+    fn test_year_repeater_shows_in_upcoming() {
+        let tasks = vec![
+            create_test_task_with_repeater_deadline("2025-12-11 Thu", None, "+1y", TaskType::Todo),
+        ];
+        
+        let day_date = NaiveDate::from_ymd_opt(2025, 12, 6).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2025, 12, 6).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+        
+        assert_eq!(agenda.upcoming.len(), 1);
+        assert_eq!(agenda.upcoming[0].days_offset, Some(5));
+    }
+
+    #[test]
+    fn test_year_repeater_not_in_upcoming_too_far() {
+        let tasks = vec![
+            create_test_task_with_repeater_deadline("2025-12-11 Thu", None, "+1y", TaskType::Todo),
+        ];
+        
+        let day_date = NaiveDate::from_ymd_opt(2025, 11, 21).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2025, 11, 21).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+        
+        assert_eq!(agenda.upcoming.len(), 0);
+    }
+
+    #[test]
+    fn test_month_repeater_shows_on_occurrence_day() {
+        let tasks = vec![
+            create_test_task_with_repeater("2024-12-05 Thu", None, "+1m", TaskType::Todo),
+        ];
+        
+        let day_date = NaiveDate::from_ymd_opt(2025, 1, 5).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2025, 1, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+        
+        assert_eq!(agenda.scheduled_no_time.len(), 1);
     }
 
     #[test]

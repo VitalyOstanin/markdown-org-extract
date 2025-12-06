@@ -97,6 +97,7 @@ markdown-org-extract [OPTIONS]
 - `--to <DATE>` - конечная дата для режима `week` в формате YYYY-MM-DD (по умолчанию: воскресенье текущей недели)
 - `--tz <TIMEZONE>` - часовой пояс для определения текущей даты (по умолчанию: `Europe/Moscow`)
 - `--current-date <DATE>` - явная текущая дата для расчета overdue в формате YYYY-MM-DD (по умолчанию: сегодня в указанной таймзоне)
+- `--holidays <YEAR>` - вывести список праздников для указанного года (1900-2100) в формате JSON
 
 ### Примеры использования
 
@@ -179,6 +180,12 @@ markdown-org-extract --dir ./notes --tz America/New_York
 Использовать явную текущую дату (для тестов):
 ```bash
 markdown-org-extract --dir ./notes --agenda week --current-date 2024-12-05
+```
+
+Вывести список праздников для года:
+```bash
+markdown-org-extract --holidays 2025
+markdown-org-extract --holidays 2026
 ```
 
 ## Примеры файлов

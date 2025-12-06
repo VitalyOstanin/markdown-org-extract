@@ -45,7 +45,7 @@ pub struct Cli {
     #[arg(long, value_parser = validate_date)]
     pub current_date: Option<String>,
 
-    #[arg(long)]
+    #[arg(long, value_parser = validate_year)]
     pub holidays: Option<i32>,
 }
 
@@ -67,6 +67,17 @@ fn validate_date(s: &str) -> Result<String, String> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .map(|_| s.to_string())
         .map_err(|e| format!("Invalid date '{s}': {e}. Use YYYY-MM-DD format"))
+}
+
+fn validate_year(s: &str) -> Result<i32, String> {
+    let year: i32 = s.parse()
+        .map_err(|_| format!("Invalid year '{s}': must be a number"))?;
+    
+    if !(1900..=2100).contains(&year) {
+        return Err(format!("Invalid year '{s}': must be between 1900 and 2100"));
+    }
+    
+    Ok(year)
 }
 
 fn validate_timezone(s: &str) -> Result<String, String> {

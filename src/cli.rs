@@ -44,6 +44,9 @@ pub struct Cli {
 
     #[arg(long, value_parser = validate_date)]
     pub current_date: Option<String>,
+
+    #[arg(long)]
+    pub holidays: Option<i32>,
 }
 
 impl Cli {

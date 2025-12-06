@@ -33,6 +33,19 @@ fn main() {
 
 fn run() -> Result<(), AppError> {
     let cli = Cli::parse();
+
+    if let Some(year) = cli.holidays {
+        let calendar = holidays::HolidayCalendar::load()
+            .map_err(|e| AppError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))?;
+        let holidays = calendar.get_holidays_for_year(year);
+        let dates: Vec<String> = holidays.iter()
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .collect();
+        let output = serde_json::to_string_pretty(&dates)?;
+        io::stdout().write_all(output.as_bytes())?;
+        return Ok(());
+    }
+
     let mappings = get_weekday_mappings(&cli.locale);
 
     if !cli.dir.exists() {

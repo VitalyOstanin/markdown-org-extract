@@ -45,6 +45,15 @@ impl HolidayCalendar {
         }
         current
     }
+
+    pub fn get_holidays_for_year(&self, year: i32) -> Vec<NaiveDate> {
+        let mut result: Vec<_> = self.holidays.iter()
+            .filter(|d| d.year() == year)
+            .copied()
+            .collect();
+        result.sort();
+        result
+    }
 }
 
 #[cfg(test)]

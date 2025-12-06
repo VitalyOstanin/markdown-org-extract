@@ -150,6 +150,33 @@ markdown-org-extract --dir ./notes
 markdown-org-extract --dir ./notes --agenda day --date 2025-12-10
 ```
 
+Получить список праздников для года:
+```bash
+markdown-org-extract --holidays 2025
+markdown-org-extract --holidays 2026
+```
+
+Пример вывода праздников:
+```json
+[
+  "2025-01-01",
+  "2025-01-02",
+  "2025-01-03",
+  "2025-01-04",
+  "2025-01-05",
+  "2025-01-06",
+  "2025-01-07",
+  "2025-01-08",
+  "2025-02-23",
+  "2025-03-08",
+  "2025-05-01",
+  "2025-05-09",
+  "2025-06-12",
+  "2025-11-04"
+]
+```
+```
+
 Задачи на текущую неделю:
 ```bash
 markdown-org-extract --dir ./notes --agenda week

@@ -4,6 +4,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::path::Path;
 
+use crate::clock::{calculate_total_minutes, extract_clocks, format_duration};
 use crate::timestamp::{extract_created, extract_timestamp, parse_timestamp_fields};
 use crate::types::{Priority, Task, TaskType, MAX_TASKS};
 
@@ -39,6 +40,13 @@ pub fn extract_tasks(path: &Path, content: &str, mappings: &[(&str, &str)]) -> V
         }
     }
 
+    // Flush remaining heading
+    if let Some(info) = current_heading.take() {
+        if let Some(task) = finalize_task(path, info) {
+            tasks.push(task);
+        }
+    }
+
     tasks
 }
 
@@ -48,6 +56,10 @@ struct HeadingInfo {
     task_type: Option<TaskType>,
     priority: Option<Priority>,
     line: u32,
+    content: String,
+    created: Option<String>,
+    timestamp: Option<String>,
+    clocks: Vec<crate::types::ClockEntry>,
 }
 
 /// Process a single markdown node
@@ -60,6 +72,14 @@ fn process_node<'a>(
 ) {
     match &node.data.borrow().value {
         NodeValue::Heading(_) => {
+            // Finalize previous heading
+            if let Some(info) = current_heading.take() {
+                if let Some(task) = finalize_task(path, info) {
+                    tasks.push(task);
+                }
+            }
+            
+            // Start new heading
             let text = extract_text(node);
             let (task_type, priority, heading) = parse_heading(&text);
             let line = node.data.borrow().sourcepos.start.line as u32;
@@ -68,103 +88,96 @@ fn process_node<'a>(
                 task_type,
                 priority,
                 line,
+                content: String::new(),
+                created: None,
+                timestamp: None,
+                clocks: Vec::new(),
             });
         }
         NodeValue::Paragraph => {
-            if let Some(ref info) = current_heading {
+            if let Some(ref mut info) = current_heading {
                 let (created, timestamp) = extract_timestamps_from_node(node, mappings);
-
-                if created.is_some() || timestamp.is_some() {
-                    let content = extract_paragraph_text(node);
-                    let (ts_type, ts_date, ts_time, ts_end_time) = if let Some(ref ts) = timestamp {
-                        parse_timestamp_fields(ts, mappings)
-                    } else {
-                        (None, None, None, None)
-                    };
-
-                    tasks.push(Task {
-                        file: path.display().to_string(),
-                        line: info.line,
-                        heading: info.heading.clone(),
-                        content,
-                        task_type: info.task_type.clone(),
-                        priority: info.priority.clone(),
-                        created,
-                        timestamp,
-                        timestamp_type: ts_type,
-                        timestamp_date: ts_date,
-                        timestamp_time: ts_time,
-                        timestamp_end_time: ts_end_time,
-                    });
-                    *current_heading = None;
-                } else if info.task_type.is_some() {
-                    tasks.push(Task {
-                        file: path.display().to_string(),
-                        line: info.line,
-                        heading: info.heading.clone(),
-                        content: String::new(),
-                        task_type: info.task_type.clone(),
-                        priority: info.priority.clone(),
-                        created: None,
-                        timestamp: None,
-                        timestamp_type: None,
-                        timestamp_date: None,
-                        timestamp_time: None,
-                        timestamp_end_time: None,
-                    });
-                    *current_heading = None;
+                let content = extract_paragraph_text(node);
+                
+                // Extract CLOCK from inline code in paragraph
+                if let NodeValue::Paragraph = &node.data.borrow().value {
+                    for child in node.children() {
+                        if let NodeValue::Code(code) = &child.data.borrow().value {
+                            info.clocks.extend(extract_clocks(&code.literal));
+                        }
+                    }
+                }
+                
+                // Accumulate data
+                if created.is_some() {
+                    info.created = created;
+                }
+                if timestamp.is_some() {
+                    info.timestamp = timestamp;
+                }
+                if !content.is_empty() && info.content.is_empty() {
+                    info.content = content;
                 }
             }
         }
         NodeValue::CodeBlock(code) => {
-            if let Some(ref info) = current_heading {
+            if let Some(ref mut info) = current_heading {
                 let literal = code.literal.trim().trim_matches('`');
                 let created = extract_created(literal, mappings);
                 let timestamp = extract_timestamp(literal, mappings);
-
-                if created.is_some() || timestamp.is_some() {
-                    let (ts_type, ts_date, ts_time, ts_end_time) = if let Some(ref ts) = timestamp {
-                        parse_timestamp_fields(ts, mappings)
-                    } else {
-                        (None, None, None, None)
-                    };
-
-                    tasks.push(Task {
-                        file: path.display().to_string(),
-                        line: info.line,
-                        heading: info.heading.clone(),
-                        content: String::new(),
-                        task_type: info.task_type.clone(),
-                        priority: info.priority.clone(),
-                        created,
-                        timestamp,
-                        timestamp_type: ts_type,
-                        timestamp_date: ts_date,
-                        timestamp_time: ts_time,
-                        timestamp_end_time: ts_end_time,
-                    });
-                    *current_heading = None;
-                } else if info.task_type.is_some() {
-                    tasks.push(Task {
-                        file: path.display().to_string(),
-                        line: info.line,
-                        heading: info.heading.clone(),
-                        content: String::new(),
-                        task_type: info.task_type.clone(),
-                        priority: info.priority.clone(),
-                        created: None,
-                        timestamp: None,
-                        timestamp_type: None,
-                        timestamp_date: None,
-                        timestamp_time: None,
-                        timestamp_end_time: None,
-                    });
-                    *current_heading = None;
+                
+                // Extract CLOCK from code block
+                info.clocks.extend(extract_clocks(literal));
+                
+                // Accumulate data
+                if created.is_some() {
+                    info.created = created;
+                }
+                if timestamp.is_some() {
+                    info.timestamp = timestamp;
                 }
             }
         }
         _ => {}
     }
+}
+
+/// Finalize heading info into a task
+fn finalize_task(path: &Path, info: HeadingInfo) -> Option<Task> {
+    // Only create task if it has TODO/DONE or timestamps
+    if info.task_type.is_none() && info.created.is_none() && info.timestamp.is_none() {
+        return None;
+    }
+
+    let (ts_type, ts_date, ts_time, ts_end_time) = if let Some(ref ts) = info.timestamp {
+        parse_timestamp_fields(ts, &[])
+    } else {
+        (None, None, None, None)
+    };
+
+    let (clocks_opt, total_time) = if !info.clocks.is_empty() {
+        let total = calculate_total_minutes(&info.clocks).map(format_duration);
+        (Some(info.clocks), total)
+    } else {
+        (None, None)
+    };
+
+    Some(Task {
+        file: path.display().to_string(),
+        line: info.line,
+        heading: info.heading,
+        content: info.content,
+        task_type: info.task_type,
+        priority: info.priority,
+        created: info.created,
+        timestamp: info.timestamp,
+        timestamp_type: ts_type,
+        timestamp_date: ts_date,
+        timestamp_time: ts_time,
+        timestamp_end_time: ts_end_time,
+        clocks: clocks_opt,
+        total_clock_time: total_time,
+    })
 }
 
 /// Parse heading text to extract task type, priority, and title

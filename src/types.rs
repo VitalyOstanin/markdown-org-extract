@@ -55,6 +55,16 @@ impl Priority {
     }
 }
 
+/// Clock entry representing time tracking
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClockEntry {
+    pub start: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<String>,
+}
+
 /// Extracted task from markdown file
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
@@ -78,6 +88,10 @@ pub struct Task {
     pub timestamp_time: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_end_time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clocks: Option<Vec<ClockEntry>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_clock_time: Option<String>,
 }
 
 /// Maximum file size to process (10 MB)

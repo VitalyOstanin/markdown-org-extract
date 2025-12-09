@@ -169,6 +169,23 @@ pub fn render_markdown(tasks: &[Task]) -> String {
         if let Some(ref ts) = task.timestamp {
             output.push_str(&format!("**Time:** {ts}\n"));
         }
+        if let Some(ref total) = task.total_clock_time {
+            output.push_str(&format!("**Total Time:** {total}\n"));
+        }
+        if let Some(ref clocks) = task.clocks {
+            output.push_str("\n**Clock:**\n");
+            for clock in clocks {
+                if let Some(ref end) = clock.end {
+                    if let Some(ref dur) = clock.duration {
+                        output.push_str(&format!("- {} → {} ({})\n", clock.start, end, dur));
+                    } else {
+                        output.push_str(&format!("- {} → {}\n", clock.start, end));
+                    }
+                } else {
+                    output.push_str(&format!("- {} (active)\n", clock.start));
+                }
+            }
+        }
         if !task.content.is_empty() {
             output.push_str(&format!("\n{}\n\n", task.content));
         } else {
@@ -199,6 +216,33 @@ pub fn render_html(tasks: &[Task]) -> String {
         }
         if let Some(ref ts) = task.timestamp {
             output.push_str(&format!("<p><strong>Time:</strong> {}</p>\n", html_escape(ts)));
+        }
+        if let Some(ref total) = task.total_clock_time {
+            output.push_str(&format!("<p><strong>Total Time:</strong> {}</p>\n", html_escape(total)));
+        }
+        if let Some(ref clocks) = task.clocks {
+            output.push_str("<p><strong>Clock:</strong></p>\n<ul>\n");
+            for clock in clocks {
+                if let Some(ref end) = clock.end {
+                    if let Some(ref dur) = clock.duration {
+                        output.push_str(&format!(
+                            "<li>{} → {} ({})</li>\n",
+                            html_escape(&clock.start),
+                            html_escape(end),
+                            html_escape(dur)
+                        ));
+                    } else {
+                        output.push_str(&format!(
+                            "<li>{} → {}</li>\n",
+                            html_escape(&clock.start),
+                            html_escape(end)
+                        ));
+                    }
+                } else {
+                    output.push_str(&format!("<li>{} (active)</li>\n", html_escape(&clock.start)));
+                }
+            }
+            output.push_str("</ul>\n");
         }
         if !task.content.is_empty() {
             output.push_str(&format!("<p>{}</p>\n", html_escape(&task.content)));
@@ -243,6 +287,8 @@ mod tests {
             timestamp_date: None,
             timestamp_time: None,
             timestamp_end_time: None,
+            clocks: None,
+            total_clock_time: None,
         }];
 
         let output = render_markdown(&tasks);
@@ -266,6 +312,8 @@ mod tests {
             timestamp_date: None,
             timestamp_time: None,
             timestamp_end_time: None,
+            clocks: None,
+            total_clock_time: None,
         }];
 
         let output = render_html(&tasks);

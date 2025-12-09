@@ -206,7 +206,7 @@ fn handle_repeating_task(
                 let weekday = day_date.format("%a").to_string();
                 let date_str = day_date.format("%Y-%m-%d").to_string();
                 let time_part = if let Some(ref time) = task.timestamp_time {
-                    format!(" {}", time)
+                    format!(" {time}")
                 } else {
                     String::new()
                 };
@@ -506,6 +506,8 @@ mod tests {
             timestamp_date: Some(date_str.split_whitespace().next().unwrap().to_string()),
             timestamp_time: time.map(|t| t.to_string()),
             timestamp_end_time: None,
+            clocks: None,
+            total_clock_time: None,
         }
     }
 
@@ -705,6 +707,8 @@ mod tests {
             timestamp_date: Some(date_str.split_whitespace().next().unwrap().to_string()),
             timestamp_time: time.map(|t| t.to_string()),
             timestamp_end_time: None,
+            clocks: None,
+            total_clock_time: None,
         }
     }
 
@@ -728,6 +732,8 @@ mod tests {
             timestamp_date: Some(date_str.split_whitespace().next().unwrap().to_string()),
             timestamp_time: time.map(|t| t.to_string()),
             timestamp_end_time: None,
+            clocks: None,
+            total_clock_time: None,
         }
     }
 

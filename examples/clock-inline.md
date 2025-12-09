@@ -1,0 +1,10 @@
+### TODO Test inline CLOCK
+
+`SCHEDULED: <2024-12-10 Tue>`
+`CLOCK: <2024-12-09 Mon 10:00>--<2024-12-09 Mon 12:30> => 2:30`
+`CLOCK: <2024-12-09 Mon 14:00>--<2024-12-09 Mon 16:15> => 2:15`
+
+### TODO Active inline
+
+`SCHEDULED: <2024-12-10 Tue 09:00>`
+`CLOCK: <2024-12-10 Tue 09:00>`

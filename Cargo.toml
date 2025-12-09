@@ -1,6 +1,6 @@
 [package]
 name = "markdown-org-extract"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 authors = ["Vitaly Ostanin <vitaly.ostanin@gmail.com>"]
 description = "CLI utility for extracting tasks from markdown files with Emacs Org-mode support"

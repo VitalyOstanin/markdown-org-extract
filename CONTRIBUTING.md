@@ -13,8 +13,9 @@ this project follows so that pull requests can be reviewed and merged quickly.
 
 ## Development environment
 
-- Rust toolchain: stable channel; minimum supported version is **1.70**
-  (as declared in `Cargo.toml` via `rust-version`).
+- Rust toolchain: stable channel; minimum supported version is **1.80**
+  (as declared in `Cargo.toml` via `rust-version`). 1.80 is required because
+  the crate uses `std::sync::LazyLock` for global regex statics.
 - The build script (`build.rs`) reads `holidays_ru.json` at compile time and
   embeds the data into the binary. Edit that file to add new holiday data.
 

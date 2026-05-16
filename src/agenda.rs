@@ -858,12 +858,14 @@ mod tests {
         let current_date = NaiveDate::from_ymd_opt(2024, 12, 6).unwrap();
         let agenda = build_day_agenda(&tasks, day_date, current_date);
 
-        eprintln!("overdue: {:?}", agenda.overdue.len());
-        eprintln!("scheduled_timed: {:?}", agenda.scheduled_timed.len());
-        eprintln!("scheduled_no_time: {:?}", agenda.scheduled_no_time.len());
-
         // Should appear in overdue (next occurrence 12-05 is in the past)
-        assert!(!agenda.overdue.is_empty());
+        assert!(
+            !agenda.overdue.is_empty(),
+            "expected the +2d task to surface in overdue on a non-occurrence day; \
+             got scheduled_timed={} scheduled_no_time={}",
+            agenda.scheduled_timed.len(),
+            agenda.scheduled_no_time.len()
+        );
         assert_eq!(agenda.overdue[0].task.timestamp_time, None);
     }
 

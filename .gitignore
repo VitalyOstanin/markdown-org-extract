@@ -1,1 +1,17 @@
 /target
+
+# Editor / OS junk
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+
+# Local logs and tmp
+*.log
+/tmp/
+.tmp/

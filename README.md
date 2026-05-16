@@ -1,5 +1,9 @@
 # markdown-org-extract
 
+[![crates.io](https://img.shields.io/crates/v/markdown-org-extract.svg)](https://crates.io/crates/markdown-org-extract)
+[![docs.rs](https://img.shields.io/docsrs/markdown-org-extract)](https://docs.rs/markdown-org-extract)
+[![license](https://img.shields.io/crates/l/markdown-org-extract.svg)](https://github.com/VitalyOstanin/markdown-org-extract/blob/master/LICENSE)
+
 CLI утилита для извлечения задач из markdown файлов с поддержкой меток Emacs Org-mode.
 
 ## Содержание
@@ -20,6 +24,17 @@ CLI утилита для извлечения задач из markdown файл
 
 - Rust 1.80 или новее (используется `std::sync::LazyLock`)
 - Cargo
+
+### Установка из crates.io
+
+Если нужен только бинарник, без клонирования репозитория:
+
+```bash
+cargo install markdown-org-extract
+```
+
+После установки бинарь окажется в `~/.cargo/bin/markdown-org-extract` (этот
+путь должен быть в `PATH`).
 
 ### Сборка проекта
 

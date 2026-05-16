@@ -80,9 +80,14 @@ fn absolute_paths_flag_emits_full_paths() {
         .expect("run");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    // With --absolute-paths we should see the path containing "examples/"
-    // (regardless of cwd, the prefix is the real working directory).
-    assert!(stdout.contains("examples/"));
+    // With --absolute-paths we should see the path containing the fixture
+    // directory. Use the platform-native separator so this works on Windows
+    // (where JSON output preserves backslashes) as well as POSIX.
+    let needle = format!("examples{}", std::path::MAIN_SEPARATOR);
+    assert!(
+        stdout.contains(&needle),
+        "expected absolute path containing {needle:?} in stdout: {stdout:.200}"
+    );
 }
 
 #[test]

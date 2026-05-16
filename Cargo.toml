@@ -2,13 +2,23 @@
 name = "markdown-org-extract"
 version = "0.1.6"
 edition = "2021"
+rust-version = "1.70"
 authors = ["Vitaly Ostanin <vitaly.ostanin@gmail.com>"]
 description = "CLI utility for extracting tasks from markdown files with Emacs Org-mode support"
 license = "MIT"
 repository = "https://github.com/VitalyOstanin/markdown-org-extract"
+homepage = "https://github.com/VitalyOstanin/markdown-org-extract"
+documentation = "https://docs.rs/markdown-org-extract"
 readme = "README.md"
 keywords = ["markdown", "org-mode", "cli", "tasks", "agenda"]
 categories = ["command-line-utilities", "text-processing"]
+exclude = [
+    "REFACTORING.md",
+    "REFACTORING_DONE.md",
+    "CLOCK_IMPLEMENTATION.md",
+    "test-birthday.md",
+    "docs/",
+]
 
 [dependencies]
 clap = { version = "4.5.53", features = ["derive"] }
@@ -25,3 +35,8 @@ once_cell = "1.19.0"
 
 [build-dependencies]
 serde_json = "1.0.145"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+tempfile = "3.10"

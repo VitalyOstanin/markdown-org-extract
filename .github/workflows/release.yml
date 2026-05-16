@@ -4,12 +4,23 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. v0.1.7). Must already exist on the repository.'
+        required: true
+        type: string
+      dry_run:
+        description: 'If true, skip the final cargo publish step.'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -19,6 +30,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable as of 2026-05-16
@@ -30,7 +43,12 @@ jobs:
 
       - name: Verify tag matches Cargo.toml version
         run: |
-          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_VERSION="${{ inputs.tag }}"
+            TAG_VERSION="${TAG_VERSION#v}"
+          else
+            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
           CARGO_VERSION=$(awk -F'"' '/^version = / {print $2; exit}' Cargo.toml)
           if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
             echo "::error::Tag v$TAG_VERSION does not match Cargo.toml version $CARGO_VERSION"
@@ -55,6 +73,7 @@ jobs:
         run: cargo publish --dry-run
 
       - name: cargo publish
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish

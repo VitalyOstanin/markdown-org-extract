@@ -1,13 +1,13 @@
 use chrono::NaiveDate;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::borrow::Cow;
+use std::sync::LazyLock;
 
 use super::repeater::{parse_repeater, Repeater};
 use super::weekdays::normalize_weekdays;
 use crate::regex_limits::compile_bounded;
 
-static RANGE_RE: Lazy<Regex> = Lazy::new(|| {
+static RANGE_RE: LazyLock<Regex> = LazyLock::new(|| {
     compile_bounded(concat!(
         r"<(\d{4}-\d{2}-\d{2})",
         r"(?: (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday))?",
@@ -21,7 +21,7 @@ static RANGE_RE: Lazy<Regex> = Lazy::new(|| {
     ))
 });
 
-static SINGLE_RE: Lazy<Regex> = Lazy::new(|| {
+static SINGLE_RE: LazyLock<Regex> = LazyLock::new(|| {
     compile_bounded(concat!(
         r"<(\d{4}-\d{2}-\d{2})",
         r"(?: (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday))?",

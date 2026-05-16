@@ -1,3 +1,4 @@
+use chrono::{Datelike, NaiveDate};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -50,42 +51,9 @@ fn emit_dates(arr: &[serde_json::Value], kind: &str, year_key: &str, code: &mut 
 }
 
 fn parse_date(s: &str) -> Result<(i32, u32, u32), String> {
-    let parts: Vec<&str> = s.split('-').collect();
-    if parts.len() != 3 {
-        return Err(format!("expected YYYY-MM-DD, got '{s}'"));
-    }
-    let year: i32 = parts[0]
-        .parse()
-        .map_err(|e| format!("year '{}' is not an integer: {e}", parts[0]))?;
-    let month: u32 = parts[1]
-        .parse()
-        .map_err(|e| format!("month '{}' is not an integer: {e}", parts[1]))?;
-    let day: u32 = parts[2]
-        .parse()
-        .map_err(|e| format!("day '{}' is not an integer: {e}", parts[2]))?;
-
-    // Validate the calendar date so a malformed JSON fails the build with a clear message
-    // (without pulling chrono into [build-dependencies]).
-    if !(1..=12).contains(&month) {
-        return Err(format!("month {month} is out of range 1..=12"));
-    }
-    let max_day = match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => {
-            if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
-                29
-            } else {
-                28
-            }
-        }
-        _ => unreachable!(),
-    };
-    if !(1..=max_day).contains(&day) {
-        return Err(format!(
-            "day {day} is out of range 1..={max_day} for month {month}"
-        ));
-    }
-
-    Ok((year, month, day))
+    // `%Y-%m-%d` is strict: it rejects out-of-range months, invalid days, and
+    // anything that doesn't roundtrip as a calendar date (leap years included).
+    let date = NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .map_err(|e| format!("expected YYYY-MM-DD, got '{s}': {e}"))?;
+    Ok((date.year(), date.month(), date.day()))
 }

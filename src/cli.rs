@@ -88,15 +88,82 @@ pub struct Cli {
     /// Emit absolute file paths in output. Default is paths relative to `--dir`.
     #[arg(long)]
     pub absolute_paths: bool,
+
+    /// Maximum number of tasks to extract before stopping (1..=10_000_000).
+    /// Acts as both a per-file cap and a global cap during scanning.
+    #[arg(long, default_value_t = crate::types::DEFAULT_MAX_TASKS, value_parser = validate_max_tasks)]
+    pub max_tasks: usize,
+
+    /// Increase logging verbosity. Repeat for more (-v = info, -vv = debug, -vvv = trace).
+    #[arg(long, short = 'v', action = clap::ArgAction::Count, conflicts_with = "quiet")]
+    pub verbose: u8,
+
+    /// Suppress all diagnostic output except hard errors.
+    #[arg(long, short = 'q', conflicts_with = "verbose")]
+    pub quiet: bool,
+
+    /// Disable ANSI color codes in diagnostic output. Honors `NO_COLOR` env var as well.
+    #[arg(long)]
+    pub no_color: bool,
 }
 
 impl Cli {
+    /// Resolve the diagnostic log level from `--verbose` / `--quiet`.
+    /// Default is `warn`: warnings and errors are visible, info-level chatter is not.
+    pub fn log_level(&self) -> tracing::Level {
+        if self.quiet {
+            tracing::Level::ERROR
+        } else {
+            match self.verbose {
+                0 => tracing::Level::WARN,
+                1 => tracing::Level::INFO,
+                2 => tracing::Level::DEBUG,
+                _ => tracing::Level::TRACE,
+            }
+        }
+    }
+
+    /// Whether ANSI color should be used in the log output.
+    ///
+    /// Disabled when `--no-color` is set, when `NO_COLOR` is present in the
+    /// environment (per <https://no-color.org>), or when stderr is not a TTY.
+    pub fn use_color(&self) -> bool {
+        if self.no_color {
+            return false;
+        }
+        if std::env::var_os("NO_COLOR").is_some() {
+            return false;
+        }
+        // Conservative default: assume no TTY unless we can prove otherwise.
+        // Keeps tests deterministic (assert_cmd pipes stderr).
+        use std::io::IsTerminal;
+        std::io::stderr().is_terminal()
+    }
+
     pub fn get_agenda_mode(&self) -> &str {
         if self.tasks {
             "tasks"
         } else {
             self.agenda.as_str()
         }
+    }
+
+    /// Initialize the global tracing subscriber from CLI flags.
+    ///
+    /// Idempotent in practice: callers invoke this once at startup. If
+    /// `try_init` finds an existing global subscriber (e.g. in tests), the
+    /// error is swallowed — tests don't need diagnostic output.
+    pub fn init_tracing(&self) {
+        use tracing_subscriber::EnvFilter;
+        let env_filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new(self.log_level().to_string().to_lowercase()));
+        let _ = tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_target(false)
+            .without_time()
+            .with_ansi(self.use_color())
+            .with_env_filter(env_filter)
+            .try_init();
     }
 }
 
@@ -116,6 +183,22 @@ fn validate_year(s: &str) -> Result<i32, String> {
     }
 
     Ok(year)
+}
+
+fn validate_max_tasks(s: &str) -> Result<usize, String> {
+    let n: usize = s
+        .parse()
+        .map_err(|_| format!("Invalid --max-tasks '{s}': must be a positive integer"))?;
+    const MAX_ALLOWED: usize = 10_000_000;
+    if n == 0 {
+        return Err("Invalid --max-tasks 0: must be at least 1".to_string());
+    }
+    if n > MAX_ALLOWED {
+        return Err(format!(
+            "Invalid --max-tasks '{s}': must be at most {MAX_ALLOWED}"
+        ));
+    }
+    Ok(n)
 }
 
 fn validate_timezone(s: &str) -> Result<String, String> {

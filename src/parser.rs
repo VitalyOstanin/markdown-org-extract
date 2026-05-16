@@ -1,9 +1,9 @@
 use comrak::nodes::{AstNode, NodeValue};
 use comrak::{parse_document, Arena, Options};
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::LazyLock;
 
 use crate::clock::{calculate_total_minutes, extract_clocks, format_duration};
 use crate::regex_limits::compile_bounded;
@@ -11,7 +11,7 @@ use crate::timestamp::{
     extract_created_normalized, extract_timestamp_normalized, normalize_weekdays,
     parse_timestamp_fields,
 };
-use crate::types::{Priority, Task, TaskType, MAX_TASKS};
+use crate::types::{Priority, Task, TaskType};
 
 /// Cap on how many invalid-timestamp warnings we emit per process. Without a cap
 /// a corrupt or hostile input could flood stderr; the count is global because
@@ -22,20 +22,23 @@ static TS_WARNINGS_EMITTED: AtomicUsize = AtomicUsize::new(0);
 fn warn_invalid_timestamp(path: &Path, line: u32, ts: &str) {
     let n = TS_WARNINGS_EMITTED.fetch_add(1, Ordering::Relaxed);
     if n < MAX_TS_WARNINGS {
-        eprintln!(
-            "Warning: cannot parse timestamp at {}:{}: {}",
-            path.display(),
+        tracing::warn!(
+            file = %path.display(),
             line,
-            ts.trim()
+            timestamp = ts.trim(),
+            "cannot parse timestamp"
         );
     } else if n == MAX_TS_WARNINGS {
-        eprintln!("Warning: more invalid timestamps suppressed (showed first {MAX_TS_WARNINGS})");
+        tracing::warn!(
+            limit = MAX_TS_WARNINGS,
+            "more invalid timestamps suppressed (showed first {MAX_TS_WARNINGS})"
+        );
     }
 }
 
 /// Regex for parsing task headings: `TODO/DONE [#A] Task title`
-static HEADING_RE: Lazy<Regex> =
-    Lazy::new(|| compile_bounded(r"^(TODO|DONE)\s+(?:\[#([A-Z])\]\s+)?(.+)$"));
+static HEADING_RE: LazyLock<Regex> =
+    LazyLock::new(|| compile_bounded(r"^(TODO|DONE)\s+(?:\[#([A-Z])\]\s+)?(.+)$"));
 
 /// Extract tasks from markdown content.
 ///
@@ -43,10 +46,16 @@ static HEADING_RE: Lazy<Regex> =
 /// * `path` - Path to the markdown file. Stored verbatim in `Task.file` for output.
 /// * `content` - File content (UTF-8).
 /// * `mappings` - Weekday name mappings for localization.
+/// * `max_tasks` - Per-file cap. Parsing stops as soon as this many tasks accumulate.
 ///
 /// # Returns
-/// Vector of extracted tasks, capped at `MAX_TASKS` per file.
-pub fn extract_tasks(path: &Path, content: &str, mappings: &[(&str, &str)]) -> Vec<Task> {
+/// Vector of extracted tasks, capped at `max_tasks`.
+pub fn extract_tasks(
+    path: &Path,
+    content: &str,
+    mappings: &[(&str, &str)],
+    max_tasks: usize,
+) -> Vec<Task> {
     let arena = Arena::new();
     let root = parse_document(&arena, content, &safe_comrak_options());
 
@@ -56,10 +65,11 @@ pub fn extract_tasks(path: &Path, content: &str, mappings: &[(&str, &str)]) -> V
     for node in root.children() {
         process_node(node, path, &mut tasks, &mut current_heading, mappings);
 
-        if tasks.len() >= MAX_TASKS {
-            eprintln!(
-                "Warning: reached per-file task limit ({MAX_TASKS}) in {}",
-                path.display()
+        if tasks.len() >= max_tasks {
+            tracing::warn!(
+                file = %path.display(),
+                limit = max_tasks,
+                "reached per-file task limit"
             );
             break;
         }
@@ -302,6 +312,7 @@ fn collect_text_recursive<'a>(node: &'a AstNode<'a>, out: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::DEFAULT_MAX_TASKS;
 
     #[test]
     fn test_parse_heading_with_priority() {
@@ -332,7 +343,7 @@ mod tests {
         let content = "\
 ### TODO [#A] Write docs\n\
 `DEADLINE: <2025-12-10 Wed>`\n";
-        let tasks = extract_tasks(Path::new("t.md"), content, &[]);
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
         assert_eq!(tasks.len(), 1);
         let t = &tasks[0];
         assert_eq!(t.task_type, Some(TaskType::Todo));
@@ -346,7 +357,7 @@ mod tests {
     fn extract_tasks_extracts_emph_text_in_heading() {
         // Regression: previously emphasised text inside heading was dropped.
         let content = "### TODO **Important** task\n`DEADLINE: <2025-12-10 Wed>`\n";
-        let tasks = extract_tasks(Path::new("t.md"), content, &[]);
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].heading, "Important task");
     }
@@ -354,7 +365,7 @@ mod tests {
     #[test]
     fn extract_tasks_ignores_non_task_headings_without_timestamps() {
         let content = "### Just a heading\n\nSome text.\n";
-        let tasks = extract_tasks(Path::new("t.md"), content, &[]);
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
         assert!(tasks.is_empty());
     }
 
@@ -362,7 +373,7 @@ mod tests {
     fn extract_tasks_keeps_created_without_todo() {
         // Heading without TODO/DONE keyword but with a CREATED line is still a task.
         let content = "### Project kickoff\n\n`CREATED: <2025-09-01 Mon>`\n";
-        let tasks = extract_tasks(Path::new("t.md"), content, &[]);
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].task_type, None);
         assert_eq!(tasks[0].created, Some("CREATED: <2025-09-01 Mon>".into()));
@@ -377,7 +388,7 @@ First paragraph.\n\
 \n\
 Second paragraph.\n\
 ";
-        let tasks = extract_tasks(Path::new("t.md"), content, &[]);
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
         assert_eq!(tasks.len(), 1);
         assert!(tasks[0].content.contains("First paragraph"));
         assert!(tasks[0].content.contains("Second paragraph"));
@@ -389,7 +400,7 @@ Second paragraph.\n\
 ### TODO Track time\n\
 `CLOCK: [2025-09-01 Mon 10:00]--[2025-09-01 Mon 11:30] => 1:30`\n\
 ";
-        let tasks = extract_tasks(Path::new("t.md"), content, &[]);
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
         assert_eq!(tasks.len(), 1);
         let t = &tasks[0];
         assert!(t.clocks.is_some());
@@ -399,7 +410,7 @@ Second paragraph.\n\
     #[test]
     fn extract_tasks_handles_done_priority() {
         let content = "### DONE [#B] Wrap up\n";
-        let tasks = extract_tasks(Path::new("t.md"), content, &[]);
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].task_type, Some(TaskType::Done));
         assert_eq!(tasks[0].priority, Some(Priority::B));

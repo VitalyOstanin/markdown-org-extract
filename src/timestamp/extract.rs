@@ -1,5 +1,5 @@
-use once_cell::sync::Lazy;
 use regex::Regex;
+use std::sync::LazyLock;
 
 use super::weekdays::normalize_weekdays;
 use crate::regex_limits::compile_bounded;
@@ -7,26 +7,26 @@ use crate::regex_limits::compile_bounded;
 // `[^>]{0,256}` caps the body length of a single bracketed timestamp so that a
 // hostile or malformed line cannot make `[^>]*` scan thousands of characters
 // before the engine notices the missing `>`.
-static TIMESTAMP_RE: Lazy<Regex> = Lazy::new(|| {
+static TIMESTAMP_RE: LazyLock<Regex> = LazyLock::new(|| {
     compile_bounded(r"^\s*((?:SCHEDULED|DEADLINE|CLOSED):\s*)<(\d{4}-\d{2}-\d{2}[^>]{0,256})>")
 });
 
-static RANGE_TIMESTAMP_RE: Lazy<Regex> = Lazy::new(|| {
+static RANGE_TIMESTAMP_RE: LazyLock<Regex> = LazyLock::new(|| {
     compile_bounded(r"^\s*<(\d{4}-\d{2}-\d{2}[^>]{0,256})>--<(\d{4}-\d{2}-\d{2}[^>]{0,256})>")
 });
 
-static SIMPLE_TIMESTAMP_RE: Lazy<Regex> =
-    Lazy::new(|| compile_bounded(r"^\s*<(\d{4}-\d{2}-\d{2}[^>]{0,256})>"));
+static SIMPLE_TIMESTAMP_RE: LazyLock<Regex> =
+    LazyLock::new(|| compile_bounded(r"^\s*<(\d{4}-\d{2}-\d{2}[^>]{0,256})>"));
 
-static CREATED_RE: Lazy<Regex> =
-    Lazy::new(|| compile_bounded(r"^\s*CREATED:\s*<(\d{4}-\d{2}-\d{2}[^>]{0,256})>"));
+static CREATED_RE: LazyLock<Regex> =
+    LazyLock::new(|| compile_bounded(r"^\s*CREATED:\s*<(\d{4}-\d{2}-\d{2}[^>]{0,256})>"));
 
-static DATE_RE: Lazy<Regex> = Lazy::new(|| compile_bounded(r"\b(\d{4}-\d{2}-\d{2})"));
+static DATE_RE: LazyLock<Regex> = LazyLock::new(|| compile_bounded(r"\b(\d{4}-\d{2}-\d{2})"));
 
-static TIME_RANGE_RE: Lazy<Regex> =
-    Lazy::new(|| compile_bounded(r"\b(\d{1,2}:\d{2})-(\d{1,2}:\d{2})\b"));
+static TIME_RANGE_RE: LazyLock<Regex> =
+    LazyLock::new(|| compile_bounded(r"\b(\d{1,2}:\d{2})-(\d{1,2}:\d{2})\b"));
 
-static TIME_SINGLE_RE: Lazy<Regex> = Lazy::new(|| compile_bounded(r"\b(\d{1,2}:\d{2})\b"));
+static TIME_SINGLE_RE: LazyLock<Regex> = LazyLock::new(|| compile_bounded(r"\b(\d{1,2}:\d{2})\b"));
 
 /// Extract CREATED timestamp from already-weekday-normalized text. Callers in
 /// the parser pre-normalize so multiple extractors share one scan; tests pass

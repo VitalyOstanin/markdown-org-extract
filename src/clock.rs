@@ -1,26 +1,52 @@
-use once_cell::sync::Lazy;
 use regex::Regex;
+use std::sync::LazyLock;
 
 use crate::regex_limits::compile_bounded;
 use crate::types::ClockEntry;
 
 /// Regex for CLOCK entries: CLOCK: [timestamp]--[timestamp] => duration
-/// Supports both square brackets (like org-mode) and angle brackets (like other timestamps).
+///
+/// Supports both square brackets (org-mode inactive timestamps) and angle
+/// brackets (active timestamps), but the opening and closing bracket of each
+/// timestamp must match — `[…>` or `<…]` are rejected as malformed.
 /// Inner bodies capped at 128 chars to bound the work done on malformed input.
-static CLOCK_RE: Lazy<Regex> = Lazy::new(|| {
+static CLOCK_RE: LazyLock<Regex> = LazyLock::new(|| {
     compile_bounded(
-        r"CLOCK:\s*[\[<]([^\]>]{1,128})[\]>](?:--[\[<]([^\]>]{1,128})[\]>])?(?:\s*=>\s*([0-9]{1,5}:[0-9]{1,2}))?",
+        r"CLOCK:\s*(?:\[([^\]<>]{1,128})\]|<([^\]<>]{1,128})>)(?:--(?:\[([^\]<>]{1,128})\]|<([^\]<>]{1,128})>))?(?:\s*=>\s*([0-9]{1,5}:[0-9]{1,2}))?",
     )
 });
 
-/// Extract all CLOCK entries from text
+/// Extract all CLOCK entries from text.
+///
+/// Two forms are recognized:
+/// - **Closed**: `CLOCK: [start]--[end] =>  HH:MM` — yields all three fields
+///   filled (`start`, `Some(end)`, `Some(duration)`).
+/// - **Open**: `CLOCK: [start]` — represents an in-progress interval that has
+///   not yet been closed; yields `start` only with `end = None` and
+///   `duration = None`.
+///
+/// The duration tail (`=> HH:MM`) is optional even on closed clocks; org-mode
+/// inserts it automatically but does not require it for the line to parse.
 pub fn extract_clocks(text: &str) -> Vec<ClockEntry> {
     CLOCK_RE
         .captures_iter(text)
-        .map(|cap| ClockEntry {
-            start: cap[1].to_string(),
-            end: cap.get(2).map(|m| m.as_str().to_string()),
-            duration: cap.get(3).map(|m| m.as_str().to_string()),
+        .map(|cap| {
+            let start = cap
+                .get(1)
+                .or_else(|| cap.get(2))
+                .expect("CLOCK regex matched without a start timestamp")
+                .as_str()
+                .to_string();
+            let end = cap
+                .get(3)
+                .or_else(|| cap.get(4))
+                .map(|m| m.as_str().to_string());
+            let duration = cap.get(5).map(|m| m.as_str().to_string());
+            ClockEntry {
+                start,
+                end,
+                duration,
+            }
         })
         .collect()
 }
@@ -107,6 +133,15 @@ mod tests {
         assert_eq!(clocks[0].start, "2025-10-18 Sat 13:00");
         assert_eq!(clocks[0].end, None);
         assert_eq!(clocks[0].duration, None);
+    }
+
+    #[test]
+    fn test_rejects_mixed_brackets() {
+        // Opening `[` must close with `]`; opening `<` must close with `>`.
+        // Mixing them is malformed and should not match.
+        assert!(extract_clocks("CLOCK: [2023-02-19 21:30>").is_empty());
+        assert!(extract_clocks("CLOCK: <2023-02-19 21:30]").is_empty());
+        assert!(extract_clocks("CLOCK: [2023-02-19 21:30>--<2023-02-19 23:35]").is_empty());
     }
 
     #[test]

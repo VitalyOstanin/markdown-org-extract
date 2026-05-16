@@ -16,8 +16,8 @@ const DFA_SIZE_LIMIT_BYTES: usize = 1 << 20; // 1 MiB
 
 /// Compile a regex with conservative size limits. Panics if `pattern` is invalid
 /// or exceeds the limits — both indicate a programmer error and should be caught
-/// in tests (every call site goes through `Lazy::new`, so the panic happens on
-/// first use which is exercised by the unit tests).
+/// in tests (every call site goes through `LazyLock::new`, so the panic happens
+/// on first use which is exercised by the unit tests).
 pub fn compile_bounded(pattern: &str) -> Regex {
     RegexBuilder::new(pattern)
         .size_limit(SIZE_LIMIT_BYTES)

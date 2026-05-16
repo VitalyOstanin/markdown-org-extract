@@ -144,7 +144,6 @@ fn build_day_agenda_prepared(
     current_date: NaiveDate,
 ) -> DayAgenda {
     let mut agenda = DayAgenda::new(day_date);
-    let is_today = day_date == current_date;
 
     for entry in prepared {
         let task = entry.task;
@@ -152,7 +151,7 @@ fn build_day_agenda_prepared(
             if let Some(ref repeater) = parsed.repeater {
                 handle_repeating_task(task, parsed, repeater, day_date, current_date, &mut agenda);
             } else {
-                handle_non_repeating_task(task, parsed, day_date, is_today, &mut agenda);
+                handle_non_repeating_task(task, parsed, day_date, current_date, &mut agenda);
             }
         }
     }
@@ -170,12 +169,13 @@ fn handle_non_repeating_task(
     task: &Task,
     parsed: &crate::timestamp::ParsedTimestamp,
     day_date: NaiveDate,
-    is_today: bool,
+    current_date: NaiveDate,
     agenda: &mut DayAgenda,
 ) {
     let task_date = parsed.date;
     let days_diff = (task_date - day_date).num_days();
     let is_done = matches!(task.task_type, Some(TaskType::Done));
+    let is_today = day_date == current_date;
 
     let days_offset = if days_diff != 0 {
         Some(days_diff)

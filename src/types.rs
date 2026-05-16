@@ -73,7 +73,15 @@ impl fmt::Display for Priority {
     }
 }
 
-/// Clock entry representing time tracking
+/// Clock entry representing time tracking.
+///
+/// Mirrors org-mode CLOCK lines. The entry has two shapes:
+/// - **Closed clock** — `CLOCK: [start]--[end] =>  HH:MM`. All three fields
+///   are present: `start`, `end = Some(_)`, `duration = Some(_)`.
+/// - **Open clock** — `CLOCK: [start]`. Only `start` is set; `end` and
+///   `duration` are `None`. An open clock represents an in-progress
+///   interval whose endpoint has not been recorded yet, so the consumer
+///   is responsible for deciding how (or whether) to render it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClockEntry {
     pub start: String,
@@ -118,8 +126,12 @@ pub struct Task {
 /// Maximum file size to process (10 MB)
 pub const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
-/// Maximum number of tasks to extract (global, across all files).
-pub const MAX_TASKS: usize = 10_000;
+/// Default value for the `--max-tasks` CLI flag.
+///
+/// Acts as both a per-file and a global cap during scanning, configurable via
+/// `--max-tasks`. The default is conservative; legitimate workloads stay well
+/// under it, while pathological / hostile inputs hit it quickly.
+pub const DEFAULT_MAX_TASKS: usize = 10_000;
 
 /// File processing statistics surfaced to stderr after a run.
 #[derive(Debug, Default)]
@@ -129,6 +141,9 @@ pub struct ProcessingStats {
     pub files_failed_search: usize,
     pub files_failed_read: usize,
     pub max_tasks_reached: bool,
+    /// Configured task limit (from `--max-tasks`). Reported in the summary so
+    /// users know which limit they hit and can rerun with a higher value.
+    pub max_tasks_limit: usize,
     /// Paths of files that could not be read or searched. Capped to avoid unbounded growth.
     pub failed_paths: Vec<String>,
 }
@@ -149,26 +164,25 @@ impl ProcessingStats {
     }
 
     pub fn print_summary(&self) {
-        if self.has_warnings() {
-            eprintln!("\nProcessing summary:");
-            eprintln!("  Files processed: {}", self.files_processed);
-            if self.files_skipped_size > 0 {
-                eprintln!("  Files skipped (too large): {}", self.files_skipped_size);
-            }
-            if self.files_failed_search > 0 {
-                eprintln!("  Files failed to search: {}", self.files_failed_search);
-            }
-            if self.files_failed_read > 0 {
-                eprintln!("  Files failed to read: {}", self.files_failed_read);
-            }
-            if self.max_tasks_reached {
-                eprintln!("  Hit MAX_TASKS = {MAX_TASKS} limit; output may be truncated");
-            }
-            if !self.failed_paths.is_empty() {
-                eprintln!("  Failed paths (up to first 20):");
-                for p in &self.failed_paths {
-                    eprintln!("    - {p}");
-                }
+        if !self.has_warnings() {
+            return;
+        }
+        tracing::warn!(
+            files_processed = self.files_processed,
+            files_skipped_size = self.files_skipped_size,
+            files_failed_search = self.files_failed_search,
+            files_failed_read = self.files_failed_read,
+            max_tasks_reached = self.max_tasks_reached,
+            max_tasks_limit = self.max_tasks_limit,
+            "processing summary"
+        );
+        if !self.failed_paths.is_empty() {
+            tracing::warn!(
+                count = self.failed_paths.len(),
+                "failed paths (up to first 20):"
+            );
+            for p in &self.failed_paths {
+                tracing::warn!(path = %p, "failed path");
             }
         }
     }

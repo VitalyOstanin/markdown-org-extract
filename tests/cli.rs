@@ -176,6 +176,86 @@ fn double_star_glob_is_accepted() {
 }
 
 #[test]
+fn verbose_and_quiet_are_mutually_exclusive() {
+    bin()
+        .args([
+            "--dir",
+            "examples",
+            "-v",
+            "--quiet",
+            "--current-date",
+            "2025-12-05",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("cannot be used"));
+}
+
+#[test]
+fn no_color_flag_is_accepted() {
+    bin()
+        .args([
+            "--dir",
+            "examples",
+            "--no-color",
+            "--current-date",
+            "2025-12-05",
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn rejects_invalid_max_tasks() {
+    bin()
+        .args([
+            "--dir",
+            "examples",
+            "--max-tasks",
+            "0",
+            "--current-date",
+            "2025-12-05",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("--max-tasks"));
+}
+
+#[test]
+fn max_tasks_one_caps_output() {
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--format",
+            "json",
+            "--tasks",
+            "--max-tasks",
+            "1",
+            "--current-date",
+            "2025-12-05",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // Count top-level JSON objects in the flat task list. Minimal sanity check:
+    // limit=1 must not produce a multi-element array opening with `{` after `[`.
+    // We rely on parsed shape: an array with at most one element.
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let arr = parsed.as_array().expect("array");
+    assert!(
+        arr.len() <= 1,
+        "got {} tasks, expected at most 1",
+        arr.len()
+    );
+}
+
+#[test]
 fn rejects_malformed_glob() {
     bin()
         .args([

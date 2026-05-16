@@ -24,10 +24,12 @@ use crate::error::AppError;
 use crate::format::OutputFormat;
 use crate::parser::extract_tasks;
 use crate::render::{render_html, render_markdown};
-use crate::types::{ProcessingStats, MAX_FILE_SIZE, MAX_TASKS};
+use crate::types::{ProcessingStats, MAX_FILE_SIZE};
 
 fn main() {
     if let Err(e) = run() {
+        // Use eprintln directly: tracing may not be initialized if argument parsing failed,
+        // and a hard error should always reach the user regardless of `--quiet`.
         eprintln!("Error: {e}");
         std::process::exit(1);
     }
@@ -35,6 +37,7 @@ fn main() {
 
 fn run() -> Result<(), AppError> {
     let cli = Cli::parse();
+    cli.init_tracing();
 
     if let Some(year) = cli.holidays {
         let calendar = holidays::HolidayCalendar::global();
@@ -73,7 +76,10 @@ fn run() -> Result<(), AppError> {
     let glob_matcher = compile_glob(&cli.glob)?;
 
     let mut tasks = Vec::new();
-    let mut stats = ProcessingStats::default();
+    let mut stats = ProcessingStats {
+        max_tasks_limit: cli.max_tasks,
+        ..ProcessingStats::default()
+    };
     let matcher = RegexMatcher::new(
         r"(?m)(^[#*]+\s+(TODO|DONE)\s|DEADLINE:|SCHEDULED:|CREATED:|CLOSED:|CLOCK:)",
     )
@@ -158,12 +164,12 @@ fn run() -> Result<(), AppError> {
             }
         };
 
-        let extracted = extract_tasks(Path::new(&display_path), &content, &mappings);
+        let extracted = extract_tasks(Path::new(&display_path), &content, &mappings, cli.max_tasks);
         tasks.extend(extracted);
         stats.files_processed += 1;
 
-        if tasks.len() >= MAX_TASKS {
-            tasks.truncate(MAX_TASKS);
+        if tasks.len() >= cli.max_tasks {
+            tasks.truncate(cli.max_tasks);
             stats.max_tasks_reached = true;
             break;
         }

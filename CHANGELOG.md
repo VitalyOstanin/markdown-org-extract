@@ -8,10 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [\[Unreleased\]](#unreleased)
+- [\[0.2.0\] — 2026-05-17](#020--2026-05-17)
 - [\[0.1.6\] — 2026-05-11](#016--2026-05-11)
 - [\[0.1.5\] — earlier](#015--earlier)
 
 ## [Unreleased]
+
+_No user-visible changes yet._
+
+## [0.2.0] — 2026-05-17
+
+### Breaking
+
+- MSRV raised from **1.70 to 1.80**. The crate now relies on
+  `std::sync::LazyLock` for global regex statics, which stabilized in 1.80.
 
 ### Fixed
 
@@ -52,15 +62,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--absolute-paths` CLI flag. Default output now uses paths **relative to
   `--dir`**, which avoids leaking absolute filesystem paths into JSON /
   Markdown / HTML output.
-- `tests/cli.rs` integration tests using `assert_cmd`.
+- `--max-tasks <N>` CLI flag (range `1..=10_000_000`). Replaces the
+  hard-coded ceiling and is enforced both per-file and globally.
+- Diagnostic-output controls: `--verbose` / `-v` (repeatable: `-v` info,
+  `-vv` debug, `-vvv` trace), `--quiet` / `-q`, and `--no-color`. Output is
+  routed through `tracing` + `tracing-subscriber`, honouring the `NO_COLOR`
+  environment variable as well.
+- `tests/cli.rs` integration tests using `assert_cmd` (including coverage
+  for `--verbose` / `--quiet` mutual exclusion, `--no-color`, and
+  `--max-tasks` bounds).
 - CI workflow (`.github/workflows/ci.yml`) running `cargo build`, `test`,
   `clippy`, and `fmt --check` on pull requests and pushes to `master`.
+- `.github/workflows/outdated.yml` — weekly `cargo outdated` check
+  (also `workflow_dispatch`-runnable, non-blocking).
+- `workflow_dispatch` trigger in `release.yml` with `tag` and `dry_run`
+  inputs for ad-hoc / dry-run publication.
+- `rust-toolchain.toml` and `rustfmt.toml` to pin the toolchain channel
+  and formatting baseline for contributors.
+- `holidays::workdays_between_exclusive` and `holidays::nth_workday_after`
+  enabling `O(log²n)` resolution of `+Nwd` workday repeaters
+  (replacing the previous linear day-by-day scan).
+- Integration test that compares the compiled-in `HOLIDAYS` / `WORKDAYS`
+  arrays against `holidays_ru.json` to guard against build-pipeline drift.
+- crates.io / docs.rs / license badges and a `cargo install
+  markdown-org-extract` section in `README.md`.
 - `Display` implementations for `TaskType` and `Priority` (`Todo` →
   `TODO`, `A` → `A`, …). The Markdown/HTML output uses these instead of
   `{:?}` to insulate the format from enum-variant renaming.
 
 ### Changed
 
+- All `once_cell::sync::Lazy` regex statics migrated to
+  `std::sync::LazyLock` (`clock.rs`, `parser.rs`, `regex_limits.rs`,
+  `timestamp/extract.rs`, `timestamp/parser.rs`). `once_cell` is no longer
+  a runtime dependency.
+- CLOCK timestamp regex tightened to **homogeneous brackets** — only
+  `[...]` or `<...>` pairs are accepted; mixed forms like `[...>` or
+  `<...]` are rejected.
+- `closest_date` for `+Nwd` workday repeaters now runs in `O(log²n)` via
+  a binary search over precomputed prefixes of the workday/holiday lists
+  (verified by an oracle sweep across all 365 days of 2026 for step
+  ∈ {1, 2, 3, 5} × {Past, Future}).
 - `HolidayCalendar` is now a process-wide singleton accessed via
   `HolidayCalendar::global()` (`std::sync::OnceLock`). The previous
   `HolidayCalendar::load() -> Result<…>` API has been removed because it
@@ -72,19 +114,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parser. Previously each candidate file was opened twice.
 - `--output` path is validated before serialization: the parent directory
   must exist and the target must not be an existing symlink.
-- `build.rs` validates every date in `holidays_ru.json` (year/month/day
-  ranges, leap-year-aware February) with a clear panic message instead of
-  silently truncating an invalid date.
-- `MAX_TASKS` is enforced as a **global** ceiling across all files.
+- `build.rs` validates every date in `holidays_ru.json` using
+  `chrono::NaiveDate::parse_from_str` (strict `YYYY-MM-DD`, leap-year
+  aware) and panics with a clear message instead of silently truncating
+  an invalid date.
+- The 10 000-task ceiling is enforced as a **global** cap across all
+  files (configurable via `--max-tasks`).
 - `clap` arguments now use `ValueEnum` for `--format` and `--agenda`,
   producing typed help output.
+- All `eprintln!` diagnostics in production code replaced with
+  `tracing::warn!` (`parser.rs`, `types.rs::print_summary`).
 - Markdown rendering switched from `format!() + push_str()` to `write!()`
   to reduce intermediate allocations.
 - `agenda.rs` pre-parses each task's timestamp once per agenda invocation
   instead of re-parsing it for every day in week/month ranges.
+- `is_today` for non-repeating tasks is computed inline inside
+  `handle_non_repeating_task`, eliminating an out-of-band parameter.
 - Duplicate `normalize_weekdays` implementations consolidated into
   `timestamp::weekdays`.
+- GitHub Actions in `release.yml` and `ci.yml` are SHA-pinned
+  (`actions/checkout`, `dtolnay/rust-toolchain`, `Swatinem/rust-cache`,
+  `rustsec/audit-check`).
 - Dead code (`find_last_occurrence_before`, `is_occurrence_day`) removed.
+- Debug `eprintln!` lines in `#[cfg(test)]` blocks (`agenda.rs`,
+  `repeater.rs`) replaced with descriptive `assert!` messages.
+
+### Removed
+
+- `once_cell` runtime dependency (superseded by `std::sync::LazyLock`).
 
 ## [0.1.6] — 2026-05-11
 

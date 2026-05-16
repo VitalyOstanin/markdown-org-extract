@@ -5,6 +5,7 @@ mod error;
 mod format;
 mod holidays;
 mod parser;
+mod regex_limits;
 mod render;
 mod timestamp;
 mod types;
@@ -69,6 +70,8 @@ fn run() -> Result<(), AppError> {
     let dir_canonical = fs::canonicalize(&cli.dir)
         .map_err(|e| AppError::InvalidDirectory(format!("{}: {e}", cli.dir.display())))?;
 
+    let glob_matcher = compile_glob(&cli.glob)?;
+
     let mut tasks = Vec::new();
     let mut stats = ProcessingStats::default();
     let matcher = RegexMatcher::new(
@@ -91,7 +94,7 @@ fn run() -> Result<(), AppError> {
 
         let path = entry.path();
 
-        if !matches_glob(path, &cli.glob)? {
+        if !glob_match(&glob_matcher, path, &dir_canonical) {
             continue;
         }
 
@@ -252,32 +255,35 @@ impl<'a> Sink for FoundSink<'a> {
     }
 }
 
-fn matches_glob(path: &Path, pattern: &str) -> Result<bool, AppError> {
-    if let Some(ext) = pattern.strip_prefix("*.") {
-        if ext.is_empty() {
-            return Err(AppError::InvalidGlob(
-                "pattern '*.': extension cannot be empty".to_string(),
-            ));
+/// Compile a `--glob` pattern into a `globset::GlobMatcher`. Empty patterns
+/// and `*.` (extension-less) are rejected for parity with previous behaviour.
+fn compile_glob(pattern: &str) -> Result<globset::GlobMatcher, AppError> {
+    if pattern.is_empty() {
+        return Err(AppError::InvalidGlob("empty pattern".to_string()));
+    }
+    if pattern == "*." {
+        return Err(AppError::InvalidGlob(
+            "pattern '*.': extension cannot be empty".to_string(),
+        ));
+    }
+    globset::Glob::new(pattern)
+        .map(|g| g.compile_matcher())
+        .map_err(|e| AppError::InvalidGlob(format!("invalid pattern '{pattern}': {e}")))
+}
+
+/// Match a path against the compiled glob. The matcher is tried against:
+/// (1) the path relative to `dir_root` — supports patterns like `**/*.md`,
+/// (2) the file name — supports patterns like `*.md` regardless of depth.
+fn glob_match(matcher: &globset::GlobMatcher, path: &Path, dir_root: &Path) -> bool {
+    if let Ok(rel) = path.strip_prefix(dir_root) {
+        if matcher.is_match(rel) {
+            return true;
         }
-        if ext.contains('*') || ext.contains('?') || ext.contains('/') {
-            return Err(AppError::InvalidGlob(format!(
-                "unsupported pattern '{pattern}': only '*.ext' and exact file names are supported"
-            )));
-        }
-        return Ok(path.extension().and_then(|e| e.to_str()) == Some(ext));
     }
-
-    if pattern.contains('*') || pattern.contains('?') {
-        return Err(AppError::InvalidGlob(format!(
-            "unsupported pattern '{pattern}': only '*.ext' and exact file names are supported"
-        )));
+    if let Some(name) = path.file_name() {
+        return matcher.is_match(Path::new(name));
     }
-
-    if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-        return Ok(file_name == pattern);
-    }
-
-    Ok(false)
+    false
 }
 
 #[cfg(test)]
@@ -285,32 +291,37 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    #[test]
-    fn test_matches_glob_md() {
-        let path = PathBuf::from("test.md");
-        assert!(matches_glob(&path, "*.md").unwrap());
+    fn m(pattern: &str, file: &str) -> bool {
+        let matcher = compile_glob(pattern).unwrap();
+        glob_match(&matcher, &PathBuf::from(file), Path::new(""))
     }
 
     #[test]
-    fn test_matches_glob_other_extension() {
-        let path = PathBuf::from("test.txt");
-        assert!(!matches_glob(&path, "*.md").unwrap());
-        assert!(matches_glob(&path, "*.txt").unwrap());
+    fn glob_simple_extension_matches_at_any_depth() {
+        assert!(m("*.md", "test.md"));
+        assert!(m("*.md", "src/notes/test.md"));
+        assert!(!m("*.md", "test.txt"));
     }
 
     #[test]
-    fn test_matches_glob_exact_name() {
-        let path = PathBuf::from("README.md");
-        assert!(matches_glob(&path, "README.md").unwrap());
-        assert!(!matches_glob(&path, "OTHER.md").unwrap());
+    fn glob_exact_name_matches() {
+        assert!(m("README.md", "README.md"));
+        assert!(!m("README.md", "OTHER.md"));
     }
 
     #[test]
-    fn test_matches_glob_invalid() {
-        let path = PathBuf::from("test.md");
-        assert!(matches_glob(&path, "*.").is_err());
-        assert!(matches_glob(&path, "**/*.md").is_err());
-        assert!(matches_glob(&path, "src/*.md").is_err());
+    fn glob_double_star_matches_full_path() {
+        assert!(m("**/*.md", "src/notes/test.md"));
+        assert!(m("src/*.md", "src/test.md"));
+        assert!(!m("src/*.md", "other/test.md"));
+    }
+
+    #[test]
+    fn glob_invalid_patterns_rejected() {
+        assert!(compile_glob("").is_err());
+        assert!(compile_glob("*.").is_err());
+        // unbalanced brace — globset rejects it
+        assert!(compile_glob("{md,").is_err());
     }
 
     #[test]

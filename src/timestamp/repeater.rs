@@ -448,24 +448,19 @@ pub fn next_occurrence(
     }
 }
 
-/// Add `months` to a date, truncating the day to fit the destination month
+/// Add `months` to a date, truncating the day to fit the destination month.
+/// Constant-time (no per-month loops), correct for negative `months`.
 pub fn add_months(date: NaiveDate, months: i32) -> Option<NaiveDate> {
     use chrono::Datelike;
 
-    let mut year = date.year();
-    let mut month = date.month() as i32 + months;
+    // Convert (year, 1..=12) into a 0-based "total months since year 0".
+    let total = (date.year() as i64) * 12 + (date.month() as i64 - 1) + months as i64;
+    let year = total.div_euclid(12);
+    let month = (total.rem_euclid(12) + 1) as u32;
+    let year: i32 = year.try_into().ok()?;
 
-    while month > 12 {
-        month -= 12;
-        year += 1;
-    }
-    while month < 1 {
-        month += 12;
-        year -= 1;
-    }
-
-    let day = date.day().min(days_in_month(year, month as u32));
-    NaiveDate::from_ymd_opt(year, month as u32, day)
+    let day = date.day().min(days_in_month(year, month));
+    NaiveDate::from_ymd_opt(year, month, day)
 }
 
 fn days_in_month(year: i32, month: u32) -> u32 {

@@ -5,9 +5,10 @@ use std::borrow::Cow;
 
 use super::repeater::{parse_repeater, Repeater};
 use super::weekdays::normalize_weekdays;
+use crate::regex_limits::compile_bounded;
 
 static RANGE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(concat!(
+    compile_bounded(concat!(
         r"<(\d{4}-\d{2}-\d{2})",
         r"(?: (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday))?",
         r"(?: (\d{1,2}:\d{2})(?:-(\d{1,2}:\d{2}))?)?",
@@ -17,17 +18,17 @@ static RANGE_RE: Lazy<Regex> = Lazy::new(|| {
         r"<(\d{4}-\d{2}-\d{2})",
         r"(?: (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday))?",
         r"(?: (\d{1,2}:\d{2})(?:-(\d{1,2}:\d{2}))?)?>",
-    )).expect("Invalid RANGE_RE regex")
+    ))
 });
 
 static SINGLE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(concat!(
+    compile_bounded(concat!(
         r"<(\d{4}-\d{2}-\d{2})",
         r"(?: (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday))?",
         r"(?: (\d{1,2}:\d{2})(?:-(\d{1,2}:\d{2}))?)?",
         r"(?:\s*([.+]+\d+(?:wd|[dwmyh])))?",
         r"(?:\s+-(\d+)d)?>",
-    )).expect("Invalid SINGLE_RE regex")
+    ))
 });
 
 /// Result of parsing a single org-mode timestamp string.

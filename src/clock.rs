@@ -1,15 +1,16 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::regex_limits::compile_bounded;
 use crate::types::ClockEntry;
 
 /// Regex for CLOCK entries: CLOCK: [timestamp]--[timestamp] => duration
-/// Supports both square brackets (like org-mode) and angle brackets (like other timestamps)
+/// Supports both square brackets (like org-mode) and angle brackets (like other timestamps).
+/// Inner bodies capped at 128 chars to bound the work done on malformed input.
 static CLOCK_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r"CLOCK:\s*[\[<]([^\]>]+)[\]>](?:--[\[<]([^\]>]+)[\]>])?(?:\s*=>\s*([0-9]+:[0-9]+))?",
+    compile_bounded(
+        r"CLOCK:\s*[\[<]([^\]>]{1,128})[\]>](?:--[\[<]([^\]>]{1,128})[\]>])?(?:\s*=>\s*([0-9]{1,5}:[0-9]{1,2}))?",
     )
-    .expect("Invalid CLOCK_RE regex")
 });
 
 /// Extract all CLOCK entries from text
@@ -24,13 +25,14 @@ pub fn extract_clocks(text: &str) -> Vec<ClockEntry> {
         .collect()
 }
 
-/// Calculate total time from clock entries (in minutes)
+/// Calculate total time from clock entries (in minutes). Returns None on overflow
+/// or empty result; uses `checked_add` so a malicious or buggy input cannot wrap.
 pub fn calculate_total_minutes(clocks: &[ClockEntry]) -> Option<u32> {
     let mut total = 0u32;
     for clock in clocks {
         if let Some(ref dur) = clock.duration {
             if let Some(mins) = parse_duration(dur) {
-                total += mins;
+                total = total.checked_add(mins)?;
             }
         }
     }
@@ -46,15 +48,21 @@ pub fn format_duration(minutes: u32) -> String {
     format!("{}:{:02}", minutes / 60, minutes % 60)
 }
 
-/// Parse duration string like "2:05" to minutes
+/// Org-mode duration upper bound. CLOCK durations beyond this are treated as
+/// malformed: 10_000 hours = ~416 days. Anything larger almost certainly comes
+/// from a parser bug or hostile input.
+const MAX_DURATION_HOURS: u32 = 10_000;
+
+/// Parse duration string like "2:05" to minutes. Returns None for malformed
+/// strings, out-of-range values, or arithmetic overflow.
 fn parse_duration(s: &str) -> Option<u32> {
-    let parts: Vec<&str> = s.split(':').collect();
-    if parts.len() != 2 {
+    let (h_str, m_str) = s.split_once(':')?;
+    let hours: u32 = h_str.parse().ok()?;
+    let mins: u32 = m_str.parse().ok()?;
+    if hours > MAX_DURATION_HOURS || mins >= 60 {
         return None;
     }
-    let hours: u32 = parts[0].parse().ok()?;
-    let mins: u32 = parts[1].parse().ok()?;
-    Some(hours * 60 + mins)
+    hours.checked_mul(60)?.checked_add(mins)
 }
 
 #[cfg(test)]
@@ -125,5 +133,36 @@ mod tests {
         assert_eq!(parse_duration("2:05"), Some(125));
         assert_eq!(parse_duration("0:30"), Some(30));
         assert_eq!(parse_duration("10:00"), Some(600));
+    }
+
+    #[test]
+    fn test_parse_duration_rejects_invalid() {
+        assert_eq!(parse_duration(""), None);
+        assert_eq!(parse_duration("abc"), None);
+        assert_eq!(parse_duration("1:60"), None, "minutes must be < 60");
+        assert_eq!(parse_duration("1:99"), None);
+        assert_eq!(parse_duration("99999:00"), None, "hours capped");
+        assert_eq!(parse_duration("1:2:3"), None, "single colon only");
+    }
+
+    #[test]
+    fn test_calculate_total_overflow_protected() {
+        // Even a very large but in-range duration shouldn't wrap. Two valid maxima
+        // sum below u32::MAX, but if MAX_DURATION_HOURS were larger we'd want this
+        // to return Some(_) without panic.
+        let clocks = vec![
+            ClockEntry {
+                start: "x".to_string(),
+                end: Some("y".to_string()),
+                duration: Some("9999:59".to_string()),
+            },
+            ClockEntry {
+                start: "x".to_string(),
+                end: Some("y".to_string()),
+                duration: Some("9999:59".to_string()),
+            },
+        ];
+        let total = calculate_total_minutes(&clocks).unwrap();
+        assert_eq!(total, (9999 * 60 + 59) * 2);
     }
 }

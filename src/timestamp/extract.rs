@@ -2,56 +2,52 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 
 use super::weekdays::normalize_weekdays;
+use crate::regex_limits::compile_bounded;
 
+// `[^>]{0,256}` caps the body length of a single bracketed timestamp so that a
+// hostile or malformed line cannot make `[^>]*` scan thousands of characters
+// before the engine notices the missing `>`.
 static TIMESTAMP_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^\s*((?:SCHEDULED|DEADLINE|CLOSED):\s*)<(\d{4}-\d{2}-\d{2}[^>]*)>")
-        .expect("Invalid TIMESTAMP_RE regex")
+    compile_bounded(r"^\s*((?:SCHEDULED|DEADLINE|CLOSED):\s*)<(\d{4}-\d{2}-\d{2}[^>]{0,256})>")
 });
 
 static RANGE_TIMESTAMP_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^\s*<(\d{4}-\d{2}-\d{2}[^>]*)>--<(\d{4}-\d{2}-\d{2}[^>]*)>")
-        .expect("Invalid RANGE_TIMESTAMP_RE regex")
+    compile_bounded(r"^\s*<(\d{4}-\d{2}-\d{2}[^>]{0,256})>--<(\d{4}-\d{2}-\d{2}[^>]{0,256})>")
 });
 
-static SIMPLE_TIMESTAMP_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^\s*<(\d{4}-\d{2}-\d{2}[^>]*)>").expect("Invalid SIMPLE_TIMESTAMP_RE regex")
-});
+static SIMPLE_TIMESTAMP_RE: Lazy<Regex> =
+    Lazy::new(|| compile_bounded(r"^\s*<(\d{4}-\d{2}-\d{2}[^>]{0,256})>"));
 
-static CREATED_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^\s*CREATED:\s*<(\d{4}-\d{2}-\d{2}[^>]*)>").expect("Invalid CREATED_RE regex")
-});
+static CREATED_RE: Lazy<Regex> =
+    Lazy::new(|| compile_bounded(r"^\s*CREATED:\s*<(\d{4}-\d{2}-\d{2}[^>]{0,256})>"));
 
-static DATE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\b(\d{4}-\d{2}-\d{2})").expect("Invalid DATE_RE"));
+static DATE_RE: Lazy<Regex> = Lazy::new(|| compile_bounded(r"\b(\d{4}-\d{2}-\d{2})"));
 
-static TIME_RANGE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\b(\d{1,2}:\d{2})-(\d{1,2}:\d{2})\b").expect("Invalid TIME_RANGE_RE")
-});
+static TIME_RANGE_RE: Lazy<Regex> =
+    Lazy::new(|| compile_bounded(r"\b(\d{1,2}:\d{2})-(\d{1,2}:\d{2})\b"));
 
-static TIME_SINGLE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\b(\d{1,2}:\d{2})\b").expect("Invalid TIME_SINGLE_RE"));
+static TIME_SINGLE_RE: Lazy<Regex> = Lazy::new(|| compile_bounded(r"\b(\d{1,2}:\d{2})\b"));
 
-/// Extract CREATED timestamp from text
-pub fn extract_created(text: &str, mappings: &[(&str, &str)]) -> Option<String> {
-    let text = normalize_weekdays(text, mappings);
+/// Extract CREATED timestamp from already-weekday-normalized text. Callers in
+/// the parser pre-normalize so multiple extractors share one scan; tests pass
+/// already-English input.
+pub fn extract_created_normalized(text: &str) -> Option<String> {
     CREATED_RE
-        .captures(&text)
+        .captures(text)
         .map(|caps| format!("CREATED: <{}>", &caps[1]))
 }
 
-/// Extract non-CREATED timestamp from text
-pub fn extract_timestamp(text: &str, mappings: &[(&str, &str)]) -> Option<String> {
-    let text = normalize_weekdays(text, mappings);
-
-    if let Some(caps) = TIMESTAMP_RE.captures(&text) {
+/// Extract non-CREATED timestamp from already-weekday-normalized text.
+pub fn extract_timestamp_normalized(text: &str) -> Option<String> {
+    if let Some(caps) = TIMESTAMP_RE.captures(text) {
         return Some(format!("{}<{}>", &caps[1], &caps[2]));
     }
 
-    if let Some(caps) = RANGE_TIMESTAMP_RE.captures(&text) {
+    if let Some(caps) = RANGE_TIMESTAMP_RE.captures(text) {
         return Some(format!("<{}>--<{}>", &caps[1], &caps[2]));
     }
 
-    if let Some(caps) = SIMPLE_TIMESTAMP_RE.captures(&text) {
+    if let Some(caps) = SIMPLE_TIMESTAMP_RE.captures(text) {
         return Some(format!("<{}>", &caps[1]));
     }
 
@@ -139,6 +135,13 @@ fn extract_time_pair(s: &str) -> (Option<String>, Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn extract_timestamp(text: &str, mappings: &[(&str, &str)]) -> Option<String> {
+        extract_timestamp_normalized(&normalize_weekdays(text, mappings))
+    }
+    fn extract_created(text: &str, mappings: &[(&str, &str)]) -> Option<String> {
+        extract_created_normalized(&normalize_weekdays(text, mappings))
+    }
 
     #[test]
     fn extract_timestamp_simple_scheduled() {

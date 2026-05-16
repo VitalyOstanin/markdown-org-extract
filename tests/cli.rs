@@ -152,17 +152,41 @@ fn invalid_year_rejected() {
 }
 
 #[test]
-fn rejects_unsupported_glob() {
-    bin()
+fn double_star_glob_is_accepted() {
+    // Regression: with globset we now support real glob patterns; `**/*.md`
+    // is valid and should match recursively.
+    let out = bin()
         .args([
             "--dir",
             "examples",
             "--glob",
             "**/*.md",
+            "--format",
+            "json",
+            "--current-date",
+            "2025-12-05",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn rejects_malformed_glob() {
+    bin()
+        .args([
+            "--dir",
+            "examples",
+            "--glob",
+            "{md,",
             "--current-date",
             "2025-12-05",
         ])
         .assert()
         .failure()
-        .stderr(contains("unsupported pattern"));
+        .stderr(contains("invalid pattern"));
 }

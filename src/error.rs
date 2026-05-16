@@ -62,3 +62,69 @@ impl From<ignore::Error> for AppError {
         AppError::Walk(err.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{self, ErrorKind};
+
+    #[test]
+    fn display_invalid_directory() {
+        let e = AppError::InvalidDirectory("/no/such".into());
+        assert_eq!(e.to_string(), "Invalid directory: /no/such");
+    }
+
+    #[test]
+    fn display_invalid_glob() {
+        let e = AppError::InvalidGlob("[".into());
+        assert_eq!(e.to_string(), "Invalid glob pattern: [");
+    }
+
+    #[test]
+    fn display_invalid_timezone() {
+        assert_eq!(
+            AppError::InvalidTimezone("X".into()).to_string(),
+            "Invalid timezone: X"
+        );
+    }
+
+    #[test]
+    fn display_invalid_output() {
+        assert_eq!(
+            AppError::InvalidOutput("symlink".into()).to_string(),
+            "Invalid output path: symlink"
+        );
+    }
+
+    #[test]
+    fn display_date_range() {
+        assert_eq!(
+            AppError::DateRange("from > to".into()).to_string(),
+            "Invalid date range: from > to"
+        );
+    }
+
+    #[test]
+    fn from_io_error_wraps() {
+        let io = io::Error::new(ErrorKind::NotFound, "missing");
+        let e: AppError = io.into();
+        assert!(matches!(e, AppError::Io(_)));
+        assert!(e.to_string().contains("IO error"));
+    }
+
+    #[test]
+    fn from_serde_json_error_wraps() {
+        let parsed: Result<serde_json::Value, _> = serde_json::from_str("not json");
+        let e: AppError = parsed.unwrap_err().into();
+        assert!(matches!(e, AppError::Serialization(_)));
+        assert!(e.to_string().starts_with("Serialization error: "));
+    }
+
+    #[test]
+    fn errors_are_send_sync() {
+        // Compile-time check that AppError can flow across threads — matters if
+        // we ever spawn worker threads (e.g. for parallel walker).
+        fn is_send_sync<T: Send + Sync>() {}
+        is_send_sync::<AppError>();
+    }
+}

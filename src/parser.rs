@@ -3,15 +3,39 @@ use comrak::{parse_document, Arena, Options};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::clock::{calculate_total_minutes, extract_clocks, format_duration};
-use crate::timestamp::{extract_created, extract_timestamp, parse_timestamp_fields};
+use crate::regex_limits::compile_bounded;
+use crate::timestamp::{
+    extract_created_normalized, extract_timestamp_normalized, normalize_weekdays,
+    parse_timestamp_fields,
+};
 use crate::types::{Priority, Task, TaskType, MAX_TASKS};
 
+/// Cap on how many invalid-timestamp warnings we emit per process. Without a cap
+/// a corrupt or hostile input could flood stderr; the count is global because
+/// warnings come from per-file parsing and we want one bound across all files.
+const MAX_TS_WARNINGS: usize = 20;
+static TS_WARNINGS_EMITTED: AtomicUsize = AtomicUsize::new(0);
+
+fn warn_invalid_timestamp(path: &Path, line: u32, ts: &str) {
+    let n = TS_WARNINGS_EMITTED.fetch_add(1, Ordering::Relaxed);
+    if n < MAX_TS_WARNINGS {
+        eprintln!(
+            "Warning: cannot parse timestamp at {}:{}: {}",
+            path.display(),
+            line,
+            ts.trim()
+        );
+    } else if n == MAX_TS_WARNINGS {
+        eprintln!("Warning: more invalid timestamps suppressed (showed first {MAX_TS_WARNINGS})");
+    }
+}
+
 /// Regex for parsing task headings: `TODO/DONE [#A] Task title`
-static HEADING_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^(TODO|DONE)\s+(?:\[#([A-Z])\]\s+)?(.+)$").expect("Invalid HEADING_RE regex")
-});
+static HEADING_RE: Lazy<Regex> =
+    Lazy::new(|| compile_bounded(r"^(TODO|DONE)\s+(?:\[#([A-Z])\]\s+)?(.+)$"));
 
 /// Extract tasks from markdown content.
 ///
@@ -30,7 +54,7 @@ pub fn extract_tasks(path: &Path, content: &str, mappings: &[(&str, &str)]) -> V
     let mut current_heading: Option<HeadingInfo> = None;
 
     for node in root.children() {
-        process_node(node, &mut tasks, &mut current_heading, mappings);
+        process_node(node, path, &mut tasks, &mut current_heading, mappings);
 
         if tasks.len() >= MAX_TASKS {
             eprintln!(
@@ -51,8 +75,17 @@ pub fn extract_tasks(path: &Path, content: &str, mappings: &[(&str, &str)]) -> V
     tasks
 }
 
-/// Comrak parsing options. Currently `Options::default()` — raw HTML stays escaped.
-/// Wrapped in a helper to make the security-critical default explicit.
+/// Comrak parsing options.
+///
+/// **Security note**: this is `Options::default()` deliberately. Defaults:
+/// - `render.unsafe_ = false` — raw HTML in markdown is escaped, not passed through.
+/// - `extension.tagfilter = false` (filter not applied, since unsafe HTML is already escaped).
+/// - No extensions that interpret embedded HTML or scripts are enabled.
+///
+/// **Do not enable `render.unsafe_` or `extension.tagfilter` here without a
+/// security review** — the HTML output goes through `html_escape`, but enabling
+/// raw HTML would let untrusted markdown inject arbitrary tags into the rendered
+/// page bypassing that escape.
 fn safe_comrak_options() -> Options<'static> {
     Options::default()
 }
@@ -72,24 +105,29 @@ struct HeadingInfo {
 /// Process a single markdown node
 fn process_node<'a>(
     node: &'a AstNode<'a>,
+    path: &Path,
     tasks: &mut Vec<Task>,
     current_heading: &mut Option<HeadingInfo>,
     mappings: &[(&str, &str)],
 ) {
-    // Take the borrow only once
-    let value_clone = node.data.borrow().value.clone();
+    // Snapshot the borrow once — clone the value (cheap for Heading/Paragraph) and
+    // read the sourcepos line in the same scope; drop before any code that
+    // recurses into children (which take their own borrows).
+    let (value_clone, line) = {
+        let data = node.data.borrow();
+        (data.value.clone(), data.sourcepos.start.line as u32)
+    };
     match value_clone {
         NodeValue::Heading(_) => {
             // Finalize previous heading first
             if let Some(info) = current_heading.take() {
-                if let Some(task) = finalize_task_no_path(info, mappings) {
+                if let Some(task) = finalize_task(path, info, mappings) {
                     tasks.push(task);
                 }
             }
 
             let text = extract_text(node);
             let (task_type, priority, heading) = parse_heading(&text);
-            let line = node.data.borrow().sourcepos.start.line as u32;
             *current_heading = Some(HeadingInfo {
                 heading,
                 task_type,
@@ -118,16 +156,22 @@ fn process_node<'a>(
                 if timestamp.is_some() {
                     info.timestamp = timestamp;
                 }
-                if !content.is_empty() && info.content.is_empty() {
-                    info.content = content;
+                if !content.is_empty() {
+                    if info.content.is_empty() {
+                        info.content = content;
+                    } else {
+                        info.content.push_str("\n\n");
+                        info.content.push_str(&content);
+                    }
                 }
             }
         }
         NodeValue::CodeBlock(code) => {
             if let Some(ref mut info) = current_heading {
-                let literal = code.literal.trim().trim_matches('`');
-                let created = extract_created(literal, mappings);
-                let timestamp = extract_timestamp(literal, mappings);
+                let literal = code.literal.trim();
+                let normalized = normalize_weekdays(literal, mappings);
+                let created = extract_created_normalized(&normalized);
+                let timestamp = extract_timestamp_normalized(&normalized);
 
                 info.clocks.extend(extract_clocks(literal));
 
@@ -143,14 +187,18 @@ fn process_node<'a>(
     }
 }
 
-/// Finalize heading info into a task (path-agnostic version)
-fn finalize_task_no_path(info: HeadingInfo, mappings: &[(&str, &str)]) -> Option<Task> {
+fn finalize_task(path: &Path, info: HeadingInfo, mappings: &[(&str, &str)]) -> Option<Task> {
     if info.task_type.is_none() && info.created.is_none() && info.timestamp.is_none() {
         return None;
     }
 
+    let line = info.line;
     let (ts_type, ts_date, ts_time, ts_end_time) = if let Some(ref ts) = info.timestamp {
-        parse_timestamp_fields(ts, mappings)
+        let parsed = parse_timestamp_fields(ts, mappings);
+        if parsed.1.is_none() {
+            warn_invalid_timestamp(path, line, ts);
+        }
+        parsed
     } else {
         (None, None, None, None)
     };
@@ -163,8 +211,8 @@ fn finalize_task_no_path(info: HeadingInfo, mappings: &[(&str, &str)]) -> Option
     };
 
     Some(Task {
-        file: String::new(), // filled in by caller
-        line: info.line,
+        file: path.display().to_string(),
+        line,
         heading: info.heading,
         content: info.content,
         task_type: info.task_type,
@@ -178,12 +226,6 @@ fn finalize_task_no_path(info: HeadingInfo, mappings: &[(&str, &str)]) -> Option
         clocks: clocks_opt,
         total_clock_time: total_time,
     })
-}
-
-fn finalize_task(path: &Path, info: HeadingInfo, mappings: &[(&str, &str)]) -> Option<Task> {
-    let mut t = finalize_task_no_path(info, mappings)?;
-    t.file = path.display().to_string();
-    Some(t)
 }
 
 /// Parse heading text to extract task type, priority, and title
@@ -212,11 +254,14 @@ fn extract_timestamps_from_node<'a>(
     if let NodeValue::Paragraph = &node.data.borrow().value {
         for child in node.children() {
             if let NodeValue::Code(code) = &child.data.borrow().value {
+                // Normalize the literal once per inline-code node; both extractors
+                // would otherwise scan the same string in lockstep.
+                let normalized = normalize_weekdays(&code.literal, mappings);
                 if created.is_none() {
-                    created = extract_created(&code.literal, mappings);
+                    created = extract_created_normalized(&normalized);
                 }
                 if timestamp.is_none() {
-                    timestamp = extract_timestamp(&code.literal, mappings);
+                    timestamp = extract_timestamp_normalized(&normalized);
                 }
             }
         }
@@ -311,5 +356,52 @@ mod tests {
         let content = "### Just a heading\n\nSome text.\n";
         let tasks = extract_tasks(Path::new("t.md"), content, &[]);
         assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn extract_tasks_keeps_created_without_todo() {
+        // Heading without TODO/DONE keyword but with a CREATED line is still a task.
+        let content = "### Project kickoff\n\n`CREATED: <2025-09-01 Mon>`\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[]);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].task_type, None);
+        assert_eq!(tasks[0].created, Some("CREATED: <2025-09-01 Mon>".into()));
+    }
+
+    #[test]
+    fn extract_tasks_concatenates_multiple_paragraphs() {
+        // Regression: previously only the first paragraph was kept as content.
+        let content = "\
+### TODO Multi-line task\n\
+First paragraph.\n\
+\n\
+Second paragraph.\n\
+";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[]);
+        assert_eq!(tasks.len(), 1);
+        assert!(tasks[0].content.contains("First paragraph"));
+        assert!(tasks[0].content.contains("Second paragraph"));
+    }
+
+    #[test]
+    fn extract_tasks_extracts_clock_from_inline_code() {
+        let content = "\
+### TODO Track time\n\
+`CLOCK: [2025-09-01 Mon 10:00]--[2025-09-01 Mon 11:30] => 1:30`\n\
+";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[]);
+        assert_eq!(tasks.len(), 1);
+        let t = &tasks[0];
+        assert!(t.clocks.is_some());
+        assert_eq!(t.total_clock_time.as_deref(), Some("1:30"));
+    }
+
+    #[test]
+    fn extract_tasks_handles_done_priority() {
+        let content = "### DONE [#B] Wrap up\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[]);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].task_type, Some(TaskType::Done));
+        assert_eq!(tasks[0].priority, Some(Priority::B));
     }
 }

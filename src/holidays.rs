@@ -1,14 +1,19 @@
 use chrono::{Datelike, NaiveDate, Weekday};
-use std::collections::HashSet;
 use std::sync::OnceLock;
 
 include!(concat!(env!("OUT_DIR"), "/holidays_data.rs"));
 
-/// Russian holiday and workday calendar built from compile-time data
+/// Russian holiday and workday calendar built from compile-time data.
+///
+/// Internally uses sorted `Vec<NaiveDate>` (one for holidays, one for
+/// transferred workdays) and binary search. This trades the hash bucket walk
+/// of `HashSet` for a branch-light `log N` lookup on a dense memory layout —
+/// noticeably faster on the hot path through `closest_date` for workday
+/// repeaters where we probe many sequential dates.
 #[derive(Debug)]
 pub struct HolidayCalendar {
-    holidays: HashSet<NaiveDate>,
-    workdays: HashSet<NaiveDate>,
+    holidays: Vec<NaiveDate>,
+    workdays: Vec<NaiveDate>,
 }
 
 impl HolidayCalendar {
@@ -21,29 +26,29 @@ impl HolidayCalendar {
     }
 
     fn build() -> Self {
-        let mut holidays = HashSet::new();
-        for &(year, month, day) in HOLIDAYS {
-            if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
-                holidays.insert(date);
-            }
-        }
+        let mut holidays: Vec<NaiveDate> = HOLIDAYS
+            .iter()
+            .filter_map(|&(y, m, d)| NaiveDate::from_ymd_opt(y, m, d))
+            .collect();
+        holidays.sort_unstable();
+        holidays.dedup();
 
-        let mut workdays = HashSet::new();
-        for &(year, month, day) in WORKDAYS {
-            if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
-                workdays.insert(date);
-            }
-        }
+        let mut workdays: Vec<NaiveDate> = WORKDAYS
+            .iter()
+            .filter_map(|&(y, m, d)| NaiveDate::from_ymd_opt(y, m, d))
+            .collect();
+        workdays.sort_unstable();
+        workdays.dedup();
 
         Self { holidays, workdays }
     }
 
     /// Check whether the given date is a workday under the Russian calendar
     pub fn is_workday(&self, date: NaiveDate) -> bool {
-        if self.workdays.contains(&date) {
+        if self.workdays.binary_search(&date).is_ok() {
             return true;
         }
-        if self.holidays.contains(&date) {
+        if self.holidays.binary_search(&date).is_ok() {
             return false;
         }
         !matches!(date.weekday(), Weekday::Sat | Weekday::Sun)
@@ -60,14 +65,12 @@ impl HolidayCalendar {
 
     /// Return all holidays in the given year, sorted ascending
     pub fn get_holidays_for_year(&self, year: i32) -> Vec<NaiveDate> {
-        let mut result: Vec<_> = self
-            .holidays
+        // `holidays` is already sorted, so a simple filter preserves order.
+        self.holidays
             .iter()
             .filter(|d| d.year() == year)
             .copied()
-            .collect();
-        result.sort();
-        result
+            .collect()
     }
 }
 

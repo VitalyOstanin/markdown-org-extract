@@ -1,4 +1,4 @@
-use chrono::{Datelike, NaiveDate, TimeZone};
+use chrono::{Datelike, NaiveDate};
 use chrono_tz::Tz;
 
 use crate::error::AppError;
@@ -50,8 +50,7 @@ pub fn filter_agenda(
         NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
             .map_err(|e| AppError::InvalidDate(format!("current-date '{date_str}': {e}")))?
     } else {
-        tz.from_utc_datetime(&chrono::Utc::now().naive_utc())
-            .date_naive()
+        chrono::Utc::now().with_timezone(&tz).date_naive()
     };
 
     match mode {
@@ -418,9 +417,7 @@ fn get_week_for_date(date: NaiveDate) -> (NaiveDate, NaiveDate) {
 
 /// Get current week (Monday to Sunday) in the given timezone
 fn get_current_week(tz: &Tz) -> (NaiveDate, NaiveDate) {
-    let today = tz
-        .from_utc_datetime(&chrono::Utc::now().naive_utc())
-        .date_naive();
+    let today = chrono::Utc::now().with_timezone(tz).date_naive();
     get_week_for_date(today)
 }
 
@@ -438,9 +435,7 @@ fn get_month_for_date(date: NaiveDate) -> (NaiveDate, NaiveDate) {
 
 /// Get current month (first to last day) in the given timezone
 fn get_current_month(tz: &Tz) -> (NaiveDate, NaiveDate) {
-    let today = tz
-        .from_utc_datetime(&chrono::Utc::now().naive_utc())
-        .date_naive();
+    let today = chrono::Utc::now().with_timezone(tz).date_naive();
     get_month_for_date(today)
 }
 

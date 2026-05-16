@@ -2,6 +2,23 @@ use std::fmt::Write;
 
 use crate::types::{DayAgenda, Task, TaskWithOffset};
 
+/// Escape markdown special characters in plain text. Used for headings and
+/// labels that originate from user input — keeps formatting from being broken
+/// or hijacked (e.g. a heading containing `*` would otherwise render as italic).
+fn md_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' | '`' | '*' | '_' | '#' | '[' | ']' | '<' | '>' | '|' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 /// Render day agendas as Markdown
 pub fn render_days_markdown(days: &[DayAgenda]) -> String {
     let mut output = String::from("# Agenda\n\n");
@@ -50,7 +67,7 @@ pub fn render_days_markdown(days: &[DayAgenda]) -> String {
 fn render_task_with_offset_md(output: &mut String, task_with_offset: &TaskWithOffset) {
     let task = &task_with_offset.task;
 
-    let _ = write!(output, "#### {}", task.heading);
+    let _ = write!(output, "#### {}", md_escape(&task.heading));
     if let Some(offset) = task_with_offset.days_offset {
         if offset > 0 {
             let _ = write!(output, " (in {offset} days)");
@@ -60,7 +77,7 @@ fn render_task_with_offset_md(output: &mut String, task_with_offset: &TaskWithOf
     }
     output.push('\n');
 
-    let _ = writeln!(output, "**File:** {}:{}", task.file, task.line);
+    let _ = writeln!(output, "**File:** `{}:{}`", task.file, task.line);
     if let Some(ref t) = task.task_type {
         let _ = writeln!(output, "**Type:** {t}");
     }
@@ -68,7 +85,7 @@ fn render_task_with_offset_md(output: &mut String, task_with_offset: &TaskWithOf
         let _ = writeln!(output, "**Priority:** {p}");
     }
     if let Some(ref ts) = task.timestamp {
-        let _ = writeln!(output, "**Time:** {ts}");
+        let _ = writeln!(output, "**Time:** `{ts}`");
     }
     if !task.content.is_empty() {
         let _ = write!(output, "\n{}\n\n", task.content);
@@ -157,8 +174,8 @@ fn render_task_with_offset_html(output: &mut String, task_with_offset: &TaskWith
 pub fn render_markdown(tasks: &[Task]) -> String {
     let mut output = String::from("# Tasks\n\n");
     for task in tasks {
-        let _ = writeln!(output, "## {}", task.heading);
-        let _ = writeln!(output, "**File:** {}:{}", task.file, task.line);
+        let _ = writeln!(output, "## {}", md_escape(&task.heading));
+        let _ = writeln!(output, "**File:** `{}:{}`", task.file, task.line);
         if let Some(ref t) = task.task_type {
             let _ = writeln!(output, "**Type:** {t}");
         }
@@ -166,10 +183,10 @@ pub fn render_markdown(tasks: &[Task]) -> String {
             let _ = writeln!(output, "**Priority:** {p}");
         }
         if let Some(ref c) = task.created {
-            let _ = writeln!(output, "**Created:** {c}");
+            let _ = writeln!(output, "**Created:** `{c}`");
         }
         if let Some(ref ts) = task.timestamp {
-            let _ = writeln!(output, "**Time:** {ts}");
+            let _ = writeln!(output, "**Time:** `{ts}`");
         }
         if let Some(ref total) = task.total_clock_time {
             let _ = writeln!(output, "**Total Time:** {total}");
@@ -179,12 +196,12 @@ pub fn render_markdown(tasks: &[Task]) -> String {
             for clock in clocks {
                 if let Some(ref end) = clock.end {
                     if let Some(ref dur) = clock.duration {
-                        let _ = writeln!(output, "- {} → {} ({})", clock.start, end, dur);
+                        let _ = writeln!(output, "- `{}` → `{}` ({})", clock.start, end, dur);
                     } else {
-                        let _ = writeln!(output, "- {} → {}", clock.start, end);
+                        let _ = writeln!(output, "- `{}` → `{}`", clock.start, end);
                     }
                 } else {
-                    let _ = writeln!(output, "- {} (active)", clock.start);
+                    let _ = writeln!(output, "- `{}` (active)", clock.start);
                 }
             }
         }
@@ -265,7 +282,9 @@ pub fn render_html(tasks: &[Task]) -> String {
     output
 }
 
-/// Escape HTML special characters in pre-existing text content
+/// Escape HTML special characters in pre-existing text content.
+/// Also drops C0 control characters (except `\t \n \r`) to protect downstream
+/// renderers from null bytes and other invisible glyphs sneaked through markdown.
 fn html_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -275,6 +294,8 @@ fn html_escape(s: &str) -> String {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&#39;"),
+            '\t' | '\n' | '\r' => out.push(ch),
+            c if (c as u32) < 0x20 || c == '\u{7f}' => {}
             _ => out.push(ch),
         }
     }
@@ -290,6 +311,14 @@ mod tests {
     fn test_html_escape() {
         assert_eq!(html_escape("<script>"), "&lt;script&gt;");
         assert_eq!(html_escape("A & B"), "A &amp; B");
+    }
+
+    #[test]
+    fn test_html_escape_strips_control_chars() {
+        assert_eq!(html_escape("A\u{0000}B"), "AB");
+        assert_eq!(html_escape("A\u{0007}B"), "AB"); // BEL
+        assert_eq!(html_escape("A\u{007f}B"), "AB"); // DEL
+        assert_eq!(html_escape("line1\nline2\tx"), "line1\nline2\tx");
     }
 
     #[test]
@@ -316,6 +345,93 @@ mod tests {
         assert!(output.contains("## Test Task"));
         assert!(output.contains("**Type:** TODO"));
         assert!(output.contains("**Priority:** A"));
+    }
+
+    #[test]
+    fn test_md_escape_specials() {
+        assert_eq!(md_escape("plain"), "plain");
+        assert_eq!(md_escape("a*b"), "a\\*b");
+        assert_eq!(md_escape("a_b"), "a\\_b");
+        assert_eq!(md_escape("# hi"), "\\# hi");
+        assert_eq!(md_escape("[link]"), "\\[link\\]");
+        assert_eq!(md_escape("<tag>"), "\\<tag\\>");
+        assert_eq!(md_escape("a|b"), "a\\|b");
+        assert_eq!(md_escape("`code`"), "\\`code\\`");
+        assert_eq!(md_escape("back\\slash"), "back\\\\slash");
+    }
+
+    #[test]
+    fn test_render_markdown_escapes_heading() {
+        let tasks = vec![Task {
+            file: "test.md".to_string(),
+            line: 1,
+            heading: "Fix *important* [#issue]".to_string(),
+            content: String::new(),
+            task_type: None,
+            priority: None,
+            created: None,
+            timestamp: None,
+            timestamp_type: None,
+            timestamp_date: None,
+            timestamp_time: None,
+            timestamp_end_time: None,
+            clocks: None,
+            total_clock_time: None,
+        }];
+        let out = render_markdown(&tasks);
+        assert!(
+            out.contains("## Fix \\*important\\* \\[\\#issue\\]"),
+            "heading must be escaped: {out}"
+        );
+    }
+
+    fn fixture_task() -> Task {
+        Task {
+            file: "notes.md".to_string(),
+            line: 42,
+            heading: "Test task".to_string(),
+            content: "Body text.".to_string(),
+            task_type: Some(TaskType::Todo),
+            priority: Some(Priority::A),
+            created: Some("CREATED: <2025-09-01 Mon>".to_string()),
+            timestamp: Some("DEADLINE: <2025-10-01 Wed>".to_string()),
+            timestamp_type: Some("DEADLINE".to_string()),
+            timestamp_date: Some("2025-10-01".to_string()),
+            timestamp_time: None,
+            timestamp_end_time: None,
+            clocks: None,
+            total_clock_time: None,
+        }
+    }
+
+    #[test]
+    fn snapshot_render_markdown_full_task() {
+        let out = render_markdown(&[fixture_task()]);
+        let expected = "# Tasks\n\n\
+## Test task\n\
+**File:** `notes.md:42`\n\
+**Type:** TODO\n\
+**Priority:** A\n\
+**Created:** `CREATED: <2025-09-01 Mon>`\n\
+**Time:** `DEADLINE: <2025-10-01 Wed>`\n\
+\n\
+Body text.\n\n";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn snapshot_render_html_full_task() {
+        let out = render_html(&[fixture_task()]);
+        let expected = "<html><body><h1>Tasks</h1>\n\
+<h2>Test task</h2>\n\
+<p><strong>File:</strong> notes.md:42</p>\n\
+<p><strong>Type:</strong> TODO</p>\n\
+<p><strong>Priority:</strong> A</p>\n\
+<p><strong>Created:</strong> CREATED: &lt;2025-09-01 Mon&gt;</p>\n\
+<p><strong>Time:</strong> DEADLINE: &lt;2025-10-01 Wed&gt;</p>\n\
+<p>Body text.</p>\n\
+</body></html>";
+        assert_eq!(out, expected);
     }
 
     #[test]

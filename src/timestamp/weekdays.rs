@@ -4,7 +4,7 @@ use std::borrow::Cow;
 ///
 /// Returns a borrowed `Cow` when nothing is substituted (zero allocations) and
 /// an owned `Cow` only on first match.
-pub fn normalize_weekdays<'a>(text: &'a str, mappings: &[(&str, &str)]) -> Cow<'a, str> {
+pub(crate) fn normalize_weekdays<'a>(text: &'a str, mappings: &[(&str, &str)]) -> Cow<'a, str> {
     let mut result = Cow::Borrowed(text);
     for (localized, english) in mappings {
         if result.contains(localized) {

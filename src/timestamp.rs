@@ -11,6 +11,9 @@ mod parser;
 mod repeater;
 mod weekdays;
 
-pub use extract::{extract_created, extract_timestamp, parse_timestamp_fields};
+pub use extract::{
+    extract_created_normalized, extract_timestamp_normalized, parse_timestamp_fields,
+};
 pub use parser::{parse_org_timestamp, ParsedTimestamp};
 pub use repeater::{closest_date, DatePreference, Repeater, RepeaterUnit};
+pub(crate) use weekdays::normalize_weekdays;

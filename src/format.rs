@@ -1,21 +1,14 @@
-use std::str::FromStr;
+use clap::ValueEnum;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Output format selectable via `--format` CLI flag
+#[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
+#[clap(rename_all = "lower")]
 pub enum OutputFormat {
+    /// Pretty-printed JSON
     Json,
+    /// Markdown (`md` alias is also accepted)
+    #[clap(alias = "md")]
     Markdown,
+    /// HTML page
     Html,
-}
-
-impl FromStr for OutputFormat {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "json" => Ok(OutputFormat::Json),
-            "md" | "markdown" => Ok(OutputFormat::Markdown),
-            "html" => Ok(OutputFormat::Html),
-            _ => Err(format!("Invalid format: {s}. Valid formats: json, md, html")),
-        }
-    }
 }

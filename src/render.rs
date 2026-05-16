@@ -1,12 +1,14 @@
+use std::fmt::Write;
+
 use crate::types::{DayAgenda, Task, TaskWithOffset};
 
 /// Render day agendas as Markdown
 pub fn render_days_markdown(days: &[DayAgenda]) -> String {
     let mut output = String::from("# Agenda\n\n");
-    
+
     for day in days {
-        output.push_str(&format!("## {}\n\n", day.date));
-        
+        let _ = writeln!(output, "## {}\n", day.date);
+
         if !day.overdue.is_empty() {
             output.push_str("### Overdue\n\n");
             for task_with_offset in &day.overdue {
@@ -14,7 +16,7 @@ pub fn render_days_markdown(days: &[DayAgenda]) -> String {
             }
             output.push('\n');
         }
-        
+
         if !day.scheduled_timed.is_empty() {
             output.push_str("### Scheduled\n\n");
             for task_with_offset in &day.scheduled_timed {
@@ -22,7 +24,7 @@ pub fn render_days_markdown(days: &[DayAgenda]) -> String {
             }
             output.push('\n');
         }
-        
+
         if !day.scheduled_no_time.is_empty() {
             if day.scheduled_timed.is_empty() {
                 output.push_str("### Scheduled\n\n");
@@ -32,7 +34,7 @@ pub fn render_days_markdown(days: &[DayAgenda]) -> String {
             }
             output.push('\n');
         }
-        
+
         if !day.upcoming.is_empty() {
             output.push_str("### Upcoming\n\n");
             for task_with_offset in &day.upcoming {
@@ -41,36 +43,35 @@ pub fn render_days_markdown(days: &[DayAgenda]) -> String {
             output.push('\n');
         }
     }
-    
+
     output
 }
 
 fn render_task_with_offset_md(output: &mut String, task_with_offset: &TaskWithOffset) {
     let task = &task_with_offset.task;
-    
-    output.push_str(&format!("#### {}", task.heading));
+
+    let _ = write!(output, "#### {}", task.heading);
     if let Some(offset) = task_with_offset.days_offset {
-        let label = if offset > 0 {
-            format!(" (in {offset} days)")
+        if offset > 0 {
+            let _ = write!(output, " (in {offset} days)");
         } else {
-            format!(" ({} days ago)", -offset)
-        };
-        output.push_str(&label);
+            let _ = write!(output, " ({} days ago)", -offset);
+        }
     }
     output.push('\n');
-    
-    output.push_str(&format!("**File:** {}:{}\n", task.file, task.line));
+
+    let _ = writeln!(output, "**File:** {}:{}", task.file, task.line);
     if let Some(ref t) = task.task_type {
-        output.push_str(&format!("**Type:** {t:?}\n"));
+        let _ = writeln!(output, "**Type:** {t}");
     }
     if let Some(ref p) = task.priority {
-        output.push_str(&format!("**Priority:** {p:?}\n"));
+        let _ = writeln!(output, "**Priority:** {p}");
     }
     if let Some(ref ts) = task.timestamp {
-        output.push_str(&format!("**Time:** {ts}\n"));
+        let _ = writeln!(output, "**Time:** {ts}");
     }
     if !task.content.is_empty() {
-        output.push_str(&format!("\n{}\n\n", task.content));
+        let _ = write!(output, "\n{}\n\n", task.content);
     } else {
         output.push('\n');
     }
@@ -79,24 +80,24 @@ fn render_task_with_offset_md(output: &mut String, task_with_offset: &TaskWithOf
 /// Render day agendas as HTML
 pub fn render_days_html(days: &[DayAgenda]) -> String {
     let mut output = String::from("<html><body><h1>Agenda</h1>\n");
-    
+
     for day in days {
-        output.push_str(&format!("<h2>{}</h2>\n", html_escape(&day.date)));
-        
+        let _ = writeln!(output, "<h2>{}</h2>", html_escape(&day.date));
+
         if !day.overdue.is_empty() {
             output.push_str("<h3>Overdue</h3>\n");
             for task_with_offset in &day.overdue {
                 render_task_with_offset_html(&mut output, task_with_offset);
             }
         }
-        
+
         if !day.scheduled_timed.is_empty() {
             output.push_str("<h3>Scheduled</h3>\n");
             for task_with_offset in &day.scheduled_timed {
                 render_task_with_offset_html(&mut output, task_with_offset);
             }
         }
-        
+
         if !day.scheduled_no_time.is_empty() {
             if day.scheduled_timed.is_empty() {
                 output.push_str("<h3>Scheduled</h3>\n");
@@ -105,7 +106,7 @@ pub fn render_days_html(days: &[DayAgenda]) -> String {
                 render_task_with_offset_html(&mut output, task_with_offset);
             }
         }
-        
+
         if !day.upcoming.is_empty() {
             output.push_str("<h3>Upcoming</h3>\n");
             for task_with_offset in &day.upcoming {
@@ -113,41 +114,42 @@ pub fn render_days_html(days: &[DayAgenda]) -> String {
             }
         }
     }
-    
+
     output.push_str("</body></html>");
     output
 }
 
 fn render_task_with_offset_html(output: &mut String, task_with_offset: &TaskWithOffset) {
     let task = &task_with_offset.task;
-    
-    output.push_str(&format!("<h4>{}", html_escape(&task.heading)));
+
+    let _ = write!(output, "<h4>{}", html_escape(&task.heading));
     if let Some(offset) = task_with_offset.days_offset {
         let label = if offset > 0 {
             format!(" (in {offset} days)")
         } else {
             format!(" ({} days ago)", -offset)
         };
-        output.push_str(&html_escape(&label));
+        let _ = write!(output, "{}", html_escape(&label));
     }
     output.push_str("</h4>\n");
-    
-    output.push_str(&format!(
-        "<p><strong>File:</strong> {}:{}</p>\n",
+
+    let _ = writeln!(
+        output,
+        "<p><strong>File:</strong> {}:{}</p>",
         html_escape(&task.file),
         task.line
-    ));
+    );
     if let Some(ref t) = task.task_type {
-        output.push_str(&format!("<p><strong>Type:</strong> {t:?}</p>\n"));
+        let _ = writeln!(output, "<p><strong>Type:</strong> {t}</p>");
     }
     if let Some(ref p) = task.priority {
-        output.push_str(&format!("<p><strong>Priority:</strong> {p:?}</p>\n"));
+        let _ = writeln!(output, "<p><strong>Priority:</strong> {p}</p>");
     }
     if let Some(ref ts) = task.timestamp {
-        output.push_str(&format!("<p><strong>Time:</strong> {}</p>\n", html_escape(ts)));
+        let _ = writeln!(output, "<p><strong>Time:</strong> {}</p>", html_escape(ts));
     }
     if !task.content.is_empty() {
-        output.push_str(&format!("<p>{}</p>\n", html_escape(&task.content)));
+        let _ = writeln!(output, "<p>{}</p>", html_escape(&task.content));
     }
 }
 
@@ -155,39 +157,39 @@ fn render_task_with_offset_html(output: &mut String, task_with_offset: &TaskWith
 pub fn render_markdown(tasks: &[Task]) -> String {
     let mut output = String::from("# Tasks\n\n");
     for task in tasks {
-        output.push_str(&format!("## {}\n", task.heading));
-        output.push_str(&format!("**File:** {}:{}\n", task.file, task.line));
+        let _ = writeln!(output, "## {}", task.heading);
+        let _ = writeln!(output, "**File:** {}:{}", task.file, task.line);
         if let Some(ref t) = task.task_type {
-            output.push_str(&format!("**Type:** {t:?}\n"));
+            let _ = writeln!(output, "**Type:** {t}");
         }
         if let Some(ref p) = task.priority {
-            output.push_str(&format!("**Priority:** {p:?}\n"));
+            let _ = writeln!(output, "**Priority:** {p}");
         }
         if let Some(ref c) = task.created {
-            output.push_str(&format!("**Created:** {c}\n"));
+            let _ = writeln!(output, "**Created:** {c}");
         }
         if let Some(ref ts) = task.timestamp {
-            output.push_str(&format!("**Time:** {ts}\n"));
+            let _ = writeln!(output, "**Time:** {ts}");
         }
         if let Some(ref total) = task.total_clock_time {
-            output.push_str(&format!("**Total Time:** {total}\n"));
+            let _ = writeln!(output, "**Total Time:** {total}");
         }
         if let Some(ref clocks) = task.clocks {
             output.push_str("\n**Clock:**\n");
             for clock in clocks {
                 if let Some(ref end) = clock.end {
                     if let Some(ref dur) = clock.duration {
-                        output.push_str(&format!("- {} → {} ({})\n", clock.start, end, dur));
+                        let _ = writeln!(output, "- {} → {} ({})", clock.start, end, dur);
                     } else {
-                        output.push_str(&format!("- {} → {}\n", clock.start, end));
+                        let _ = writeln!(output, "- {} → {}", clock.start, end);
                     }
                 } else {
-                    output.push_str(&format!("- {} (active)\n", clock.start));
+                    let _ = writeln!(output, "- {} (active)", clock.start);
                 }
             }
         }
         if !task.content.is_empty() {
-            output.push_str(&format!("\n{}\n\n", task.content));
+            let _ = write!(output, "\n{}\n\n", task.content);
         } else {
             output.push('\n');
         }
@@ -199,66 +201,84 @@ pub fn render_markdown(tasks: &[Task]) -> String {
 pub fn render_html(tasks: &[Task]) -> String {
     let mut output = String::from("<html><body><h1>Tasks</h1>\n");
     for task in tasks {
-        output.push_str(&format!("<h2>{}</h2>\n", html_escape(&task.heading)));
-        output.push_str(&format!(
-            "<p><strong>File:</strong> {}:{}</p>\n",
+        let _ = writeln!(output, "<h2>{}</h2>", html_escape(&task.heading));
+        let _ = writeln!(
+            output,
+            "<p><strong>File:</strong> {}:{}</p>",
             html_escape(&task.file),
             task.line
-        ));
+        );
         if let Some(ref t) = task.task_type {
-            output.push_str(&format!("<p><strong>Type:</strong> {t:?}</p>\n"));
+            let _ = writeln!(output, "<p><strong>Type:</strong> {t}</p>");
         }
         if let Some(ref p) = task.priority {
-            output.push_str(&format!("<p><strong>Priority:</strong> {p:?}</p>\n"));
+            let _ = writeln!(output, "<p><strong>Priority:</strong> {p}</p>");
         }
         if let Some(ref c) = task.created {
-            output.push_str(&format!("<p><strong>Created:</strong> {}</p>\n", html_escape(c)));
+            let _ = writeln!(
+                output,
+                "<p><strong>Created:</strong> {}</p>",
+                html_escape(c)
+            );
         }
         if let Some(ref ts) = task.timestamp {
-            output.push_str(&format!("<p><strong>Time:</strong> {}</p>\n", html_escape(ts)));
+            let _ = writeln!(output, "<p><strong>Time:</strong> {}</p>", html_escape(ts));
         }
         if let Some(ref total) = task.total_clock_time {
-            output.push_str(&format!("<p><strong>Total Time:</strong> {}</p>\n", html_escape(total)));
+            let _ = writeln!(
+                output,
+                "<p><strong>Total Time:</strong> {}</p>",
+                html_escape(total)
+            );
         }
         if let Some(ref clocks) = task.clocks {
             output.push_str("<p><strong>Clock:</strong></p>\n<ul>\n");
             for clock in clocks {
                 if let Some(ref end) = clock.end {
                     if let Some(ref dur) = clock.duration {
-                        output.push_str(&format!(
-                            "<li>{} → {} ({})</li>\n",
+                        let _ = writeln!(
+                            output,
+                            "<li>{} → {} ({})</li>",
                             html_escape(&clock.start),
                             html_escape(end),
                             html_escape(dur)
-                        ));
+                        );
                     } else {
-                        output.push_str(&format!(
-                            "<li>{} → {}</li>\n",
+                        let _ = writeln!(
+                            output,
+                            "<li>{} → {}</li>",
                             html_escape(&clock.start),
                             html_escape(end)
-                        ));
+                        );
                     }
                 } else {
-                    output.push_str(&format!("<li>{} (active)</li>\n", html_escape(&clock.start)));
+                    let _ = writeln!(output, "<li>{} (active)</li>", html_escape(&clock.start));
                 }
             }
             output.push_str("</ul>\n");
         }
         if !task.content.is_empty() {
-            output.push_str(&format!("<p>{}</p>\n", html_escape(&task.content)));
+            let _ = writeln!(output, "<p>{}</p>", html_escape(&task.content));
         }
     }
     output.push_str("</body></html>");
     output
 }
 
-/// Escape HTML special characters
+/// Escape HTML special characters in pre-existing text content
 fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -294,7 +314,8 @@ mod tests {
         let output = render_markdown(&tasks);
         assert!(output.contains("# Tasks"));
         assert!(output.contains("## Test Task"));
-        assert!(output.contains("**Type:** Todo"));
+        assert!(output.contains("**Type:** TODO"));
+        assert!(output.contains("**Priority:** A"));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Task status type (TODO or DONE)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -9,9 +10,18 @@ pub enum TaskType {
     Done,
 }
 
+impl fmt::Display for TaskType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            TaskType::Todo => "TODO",
+            TaskType::Done => "DONE",
+        })
+    }
+}
+
 impl TaskType {
-    /// Parse task type from string
-    pub fn from_str(s: &str) -> Option<Self> {
+    /// Parse task type from an org-mode keyword (`TODO` / `DONE`)
+    pub fn from_keyword(s: &str) -> Option<Self> {
         match s {
             "TODO" => Some(TaskType::Todo),
             "DONE" => Some(TaskType::Done),
@@ -20,7 +30,7 @@ impl TaskType {
     }
 }
 
-/// Task priority (A is highest, C is lowest)
+/// Task priority (A is highest, C is lowest; D-Z preserved as `Other`)
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Priority {
     A,
@@ -30,11 +40,8 @@ pub enum Priority {
 }
 
 impl Priority {
-    /// Create priority from character (validates A-Z only)
+    /// Create priority from character. Only ASCII upper-case letters A-Z are accepted.
     pub fn from_char(c: char) -> Option<Self> {
-        if !c.is_ascii_uppercase() {
-            return None;
-        }
         match c {
             'A' => Some(Priority::A),
             'B' => Some(Priority::B),
@@ -55,6 +62,17 @@ impl Priority {
     }
 }
 
+impl fmt::Display for Priority {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Priority::A => f.write_str("A"),
+            Priority::B => f.write_str("B"),
+            Priority::C => f.write_str("C"),
+            Priority::Other(c) => write!(f, "{c}"),
+        }
+    }
+}
+
 /// Clock entry representing time tracking
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClockEntry {
@@ -65,7 +83,10 @@ pub struct ClockEntry {
     pub duration: Option<String>,
 }
 
-/// Extracted task from markdown file
+/// A single task extracted from a markdown file.
+///
+/// All optional fields are skipped on serialization when `None`, so the JSON
+/// output stays compact and stable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub file: String,
@@ -97,21 +118,34 @@ pub struct Task {
 /// Maximum file size to process (10 MB)
 pub const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
-/// Maximum number of tasks to extract
+/// Maximum number of tasks to extract (global, across all files).
 pub const MAX_TASKS: usize = 10_000;
 
-/// Statistics for file processing
+/// File processing statistics surfaced to stderr after a run.
 #[derive(Debug, Default)]
 pub struct ProcessingStats {
     pub files_processed: usize,
     pub files_skipped_size: usize,
     pub files_failed_search: usize,
     pub files_failed_read: usize,
+    pub max_tasks_reached: bool,
+    /// Paths of files that could not be read or searched. Capped to avoid unbounded growth.
+    pub failed_paths: Vec<String>,
 }
 
 impl ProcessingStats {
     pub fn has_warnings(&self) -> bool {
-        self.files_skipped_size > 0 || self.files_failed_search > 0 || self.files_failed_read > 0
+        self.files_skipped_size > 0
+            || self.files_failed_search > 0
+            || self.files_failed_read > 0
+            || self.max_tasks_reached
+    }
+
+    pub fn record_failed_path(&mut self, path: &str) {
+        const MAX_REPORT: usize = 20;
+        if self.failed_paths.len() < MAX_REPORT {
+            self.failed_paths.push(path.to_string());
+        }
     }
 
     pub fn print_summary(&self) {
@@ -127,11 +161,21 @@ impl ProcessingStats {
             if self.files_failed_read > 0 {
                 eprintln!("  Files failed to read: {}", self.files_failed_read);
             }
+            if self.max_tasks_reached {
+                eprintln!("  Hit MAX_TASKS = {MAX_TASKS} limit; output may be truncated");
+            }
+            if !self.failed_paths.is_empty() {
+                eprintln!("  Failed paths (up to first 20):");
+                for p in &self.failed_paths {
+                    eprintln!("    - {p}");
+                }
+            }
         }
     }
 }
 
-/// Task with day offset information
+/// Task paired with the number of days from the current date.
+/// Used for agenda rendering (overdue / upcoming).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TaskWithOffset {
     #[serde(flatten)]
@@ -140,7 +184,7 @@ pub struct TaskWithOffset {
     pub days_offset: Option<i64>,
 }
 
-/// Day agenda containing tasks for a specific date
+/// Tasks aggregated for a specific date, split into overdue / scheduled / upcoming buckets.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DayAgenda {
     pub date: String,
@@ -160,5 +204,39 @@ impl DayAgenda {
             scheduled_no_time: Vec::new(),
             upcoming: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_type_from_keyword() {
+        assert_eq!(TaskType::from_keyword("TODO"), Some(TaskType::Todo));
+        assert_eq!(TaskType::from_keyword("DONE"), Some(TaskType::Done));
+        assert_eq!(TaskType::from_keyword("MAYBE"), None);
+    }
+
+    #[test]
+    fn priority_from_char_letters() {
+        assert_eq!(Priority::from_char('A'), Some(Priority::A));
+        assert_eq!(Priority::from_char('B'), Some(Priority::B));
+        assert_eq!(Priority::from_char('C'), Some(Priority::C));
+        assert_eq!(Priority::from_char('Z'), Some(Priority::Other('Z')));
+    }
+
+    #[test]
+    fn priority_from_char_rejects_lower_and_digits() {
+        assert_eq!(Priority::from_char('a'), None);
+        assert_eq!(Priority::from_char('1'), None);
+        assert_eq!(Priority::from_char('@'), None);
+    }
+
+    #[test]
+    fn priority_order() {
+        assert!(Priority::A.order() < Priority::B.order());
+        assert!(Priority::B.order() < Priority::C.order());
+        assert!(Priority::C.order() < Priority::Other('D').order());
     }
 }

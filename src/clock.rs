@@ -6,8 +6,10 @@ use crate::types::ClockEntry;
 /// Regex for CLOCK entries: CLOCK: [timestamp]--[timestamp] => duration
 /// Supports both square brackets (like org-mode) and angle brackets (like other timestamps)
 static CLOCK_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"CLOCK:\s*[\[<]([^\]>]+)[\]>](?:--[\[<]([^\]>]+)[\]>])?(?:\s*=>\s*([0-9]+:[0-9]+))?")
-        .expect("Invalid CLOCK_RE regex")
+    Regex::new(
+        r"CLOCK:\s*[\[<]([^\]>]+)[\]>](?:--[\[<]([^\]>]+)[\]>])?(?:\s*=>\s*([0-9]+:[0-9]+))?",
+    )
+    .expect("Invalid CLOCK_RE regex")
 });
 
 /// Extract all CLOCK entries from text

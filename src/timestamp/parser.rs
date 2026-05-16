@@ -4,6 +4,7 @@ use regex::Regex;
 use std::borrow::Cow;
 
 use super::repeater::{parse_repeater, Repeater};
+use super::weekdays::normalize_weekdays;
 
 static RANGE_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(concat!(
@@ -29,12 +30,17 @@ static SINGLE_RE: Lazy<Regex> = Lazy::new(|| {
     )).expect("Invalid SINGLE_RE regex")
 });
 
+/// Result of parsing a single org-mode timestamp string.
 #[derive(Debug, Clone)]
 pub struct ParsedTimestamp {
+    /// The base date encoded in the timestamp (start date for ranges).
     pub date: NaiveDate,
+    /// Optional repeater (`+1d`, `.+2w`, ...).
     pub repeater: Option<Repeater>,
 }
 
+/// Parse a single org-mode timestamp like `<2024-12-05 Thu 10:00 +1d>` or
+/// `<2024-12-05>--<2024-12-06>`, optionally normalizing localized weekday names.
 pub fn parse_org_timestamp(ts: &str, mappings: Option<&[(&str, &str)]>) -> Option<ParsedTimestamp> {
     let ts = if let Some(m) = mappings {
         normalize_weekdays(ts, m)
@@ -45,28 +51,18 @@ pub fn parse_org_timestamp(ts: &str, mappings: Option<&[(&str, &str)]>) -> Optio
     if let Some(caps) = RANGE_RE.captures(&ts) {
         let date = NaiveDate::parse_from_str(&caps[1], "%Y-%m-%d").ok()?;
         let repeater = caps.get(4).and_then(|m| parse_repeater(m.as_str()));
-        
+
         return Some(ParsedTimestamp { date, repeater });
     }
 
     if let Some(caps) = SINGLE_RE.captures(&ts) {
         let date = NaiveDate::parse_from_str(&caps[1], "%Y-%m-%d").ok()?;
         let repeater = caps.get(4).and_then(|m| parse_repeater(m.as_str()));
-        
+
         return Some(ParsedTimestamp { date, repeater });
     }
 
     None
-}
-
-fn normalize_weekdays<'a>(text: &'a str, mappings: &[(&str, &str)]) -> Cow<'a, str> {
-    let mut result = Cow::Borrowed(text);
-    for (localized, english) in mappings {
-        if result.contains(localized) {
-            result = Cow::Owned(result.replace(localized, english));
-        }
-    }
-    result
 }
 
 #[cfg(test)]

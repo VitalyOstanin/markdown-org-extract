@@ -1,8 +1,10 @@
 use chrono::{Datelike, NaiveDate, Weekday};
 use std::collections::HashSet;
+use std::sync::OnceLock;
 
 include!(concat!(env!("OUT_DIR"), "/holidays_data.rs"));
 
+/// Russian holiday and workday calendar built from compile-time data
 #[derive(Debug)]
 pub struct HolidayCalendar {
     holidays: HashSet<NaiveDate>,
@@ -10,24 +12,33 @@ pub struct HolidayCalendar {
 }
 
 impl HolidayCalendar {
-    pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
+    /// Return the global singleton calendar
+    ///
+    /// Cheap to call repeatedly: initialization happens once per process.
+    pub fn global() -> &'static HolidayCalendar {
+        static CALENDAR: OnceLock<HolidayCalendar> = OnceLock::new();
+        CALENDAR.get_or_init(HolidayCalendar::build)
+    }
+
+    fn build() -> Self {
         let mut holidays = HashSet::new();
         for &(year, month, day) in HOLIDAYS {
             if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
                 holidays.insert(date);
             }
         }
-        
+
         let mut workdays = HashSet::new();
         for &(year, month, day) in WORKDAYS {
             if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
                 workdays.insert(date);
             }
         }
-        
-        Ok(Self { holidays, workdays })
+
+        Self { holidays, workdays }
     }
-    
+
+    /// Check whether the given date is a workday under the Russian calendar
     pub fn is_workday(&self, date: NaiveDate) -> bool {
         if self.workdays.contains(&date) {
             return true;
@@ -37,7 +48,8 @@ impl HolidayCalendar {
         }
         !matches!(date.weekday(), Weekday::Sat | Weekday::Sun)
     }
-    
+
+    /// Return the next workday strictly after the given date
     pub fn next_workday(&self, date: NaiveDate) -> NaiveDate {
         let mut current = date + chrono::Duration::days(1);
         while !self.is_workday(current) {
@@ -46,8 +58,11 @@ impl HolidayCalendar {
         current
     }
 
+    /// Return all holidays in the given year, sorted ascending
     pub fn get_holidays_for_year(&self, year: i32) -> Vec<NaiveDate> {
-        let mut result: Vec<_> = self.holidays.iter()
+        let mut result: Vec<_> = self
+            .holidays
+            .iter()
             .filter(|d| d.year() == year)
             .copied()
             .collect();
@@ -62,13 +77,13 @@ mod tests {
 
     #[test]
     fn test_load_calendar() {
-        let calendar = HolidayCalendar::load().unwrap();
-        assert!(calendar.holidays.len() > 0);
+        let calendar = HolidayCalendar::global();
+        assert!(!calendar.holidays.is_empty());
     }
 
     #[test]
     fn test_regular_weekend() {
-        let calendar = HolidayCalendar::load().unwrap();
+        let calendar = HolidayCalendar::global();
         let saturday = NaiveDate::from_ymd_opt(2025, 12, 6).unwrap();
         let sunday = NaiveDate::from_ymd_opt(2025, 12, 7).unwrap();
         assert!(!calendar.is_workday(saturday));
@@ -77,26 +92,32 @@ mod tests {
 
     #[test]
     fn test_regular_weekday() {
-        let calendar = HolidayCalendar::load().unwrap();
+        let calendar = HolidayCalendar::global();
         let friday = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap();
         assert!(calendar.is_workday(friday));
     }
 
     #[test]
     fn test_new_year_holidays_2025() {
-        let calendar = HolidayCalendar::load().unwrap();
+        let calendar = HolidayCalendar::global();
         for day in 1..=8 {
             let date = NaiveDate::from_ymd_opt(2025, 1, day).unwrap();
-            assert!(!calendar.is_workday(date), "2025-01-{:02} should be holiday", day);
+            assert!(
+                !calendar.is_workday(date),
+                "2025-01-{day:02} should be holiday"
+            );
         }
     }
 
     #[test]
     fn test_new_year_holidays_2026() {
-        let calendar = HolidayCalendar::load().unwrap();
+        let calendar = HolidayCalendar::global();
         for day in 1..=9 {
             let date = NaiveDate::from_ymd_opt(2026, 1, day).unwrap();
-            assert!(!calendar.is_workday(date), "2026-01-{:02} should be holiday", day);
+            assert!(
+                !calendar.is_workday(date),
+                "2026-01-{day:02} should be holiday"
+            );
         }
         let jan_12 = NaiveDate::from_ymd_opt(2026, 1, 12).unwrap();
         assert!(calendar.is_workday(jan_12), "2026-01-12 should be workday");
@@ -104,21 +125,27 @@ mod tests {
 
     #[test]
     fn test_march_8_transfer_2026() {
-        let calendar = HolidayCalendar::load().unwrap();
+        let calendar = HolidayCalendar::global();
         let march_9 = NaiveDate::from_ymd_opt(2026, 3, 9).unwrap();
-        assert!(!calendar.is_workday(march_9), "2026-03-09 should be holiday (transfer)");
+        assert!(
+            !calendar.is_workday(march_9),
+            "2026-03-09 should be holiday (transfer)"
+        );
     }
 
     #[test]
     fn test_may_9_transfer_2026() {
-        let calendar = HolidayCalendar::load().unwrap();
+        let calendar = HolidayCalendar::global();
         let may_11 = NaiveDate::from_ymd_opt(2026, 5, 11).unwrap();
-        assert!(!calendar.is_workday(may_11), "2026-05-11 should be holiday (transfer)");
+        assert!(
+            !calendar.is_workday(may_11),
+            "2026-05-11 should be holiday (transfer)"
+        );
     }
 
     #[test]
     fn test_next_workday_skip_weekend() {
-        let calendar = HolidayCalendar::load().unwrap();
+        let calendar = HolidayCalendar::global();
         let friday = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap();
         let next = calendar.next_workday(friday);
         let monday = NaiveDate::from_ymd_opt(2025, 12, 8).unwrap();
@@ -127,7 +154,7 @@ mod tests {
 
     #[test]
     fn test_next_workday_skip_holidays() {
-        let calendar = HolidayCalendar::load().unwrap();
+        let calendar = HolidayCalendar::global();
         let jan_4 = NaiveDate::from_ymd_opt(2026, 1, 4).unwrap();
         let next = calendar.next_workday(jan_4);
         let jan_12 = NaiveDate::from_ymd_opt(2026, 1, 12).unwrap();

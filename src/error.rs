@@ -1,16 +1,28 @@
 use std::fmt;
 use std::io;
 
+/// Application error. Wraps IO and validation failures encountered by the CLI.
 #[derive(Debug)]
 pub enum AppError {
+    /// Underlying IO error (file read, write, etc.)
     Io(io::Error),
+    /// `--dir` does not exist or is not a directory
     InvalidDirectory(String),
+    /// `--glob` pattern is malformed or uses an unsupported feature
     InvalidGlob(String),
+    /// CLI date argument is not parseable as YYYY-MM-DD
     InvalidDate(String),
+    /// `--tz` is not a valid IANA timezone
     InvalidTimezone(String),
+    /// `--output` path is unsafe (missing parent, symlink, etc.)
+    InvalidOutput(String),
+    /// `--from` and `--to` form an invalid range
     DateRange(String),
+    /// JSON or other serializer reported an error
     Serialization(String),
+    /// Regex compilation failed
     Regex(String),
+    /// Directory traversal (`ignore` crate) failed
     Walk(String),
 }
 
@@ -22,6 +34,7 @@ impl fmt::Display for AppError {
             AppError::InvalidGlob(pattern) => write!(f, "Invalid glob pattern: {pattern}"),
             AppError::InvalidDate(msg) => write!(f, "Invalid date: {msg}"),
             AppError::InvalidTimezone(tz) => write!(f, "Invalid timezone: {tz}"),
+            AppError::InvalidOutput(msg) => write!(f, "Invalid output path: {msg}"),
             AppError::DateRange(msg) => write!(f, "Invalid date range: {msg}"),
             AppError::Serialization(msg) => write!(f, "Serialization error: {msg}"),
             AppError::Regex(msg) => write!(f, "Regex error: {msg}"),

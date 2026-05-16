@@ -18,7 +18,7 @@ CLI утилита для извлечения задач из markdown файл
 
 ### Требования
 
-- Rust 1.70 или новее
+- Rust 1.80 или новее (используется `std::sync::LazyLock`)
 - Cargo
 
 ### Сборка проекта
@@ -110,6 +110,11 @@ markdown-org-extract [OPTIONS]
 - `--tz <TIMEZONE>` - часовой пояс для определения текущей даты (по умолчанию: `Europe/Moscow`)
 - `--current-date <DATE>` - явная текущая дата для расчета overdue в формате YYYY-MM-DD (по умолчанию: сегодня в указанной таймзоне)
 - `--holidays <YEAR>` - вывести список праздников для указанного года (1900-2100) в формате JSON
+- `--absolute-paths` - выводить абсолютные пути файлов вместо относительных к `--dir`
+- `--max-tasks <N>` - предельное число задач (1..=10_000_000, по умолчанию 10_000). Применяется и как per-file, и как глобальный потолок
+- `-v`, `--verbose` - подробный лог в stderr (`-v` = info, `-vv` = debug, `-vvv` = trace). Несовместим с `--quiet`
+- `-q`, `--quiet` - подавить все диагностические сообщения, кроме критических ошибок
+- `--no-color` - отключить ANSI-цвета в логах. Также уважается переменная окружения `NO_COLOR`
 
 ### Примеры использования
 
@@ -220,10 +225,14 @@ markdown-org-extract --dir ./notes --tz America/New_York
 markdown-org-extract --dir ./notes --agenda week --current-date 2024-12-05
 ```
 
-Вывести список праздников для года:
+Ограничить число извлекаемых задач (полезно при пакетной обработке очень больших каталогов):
 ```bash
-markdown-org-extract --holidays 2025
-markdown-org-extract --holidays 2026
+markdown-org-extract --dir ./notes --max-tasks 1000
+```
+
+Включить подробный лог обработки в stderr:
+```bash
+markdown-org-extract --dir ./notes -v
 ```
 
 ## Примеры файлов
@@ -676,15 +685,16 @@ Critical bug fix needs review.
 markdown-org-extract/
 ├── src/
 │   ├── main.rs             # Точка входа CLI, walker, чтение файлов
-│   ├── cli.rs              # Парсинг аргументов (clap)
+│   ├── cli.rs              # Парсинг аргументов (clap), tracing init
 │   ├── agenda.rs           # Логика agenda (день/неделя/месяц), повторы
 │   ├── parser.rs           # Извлечение задач из markdown AST
 │   ├── render.rs           # Markdown/HTML рендеринг
 │   ├── format.rs           # OutputFormat (clap ValueEnum)
 │   ├── error.rs            # AppError
-│   ├── types.rs            # Task / Priority / DayAgenda и т.п.
+│   ├── types.rs            # Task / Priority / DayAgenda / ProcessingStats
 │   ├── clock.rs            # CLOCK: парсинг и сумма времени
-│   ├── holidays.rs         # Календарь рабочих дней РФ (singleton)
+│   ├── holidays.rs         # Календарь рабочих дней РФ (singleton, binary search)
+│   ├── regex_limits.rs     # `compile_bounded`: regex с лимитами на size/DFA
 │   └── timestamp/          # Парсинг org-mode timestamp'ов
 │       ├── parser.rs       #   <2024-12-05 Thu 10:00 +1d> → ParsedTimestamp
 │       ├── extract.rs      #   вытащить timestamp/CREATED из произвольного текста
@@ -693,32 +703,43 @@ markdown-org-extract/
 ├── tests/
 │   └── cli.rs              # Integration-тесты CLI (assert_cmd)
 ├── examples/               # Примеры markdown файлов
+├── docs/                   # Дополнительная документация
 ├── holidays_ru.json        # Календарь праздников/рабочих дней
 ├── build.rs                # Генерация holidays_data.rs во время сборки
+├── rustfmt.toml            # Настройки форматирования (edition 2021, width 100)
+├── rust-toolchain.toml     # Pinned channel = stable, components rustfmt+clippy
 ├── .github/workflows/
-│   ├── ci.yml              # PR/push CI: build/test/clippy/fmt
-│   └── release.yml         # Публикация на crates.io по тегу v*
+│   ├── ci.yml              # PR/push CI: lint + test-matrix (Linux/macOS/Windows) + cargo audit
+│   ├── release.yml         # Публикация на crates.io по тегу v* (+ workflow_dispatch)
+│   └── outdated.yml        # Еженедельный non-blocking `cargo outdated`
 ├── Cargo.toml
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
+├── TODO.md                 # Отложенные технические задачи
 ├── LICENSE                 # MIT
 └── README.md
 ```
 
 См. также:
-- [CLOCK_IMPLEMENTATION.md](CLOCK_IMPLEMENTATION.md) — детали реализации CLOCK-меток
-- [org-mode-keywords.md](org-mode-keywords.md) — справка по поддерживаемым ключевым словам
+- [docs/CLOCK_IMPLEMENTATION.md](docs/CLOCK_IMPLEMENTATION.md) — детали реализации CLOCK-меток
+- [docs/org-mode-keywords.md](docs/org-mode-keywords.md) — справка по поддерживаемым ключевым словам
+- [CONTRIBUTING.md](CONTRIBUTING.md) — гайд для контрибьюторов
+- [CHANGELOG.md](CHANGELOG.md) — история версий
+- [TODO.md](TODO.md) — отложенные технические задачи
 
 ## Зависимости
 
 - `clap` — парсинг аргументов командной строки
-- `comrak` — парсинг markdown
-- `regex` — работа с регулярными выражениями
+- `comrak` — парсинг markdown (без onig/syntect: `default-features = false`)
+- `regex` — работа с регулярными выражениями (с лимитами на size/DFA)
 - `serde` / `serde_json` — сериализация данных
 - `chrono` / `chrono-tz` — даты и часовые пояса
 - `grep-regex` / `grep-searcher` — быстрый pre-filter по ключевым словам
 - `ignore` — обход дерева каталогов с учётом `.gitignore`
-- `once_cell` — ленивые `static`-регулярки
+- `globset` — компиляция glob-шаблонов для `--glob`
+- `tracing` / `tracing-subscriber` — структурированное логирование диагностики (`--verbose`, `--quiet`, `--no-color`)
+
+Для лениво-инициализируемых `static`-регулярок используется `std::sync::LazyLock` из стандартной библиотеки (Rust 1.80+).
 
 ## Лицензия
 

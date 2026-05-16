@@ -281,27 +281,21 @@ pub fn closest_date(
         }
         RepeaterUnit::Workday => {
             let calendar = HolidayCalendar::global();
-            let step = repeater.value;
+            let step = repeater.value as i64;
 
-            // Walk on the grid base_date, base_date + step*wd, base_date + 2*step*wd, ...
-            // and find the last grid point <= current.
-            let mut last_occurrence = base_date;
-            loop {
-                let mut next = last_occurrence;
-                for _ in 0..step {
-                    next = calendar.next_workday(next);
-                }
-                if next > current {
-                    break;
-                }
-                last_occurrence = next;
-            }
-            let n1 = last_occurrence;
+            // Grid: base_date (k=0), then k>=1 means the (k*step)-th workday
+            // strictly after base_date. Find the largest k with grid[k] <= current
+            // by counting workdays in (base_date, current] once (O(log n)), instead
+            // of walking the grid step-by-step (O(N) calendar days).
+            let m = calendar.workdays_between_exclusive(base_date, current);
+            let k = m / step;
 
-            let mut n2 = n1;
-            for _ in 0..step {
-                n2 = calendar.next_workday(n2);
-            }
+            let n1 = if k == 0 {
+                base_date
+            } else {
+                calendar.nth_workday_after(base_date, (k * step) as u64)
+            };
+            let n2 = calendar.nth_workday_after(n1, step as u64);
 
             match prefer {
                 DatePreference::Past => {
@@ -723,6 +717,149 @@ mod tests {
         assert_eq!(
             closest_date(base, current, DatePreference::Future, &repeater),
             Some(base),
+        );
+    }
+
+    /// Reference implementation of the workday `closest_date` using the
+    /// original O(N) day-by-day walk. Used only as a test oracle to verify
+    /// the optimized O(log N) version produces identical results.
+    fn closest_date_workday_oracle(
+        base_date: NaiveDate,
+        current: NaiveDate,
+        prefer: DatePreference,
+        step: u32,
+    ) -> Option<NaiveDate> {
+        let calendar = crate::holidays::HolidayCalendar::global();
+        if current == base_date {
+            return Some(base_date);
+        }
+        if current < base_date {
+            return match prefer {
+                DatePreference::Past => None,
+                DatePreference::Future => Some(base_date),
+            };
+        }
+        let mut last_occurrence = base_date;
+        loop {
+            let mut next = last_occurrence;
+            for _ in 0..step {
+                next = calendar.next_workday(next);
+            }
+            if next > current {
+                break;
+            }
+            last_occurrence = next;
+        }
+        let n1 = last_occurrence;
+        let mut n2 = n1;
+        for _ in 0..step {
+            n2 = calendar.next_workday(n2);
+        }
+        match prefer {
+            DatePreference::Past => {
+                if current >= n2 {
+                    Some(n2)
+                } else {
+                    Some(n1)
+                }
+            }
+            DatePreference::Future => {
+                if current <= n1 {
+                    Some(n1)
+                } else {
+                    Some(n2)
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_closest_date_workday_matches_oracle_across_2026() {
+        // Sweep every day of 2026 against the slow oracle to make sure the
+        // optimized O(log N) path produces identical results to the original
+        // day-by-day walk. Covers all the holiday-cluster and weekend boundary
+        // cases that exist in the bundled calendar.
+        let base = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        for step in [1u32, 2, 3, 5] {
+            let repeater = Repeater {
+                repeater_type: RepeaterType::Cumulative,
+                value: step,
+                unit: RepeaterUnit::Workday,
+            };
+            let mut day = base;
+            let end = NaiveDate::from_ymd_opt(2026, 12, 31).unwrap();
+            while day <= end {
+                for &prefer in &[DatePreference::Past, DatePreference::Future] {
+                    let got = closest_date(base, day, prefer, &repeater);
+                    let want = closest_date_workday_oracle(base, day, prefer, step);
+                    assert_eq!(
+                        got, want,
+                        "mismatch at base={base} current={day} step={step} prefer={prefer:?}"
+                    );
+                }
+                day += chrono::Duration::days(1);
+            }
+        }
+    }
+
+    #[test]
+    fn test_closest_date_workday_handles_year_old_base() {
+        // Regression for the O(N) workday loop: with a year-old base date the
+        // optimized path must still land on the right grid point and return
+        // it in well under the previous "hundreds of next_workday calls".
+        let base = NaiveDate::from_ymd_opt(2025, 1, 13).unwrap(); // Mon, first workday of Jan 2025
+        let repeater = Repeater {
+            repeater_type: RepeaterType::Cumulative,
+            value: 1,
+            unit: RepeaterUnit::Workday,
+        };
+        let current = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(); // Mon
+        let got = closest_date(base, current, DatePreference::Past, &repeater).unwrap();
+        let want = closest_date_workday_oracle(base, current, DatePreference::Past, 1).unwrap();
+        assert_eq!(got, want);
+        assert!(got <= current);
+    }
+
+    #[test]
+    fn test_workdays_between_exclusive_basic() {
+        use crate::holidays::HolidayCalendar;
+        let cal = HolidayCalendar::global();
+        // Mon-Fri 2025-12-08..2025-12-12 → 5 workdays in (12-07, 12-12].
+        let a = NaiveDate::from_ymd_opt(2025, 12, 7).unwrap(); // Sun
+        let b = NaiveDate::from_ymd_opt(2025, 12, 12).unwrap(); // Fri
+        assert_eq!(cal.workdays_between_exclusive(a, b), 5);
+
+        // Across Jan 2026 holidays: (2025-12-29, 2026-01-13]. Jan 1-9 are
+        // holidays, Jan 10-11 weekend, Jan 12-13 workdays. Dec 29 Mon was
+        // start; Dec 30 Tue, Dec 31 Wed are holidays per JSON (2025-12-31 in
+        // data). Wait: only 2025-12-31 is a holiday, so Dec 30 Tue is a workday.
+        let a = NaiveDate::from_ymd_opt(2025, 12, 29).unwrap();
+        let b = NaiveDate::from_ymd_opt(2026, 1, 13).unwrap();
+        // Manually: workdays in (Dec 29, Jan 13]:
+        //   Dec 30 (Tue, workday), Dec 31 (Wed, holiday), Jan 1-9 (holidays),
+        //   Jan 10-11 (weekend), Jan 12 (Mon, workday), Jan 13 (Tue, workday) = 3.
+        assert_eq!(cal.workdays_between_exclusive(a, b), 3);
+    }
+
+    #[test]
+    fn test_nth_workday_after_basic() {
+        use crate::holidays::HolidayCalendar;
+        let cal = HolidayCalendar::global();
+        // From Sun 2025-12-07, the 1st workday after is Mon 2025-12-08.
+        let base = NaiveDate::from_ymd_opt(2025, 12, 7).unwrap();
+        assert_eq!(
+            cal.nth_workday_after(base, 1),
+            NaiveDate::from_ymd_opt(2025, 12, 8).unwrap()
+        );
+        // The 5th workday after Sun 2025-12-07 is Fri 2025-12-12.
+        assert_eq!(
+            cal.nth_workday_after(base, 5),
+            NaiveDate::from_ymd_opt(2025, 12, 12).unwrap()
+        );
+        // The 6th workday after Sun 2025-12-07 skips the weekend → Mon 2025-12-15.
+        assert_eq!(
+            cal.nth_workday_after(base, 6),
+            NaiveDate::from_ymd_opt(2025, 12, 15).unwrap()
         );
     }
 

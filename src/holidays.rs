@@ -72,6 +72,99 @@ impl HolidayCalendar {
             .copied()
             .collect()
     }
+
+    /// Count workdays in the half-open interval `(start, end]`.
+    ///
+    /// Runs in `O(log H + log W + k)` where `H`, `W` are the holiday and
+    /// transfer-workday counts and `k` is the number of holidays/workdays
+    /// inside the range (typically a handful for one-month spans).
+    ///
+    /// Returns 0 if `end <= start`. Used by `nth_workday_after` to avoid
+    /// the O(N) day-by-day scan in `closest_date` for long agenda ranges.
+    pub fn workdays_between_exclusive(&self, start: NaiveDate, end: NaiveDate) -> i64 {
+        if end <= start {
+            return 0;
+        }
+        // Count plain weekdays Mon..Fri in the inclusive range [start+1, end].
+        let first = start + chrono::Duration::days(1);
+        let weekdays = count_weekdays_inclusive(first, end);
+
+        // Subtract holidays in (start, end] that fall on Mon..Fri.
+        let h_lo = self.holidays.partition_point(|d| *d <= start);
+        let h_hi = self.holidays.partition_point(|d| *d <= end);
+        let holidays_on_weekday = self.holidays[h_lo..h_hi]
+            .iter()
+            .filter(|d| !matches!(d.weekday(), Weekday::Sat | Weekday::Sun))
+            .count() as i64;
+
+        // Add transfer workdays in (start, end] that fall on Sat..Sun.
+        let w_lo = self.workdays.partition_point(|d| *d <= start);
+        let w_hi = self.workdays.partition_point(|d| *d <= end);
+        let workdays_on_weekend = self.workdays[w_lo..w_hi]
+            .iter()
+            .filter(|d| matches!(d.weekday(), Weekday::Sat | Weekday::Sun))
+            .count() as i64;
+
+        weekdays - holidays_on_weekday + workdays_on_weekend
+    }
+
+    /// Return the `n`-th workday strictly after `base`.
+    ///
+    /// Uses binary search on `workdays_between_exclusive`, giving an
+    /// `O(log(date_range) * log(holidays))` lookup. `nth_workday_after(d, 0)`
+    /// returns `d` itself (mirrors the loop semantics in `closest_date`,
+    /// where `k=0` means the base occurrence).
+    pub fn nth_workday_after(&self, base: NaiveDate, n: u64) -> NaiveDate {
+        if n == 0 {
+            return base;
+        }
+        let n_i64 = n as i64;
+
+        // Initial upper bound: roughly ceil(n * 7/5) days plus generous slack
+        // for back-to-back holidays (e.g. 10-day January in Russia).
+        let initial_span = (n_i64.saturating_mul(7) / 5).saturating_add(40);
+        let mut hi = base + chrono::Duration::days(initial_span);
+        while self.workdays_between_exclusive(base, hi) < n_i64 {
+            let span = (hi - base).num_days();
+            hi = base + chrono::Duration::days(span.saturating_mul(2));
+        }
+
+        let mut lo = base + chrono::Duration::days(1);
+        while lo < hi {
+            let mid = lo + chrono::Duration::days((hi - lo).num_days() / 2);
+            if self.workdays_between_exclusive(base, mid) < n_i64 {
+                lo = mid + chrono::Duration::days(1);
+            } else {
+                hi = mid;
+            }
+        }
+        lo
+    }
+}
+
+/// Count Mon-Fri days in the inclusive range `[a, b]`. Returns 0 if `a > b`.
+///
+/// Uses arithmetic on the weekday of `a` so we don't pay per-day iteration
+/// cost. Helper for `workdays_between_exclusive`.
+fn count_weekdays_inclusive(a: NaiveDate, b: NaiveDate) -> i64 {
+    if a > b {
+        return 0;
+    }
+    let total = (b - a).num_days() + 1; // inclusive count of days
+    let full_weeks = total / 7;
+    let remainder = total % 7;
+
+    // Mon=0..Sun=6 via num_days_from_monday
+    let mut weekend_in_remainder = 0i64;
+    let start_wd = a.weekday().num_days_from_monday() as i64; // 0..=6
+    for i in 0..remainder {
+        let wd = (start_wd + i) % 7;
+        if wd == 5 || wd == 6 {
+            weekend_in_remainder += 1;
+        }
+    }
+
+    full_weeks * 5 + (remainder - weekend_in_remainder)
 }
 
 #[cfg(test)]
@@ -162,5 +255,78 @@ mod tests {
         let next = calendar.next_workday(jan_4);
         let jan_12 = NaiveDate::from_ymd_opt(2026, 1, 12).unwrap();
         assert_eq!(next, jan_12);
+    }
+
+    /// End-to-end check of the `build.rs` pipeline: the JSON file shipped with
+    /// the crate (`holidays_ru.json`) must round-trip into the compiled-in
+    /// `HOLIDAYS` / `WORKDAYS` static arrays. This catches regressions where
+    /// `build.rs` silently drops entries (invalid date format, sort/dedup bugs,
+    /// schema drift) without requiring us to spawn a separate cargo build.
+    #[test]
+    fn test_build_pipeline_matches_json_source() {
+        let raw = include_str!("../holidays_ru.json");
+        let parsed: serde_json::Value =
+            serde_json::from_str(raw).expect("holidays_ru.json is JSON");
+        let root = parsed.as_object().expect("top-level is object");
+
+        let mut expected_holidays: Vec<(i32, u32, u32)> = Vec::new();
+        let mut expected_workdays: Vec<(i32, u32, u32)> = Vec::new();
+        for (_year_key, year_data) in root {
+            if let Some(arr) = year_data.get("holidays").and_then(|v| v.as_array()) {
+                for entry in arr {
+                    let s = entry.as_str().expect("date is a string");
+                    let d = NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                        .unwrap_or_else(|e| panic!("malformed JSON date {s:?}: {e}"));
+                    expected_holidays.push((d.year(), d.month(), d.day()));
+                }
+            }
+            if let Some(arr) = year_data.get("workdays").and_then(|v| v.as_array()) {
+                for entry in arr {
+                    let s = entry.as_str().expect("date is a string");
+                    let d = NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                        .unwrap_or_else(|e| panic!("malformed JSON date {s:?}: {e}"));
+                    expected_workdays.push((d.year(), d.month(), d.day()));
+                }
+            }
+        }
+
+        // `build.rs` is allowed to sort + dedup, so compare by set semantics.
+        expected_holidays.sort_unstable();
+        expected_holidays.dedup();
+        expected_workdays.sort_unstable();
+        expected_workdays.dedup();
+
+        let mut compiled_holidays: Vec<(i32, u32, u32)> = HOLIDAYS.to_vec();
+        compiled_holidays.sort_unstable();
+        compiled_holidays.dedup();
+        let mut compiled_workdays: Vec<(i32, u32, u32)> = WORKDAYS.to_vec();
+        compiled_workdays.sort_unstable();
+        compiled_workdays.dedup();
+
+        assert_eq!(
+            compiled_holidays, expected_holidays,
+            "HOLIDAYS static must match holidays_ru.json after build.rs run"
+        );
+        assert_eq!(
+            compiled_workdays, expected_workdays,
+            "WORKDAYS static must match holidays_ru.json after build.rs run"
+        );
+    }
+
+    /// `build.rs` must produce a sorted, dedup'd calendar so the runtime
+    /// `binary_search` in [`HolidayCalendar::is_workday`] gives correct
+    /// results. This regression test asserts the post-build invariant
+    /// directly on the live singleton.
+    #[test]
+    fn test_calendar_is_sorted_and_unique() {
+        let calendar = HolidayCalendar::global();
+        assert!(
+            calendar.holidays.windows(2).all(|w| w[0] < w[1]),
+            "holidays must be sorted and unique"
+        );
+        assert!(
+            calendar.workdays.windows(2).all(|w| w[0] < w[1]),
+            "workdays must be sorted and unique"
+        );
     }
 }

@@ -2,6 +2,18 @@
 
 CLI утилита для извлечения задач из markdown файлов с поддержкой меток Emacs Org-mode.
 
+## Содержание
+
+- [Установка и сборка](#установка-и-сборка)
+- [Использование](#использование)
+- [Параметры](#параметры)
+- [Примеры](#примеры)
+- [Поддерживаемые конструкции Org-mode](#поддерживаемые-конструкции-org-mode)
+- [Календарь рабочих дней](#календарь-рабочих-дней)
+- [Структура проекта](#структура-проекта)
+- [Зависимости](#зависимости)
+- [Лицензия](#лицензия)
+
 ## Установка и сборка
 
 ### Требования
@@ -174,7 +186,6 @@ markdown-org-extract --holidays 2026
   "2025-06-12",
   "2025-11-04"
 ]
-```
 ```
 
 Задачи на текущую неделю:
@@ -664,23 +675,51 @@ Critical bug fix needs review.
 ```
 markdown-org-extract/
 ├── src/
-│   └── main.rs          # Основной код приложения
-├── examples/            # Примеры markdown файлов
-│   ├── project-tasks.md
-│   ├── personal-notes.md
-│   └── meeting-notes.md
-├── Cargo.toml           # Зависимости проекта
-└── README.md            # Документация
+│   ├── main.rs             # Точка входа CLI, walker, чтение файлов
+│   ├── cli.rs              # Парсинг аргументов (clap)
+│   ├── agenda.rs           # Логика agenda (день/неделя/месяц), повторы
+│   ├── parser.rs           # Извлечение задач из markdown AST
+│   ├── render.rs           # Markdown/HTML рендеринг
+│   ├── format.rs           # OutputFormat (clap ValueEnum)
+│   ├── error.rs            # AppError
+│   ├── types.rs            # Task / Priority / DayAgenda и т.п.
+│   ├── clock.rs            # CLOCK: парсинг и сумма времени
+│   ├── holidays.rs         # Календарь рабочих дней РФ (singleton)
+│   └── timestamp/          # Парсинг org-mode timestamp'ов
+│       ├── parser.rs       #   <2024-12-05 Thu 10:00 +1d> → ParsedTimestamp
+│       ├── extract.rs      #   вытащить timestamp/CREATED из произвольного текста
+│       ├── repeater.rs     #   парсинг и арифметика повторов (+1d, ++2w, .+1wd…)
+│       └── weekdays.rs     #   нормализация русских названий дней недели
+├── tests/
+│   └── cli.rs              # Integration-тесты CLI (assert_cmd)
+├── examples/               # Примеры markdown файлов
+├── holidays_ru.json        # Календарь праздников/рабочих дней
+├── build.rs                # Генерация holidays_data.rs во время сборки
+├── .github/workflows/
+│   ├── ci.yml              # PR/push CI: build/test/clippy/fmt
+│   └── release.yml         # Публикация на crates.io по тегу v*
+├── Cargo.toml
+├── CHANGELOG.md
+├── CONTRIBUTING.md
+├── LICENSE                 # MIT
+└── README.md
 ```
+
+См. также:
+- [CLOCK_IMPLEMENTATION.md](CLOCK_IMPLEMENTATION.md) — детали реализации CLOCK-меток
+- [org-mode-keywords.md](org-mode-keywords.md) — справка по поддерживаемым ключевым словам
 
 ## Зависимости
 
-- `clap` - парсинг аргументов командной строки
-- `comrak` - парсинг markdown
-- `glob` - поиск файлов по шаблону
-- `regex` - работа с регулярными выражениями
-- `serde` / `serde_json` - сериализация данных
+- `clap` — парсинг аргументов командной строки
+- `comrak` — парсинг markdown
+- `regex` — работа с регулярными выражениями
+- `serde` / `serde_json` — сериализация данных
+- `chrono` / `chrono-tz` — даты и часовые пояса
+- `grep-regex` / `grep-searcher` — быстрый pre-filter по ключевым словам
+- `ignore` — обход дерева каталогов с учётом `.gitignore`
+- `once_cell` — ленивые `static`-регулярки
 
 ## Лицензия
 
-MIT
+MIT — см. файл [LICENSE](LICENSE).

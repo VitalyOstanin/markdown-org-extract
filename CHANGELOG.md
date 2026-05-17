@@ -8,11 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [\[Unreleased\]](#unreleased)
+- [\[0.2.1\] — 2026-05-17](#021--2026-05-17)
 - [\[0.2.0\] — 2026-05-17](#020--2026-05-17)
 - [\[0.1.6\] — 2026-05-11](#016--2026-05-11)
 - [\[0.1.5\] — earlier](#015--earlier)
 
 ## [Unreleased]
+
+_No user-visible changes yet._
+
+## [0.2.1] — 2026-05-17
 
 ### Fixed
 

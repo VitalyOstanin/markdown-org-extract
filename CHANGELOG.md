@@ -14,7 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No user-visible changes yet._
+### Fixed
+
+- Parser now recognises `DEADLINE:` / `SCHEDULED:` / `CREATED:` planning
+  lines when they are both indented (4-space indent that markdown treats
+  as an indented code block) and wrapped in inline-code backticks, e.g.
+  `    \`DEADLINE: <2026-05-07 Thu +1y>\``. Previously the wrapping
+  backticks prevented the keyword regex from anchoring, and the heading
+  was dropped from the agenda entirely. Matches emacs org-mode, which
+  surfaces such entries regardless of the visual framing.
 
 ## [0.2.0] — 2026-05-17
 

@@ -178,7 +178,15 @@ fn process_node<'a>(
         }
         NodeValue::CodeBlock(code) => {
             if let Some(ref mut info) = current_heading {
-                let literal = code.literal.trim();
+                let raw = code.literal.trim();
+                // An indented code block (4-space indent) reaches us with
+                // the planning line still wrapped in inline-code backticks
+                // (`    \`DEADLINE: <...>\``). Comrak strips the indent but
+                // leaves the wrapping backticks in `code.literal`, which
+                // would otherwise prevent the DEADLINE/SCHEDULED/CREATED
+                // regex from anchoring on the keyword. Drop a matched
+                // backtick pair before regex matching.
+                let literal = strip_wrapping_backticks(raw);
                 let normalized = normalize_weekdays(literal, mappings);
                 let created = extract_created_normalized(&normalized);
                 let timestamp = extract_timestamp_normalized(&normalized);
@@ -251,6 +259,33 @@ fn parse_heading(text: &str) -> (Option<TaskType>, Option<Priority>, String) {
     } else {
         (None, None, text.to_string())
     }
+}
+
+/// Strip a matched pair of inline-code backtick fences from the trimmed
+/// content of an indented code block.
+///
+/// Markdown's indented code blocks preserve the literal source minus the
+/// leading 4-space indent, so a line like `    \`DEADLINE: <...>\`` arrives
+/// here with the wrapping backticks intact. Those wrappers are not part of
+/// the planning-line keyword grammar — they're inline-code framing that the
+/// user added to keep the line visually attached to the heading in their
+/// editor — so we peel one balanced run of backticks before regex matching.
+///
+/// Returns `s` unchanged when the wrapping is asymmetric or absent.
+fn strip_wrapping_backticks(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    let n_leading = bytes.iter().take_while(|&&b| b == b'`').count();
+    if n_leading == 0 {
+        return s;
+    }
+    let n_trailing = bytes.iter().rev().take_while(|&&b| b == b'`').count();
+    // Require equal-length fences with at least one non-fence byte between
+    // them; otherwise the input is just a run of backticks and stripping
+    // would over-consume.
+    if n_trailing != n_leading || bytes.len() < 2 * n_leading + 1 {
+        return s;
+    }
+    s[n_leading..bytes.len() - n_leading].trim()
 }
 
 /// Extract timestamps (CREATED and others) from paragraph node
@@ -414,5 +449,92 @@ Second paragraph.\n\
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].task_type, Some(TaskType::Done));
         assert_eq!(tasks[0].priority, Some(Priority::B));
+    }
+
+    // Regression suite for the "indented planning line" cases. A heading
+    // followed by a 4-space-indented DEADLINE/SCHEDULED/CREATED line is
+    // parsed by comrak as an indented code block; the timestamp must still
+    // be recovered, whether or not the planning line is wrapped in inline
+    // backticks. Matches what `emacs` org-agenda surfaces.
+    // The literals below use real newlines (no `\\\n` Rust string
+    // continuation): the continuation form would silently swallow the
+    // four leading spaces and reduce the case to "no indent at all".
+    #[test]
+    fn extract_tasks_indented_inline_code_deadline() {
+        let content = "#### Birthday\n    `DEADLINE: <2026-05-07 Thu +1y>`\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        assert_eq!(tasks.len(), 1, "task should not be dropped");
+        let t = &tasks[0];
+        assert_eq!(t.timestamp_type.as_deref(), Some("DEADLINE"));
+        assert_eq!(t.timestamp_date.as_deref(), Some("2026-05-07"));
+    }
+
+    #[test]
+    fn extract_tasks_todo_indented_inline_code_deadline() {
+        let content = "#### TODO Birthday\n    `DEADLINE: <2026-05-07 Thu +1y>`\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        assert_eq!(tasks.len(), 1);
+        let t = &tasks[0];
+        assert_eq!(t.task_type, Some(TaskType::Todo));
+        assert_eq!(t.timestamp_date.as_deref(), Some("2026-05-07"));
+    }
+
+    #[test]
+    fn extract_tasks_indented_inline_code_blank_lines_between() {
+        // Whitespace between heading and planning line (blank lines, tabs,
+        // mixed indentation) must not block timestamp recovery.
+        let content = "#### Birthday\n\n  \t  \n    `DEADLINE: <2026-05-07 Thu +1y>`\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        assert_eq!(tasks.len(), 1);
+        let t = &tasks[0];
+        assert_eq!(t.timestamp_date.as_deref(), Some("2026-05-07"));
+    }
+
+    #[test]
+    fn extract_tasks_with_ru_mappings_reproduces_cli_pipeline() {
+        // Reproduce what `main.rs` feeds to `extract_tasks` when the default
+        // `--locale ru,en` is in effect. Mappings must not interfere with
+        // the indented-inline-code DEADLINE recovery.
+        let content = "#### TODO Birthday\n    `DEADLINE: <2026-05-07 Thu +1y>`\n";
+        let mappings: &[(&str, &str)] = &[
+            ("Понедельник", "Monday"),
+            ("Вторник", "Tuesday"),
+            ("Среда", "Wednesday"),
+            ("Четверг", "Thursday"),
+            ("Пятница", "Friday"),
+            ("Суббота", "Saturday"),
+            ("Воскресенье", "Sunday"),
+            ("Пн", "Mon"),
+            ("Вт", "Tue"),
+            ("Ср", "Wed"),
+            ("Чт", "Thu"),
+            ("Пт", "Fri"),
+            ("Сб", "Sat"),
+            ("Вс", "Sun"),
+        ];
+        let tasks = extract_tasks(Path::new("t.md"), content, mappings, DEFAULT_MAX_TASKS);
+        assert_eq!(tasks.len(), 1);
+        let t = &tasks[0];
+        assert_eq!(t.task_type, Some(TaskType::Todo));
+        assert_eq!(t.timestamp_date.as_deref(), Some("2026-05-07"));
+    }
+
+    #[test]
+    fn extract_tasks_inline_code_scheduled_no_indent() {
+        let content = "#### Followup\n`SCHEDULED: <2026-05-07 Thu>`\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        assert_eq!(tasks.len(), 1);
+        let t = &tasks[0];
+        assert_eq!(t.timestamp_type.as_deref(), Some("SCHEDULED"));
+        assert_eq!(t.timestamp_date.as_deref(), Some("2026-05-07"));
+    }
+
+    #[test]
+    fn extract_tasks_indented_inline_code_created() {
+        let content = "#### Project kickoff\n    `CREATED: <2025-09-01 Mon>`\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        assert_eq!(tasks.len(), 1);
+        let t = &tasks[0];
+        assert_eq!(t.created.as_deref(), Some("CREATED: <2025-09-01 Mon>"));
     }
 }

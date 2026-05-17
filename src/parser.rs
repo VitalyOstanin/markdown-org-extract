@@ -36,9 +36,25 @@ fn warn_invalid_timestamp(path: &Path, line: u32, ts: &str) {
     }
 }
 
-/// Regex for parsing task headings: `TODO/DONE [#A] Task title`
-static HEADING_RE: LazyLock<Regex> =
-    LazyLock::new(|| compile_bounded(r"^(TODO|DONE)\s+(?:\[#([A-Z])\]\s+)?(.+)$"));
+/// Optional TODO/DONE keyword anchored to the start of a heading.
+///
+/// Matches `TODO` or `DONE` followed by at least one whitespace character.
+/// Used as the first step of heading parsing — see `parse_heading`.
+static HEADING_TODO_RE: LazyLock<Regex> = LazyLock::new(|| compile_bounded(r"^(TODO|DONE)\s+"));
+
+/// Priority cookie `[#X]` with an optional trailing space, matching anywhere
+/// in the heading text.
+///
+/// Mirrors emacs org-mode's `org-priority-regexp` semantics: the priority
+/// cookie may appear at any position in the (remaining) heading title, and the
+/// title content before it is dropped. The value is either an uppercase ASCII
+/// letter or a one- or two-digit integer; the integer range is validated by
+/// `Priority::parse` (only `0..=64` is accepted).
+///
+/// Two-digit alternatives are listed before single-digit `[0-9]` so the
+/// matcher prefers the longest valid run (e.g. matches `15`, not just `1`).
+static HEADING_PRIORITY_RE: LazyLock<Regex> =
+    LazyLock::new(|| compile_bounded(r"\[#([A-Z]|6[0-4]|[1-5][0-9]|[0-9])\] ?"));
 
 /// Extract tasks from markdown content.
 ///
@@ -246,19 +262,41 @@ fn finalize_task(path: &Path, info: HeadingInfo, mappings: &[(&str, &str)]) -> O
     })
 }
 
-/// Parse heading text to extract task type, priority, and title
+/// Parse heading text to extract task type, priority, and title.
+///
+/// Follows the emacs org-mode parser
+/// (`org-element--headline-parse-title` / `org-priority-regexp`):
+///
+/// 1. Strip an optional `TODO` / `DONE` keyword anchored at the start.
+/// 2. Search the remaining text for the first `[#X]` cookie at any position,
+///    where `X` is `A-Z` or an integer `0..=64`. If found, that becomes the
+///    priority; the title is everything after `[#X]` + optional space.
+///    Text before the cookie (between TODO and `[#X]`) is **discarded** —
+///    this matches emacs's `goto-char (match-end 0)` behaviour.
+/// 3. Whatever remains is trimmed and returned as the heading.
+///
+/// A heading without TODO/DONE and without a priority cookie is returned
+/// verbatim (trimmed).
 fn parse_heading(text: &str) -> (Option<TaskType>, Option<Priority>, String) {
-    if let Some(caps) = HEADING_RE.captures(text) {
-        let task_type = TaskType::from_keyword(&caps[1]);
-        let priority = caps
-            .get(2)
-            .and_then(|m| m.as_str().chars().next())
-            .and_then(Priority::from_char);
-        let heading = caps[3].to_string();
-        (task_type, priority, heading)
+    // Step 1: optional TODO/DONE prefix.
+    let (task_type, rest) = if let Some(caps) = HEADING_TODO_RE.captures(text) {
+        let kw = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        let m = caps.get(0).unwrap();
+        (TaskType::from_keyword(kw), &text[m.end()..])
     } else {
-        (None, None, text.to_string())
+        (None, text)
+    };
+
+    // Step 2: optional priority cookie anywhere in the remainder.
+    if let Some(caps) = HEADING_PRIORITY_RE.captures(rest) {
+        let value = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        if let Some(priority) = Priority::parse(value) {
+            let after = &rest[caps.get(0).unwrap().end()..];
+            return (task_type, Some(priority), after.trim().to_string());
+        }
     }
+
+    (task_type, None, rest.trim().to_string())
 }
 
 /// Strip a matched pair of inline-code backtick fences from the trimmed
@@ -373,6 +411,141 @@ mod tests {
         assert_eq!(heading, "Regular heading");
     }
 
+    // The next batch mirrors the test matrix from the bug report
+    // "markdown-org-extract: приоритет `[#X]` без TODO/DONE не распознаётся".
+    // We follow emacs org-mode semantics (`org-priority-regexp`) wherever the
+    // bug report diverged from it — concretely case 8 below.
+
+    #[test]
+    fn parse_heading_priority_without_todo() {
+        // Case 1: `### [#A] Заголовок`.
+        let (tt, p, h) = parse_heading("[#A] Заголовок");
+        assert_eq!(tt, None);
+        assert_eq!(p, Some(Priority::A));
+        assert_eq!(h, "Заголовок");
+    }
+
+    #[test]
+    fn parse_heading_todo_with_priority() {
+        // Case 2: `### TODO [#A] Заголовок`.
+        let (tt, p, h) = parse_heading("TODO [#A] Заголовок");
+        assert_eq!(tt, Some(TaskType::Todo));
+        assert_eq!(p, Some(Priority::A));
+        assert_eq!(h, "Заголовок");
+    }
+
+    #[test]
+    fn parse_heading_done_with_priority_b() {
+        // Case 3: `### DONE [#B] Заголовок`.
+        let (tt, p, h) = parse_heading("DONE [#B] Заголовок");
+        assert_eq!(tt, Some(TaskType::Done));
+        assert_eq!(p, Some(Priority::B));
+        assert_eq!(h, "Заголовок");
+    }
+
+    #[test]
+    fn parse_heading_plain_text_no_markers() {
+        // Case 4: `### Заголовок`.
+        let (tt, p, h) = parse_heading("Заголовок");
+        assert_eq!(tt, None);
+        assert_eq!(p, None);
+        assert_eq!(h, "Заголовок");
+    }
+
+    #[test]
+    fn parse_heading_todo_no_priority() {
+        // Case 5: `### TODO Заголовок`.
+        let (tt, p, h) = parse_heading("TODO Заголовок");
+        assert_eq!(tt, Some(TaskType::Todo));
+        assert_eq!(p, None);
+        assert_eq!(h, "Заголовок");
+    }
+
+    #[test]
+    fn parse_heading_numeric_priority() {
+        // Case 6: `### [#1] Заголовок`.
+        let (tt, p, h) = parse_heading("[#1] Заголовок");
+        assert_eq!(tt, None);
+        assert_eq!(p, Some(Priority::Numeric(1)));
+        assert_eq!(h, "Заголовок");
+    }
+
+    #[test]
+    fn parse_heading_extra_whitespace_around_priority() {
+        // Case 7: `###     [#A]     Заголовок` — comrak normalises the leading
+        // whitespace after the `###` marker, so the heading text reaching us
+        // starts at `[#A]`. Trailing extra spaces around the heading are
+        // trimmed.
+        let (tt, p, h) = parse_heading("[#A]     Заголовок");
+        assert_eq!(tt, None);
+        assert_eq!(p, Some(Priority::A));
+        assert_eq!(h, "Заголовок");
+    }
+
+    #[test]
+    fn parse_heading_priority_in_the_middle_org_semantics() {
+        // Case 8: `### Без приоритета и [#A] внутри`.
+        // The bug report's table proposed keeping `[#A]` as part of the
+        // heading, but emacs org-mode parses any `[#X]` cookie inside the
+        // title as the priority via the `.*?` prefix in `org-priority-regexp`
+        // and drops the text that precedes it. By project decision we follow
+        // the reference parser here.
+        let (tt, p, h) = parse_heading("Без приоритета и [#A] внутри");
+        assert_eq!(tt, None);
+        assert_eq!(p, Some(Priority::A));
+        assert_eq!(h, "внутри");
+    }
+
+    #[test]
+    fn parse_heading_two_digit_numeric_priority() {
+        let (tt, p, h) = parse_heading("[#15] Mid range");
+        assert_eq!(tt, None);
+        assert_eq!(p, Some(Priority::Numeric(15)));
+        assert_eq!(h, "Mid range");
+
+        let (tt, p, h) = parse_heading("[#64] At upper bound");
+        assert_eq!(tt, None);
+        assert_eq!(p, Some(Priority::Numeric(64)));
+        assert_eq!(h, "At upper bound");
+    }
+
+    #[test]
+    fn parse_heading_rejects_numeric_out_of_range() {
+        // `[#65]` and higher are not a valid org-mode priority. The cookie
+        // stays inside the heading text verbatim.
+        let (tt, p, h) = parse_heading("[#65] Above range");
+        assert_eq!(tt, None);
+        assert_eq!(p, None);
+        assert_eq!(h, "[#65] Above range");
+    }
+
+    #[test]
+    fn parse_heading_rejects_lowercase_priority() {
+        let (tt, p, h) = parse_heading("[#a] Lowercase");
+        assert_eq!(tt, None);
+        assert_eq!(p, None);
+        assert_eq!(h, "[#a] Lowercase");
+    }
+
+    #[test]
+    fn parse_heading_todo_then_priority_with_intervening_text() {
+        // Direct consequence of the emacs `.*?` semantics: the text between
+        // TODO and `[#X]` is discarded.
+        let (tt, p, h) = parse_heading("TODO Купить [#A] фильтр");
+        assert_eq!(tt, Some(TaskType::Todo));
+        assert_eq!(p, Some(Priority::A));
+        assert_eq!(h, "фильтр");
+    }
+
+    #[test]
+    fn parse_heading_priority_without_trailing_space() {
+        // `\] ?` makes the post-cookie space optional.
+        let (tt, p, h) = parse_heading("[#A]NoSpace");
+        assert_eq!(tt, None);
+        assert_eq!(p, Some(Priority::A));
+        assert_eq!(h, "NoSpace");
+    }
+
     #[test]
     fn extract_tasks_basic_todo_with_deadline() {
         let content = "\
@@ -449,6 +622,82 @@ Second paragraph.\n\
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].task_type, Some(TaskType::Done));
         assert_eq!(tasks[0].priority, Some(Priority::B));
+    }
+
+    #[test]
+    fn extract_tasks_priority_without_todo_with_scheduled() {
+        // Bug report case: priority cookie before SCHEDULED heading, no TODO.
+        // After the fix the heading must surface as a task with priority=A and
+        // task_type=None, since the SCHEDULED line is what makes it agenda-eligible.
+        let content = "\
+### [#A] Поменять резину до 16.05.2026\n\
+`SCHEDULED: <2026-05-09 Sat>`\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        assert_eq!(tasks.len(), 1);
+        let t = &tasks[0];
+        assert_eq!(t.task_type, None);
+        assert_eq!(t.priority, Some(Priority::A));
+        assert_eq!(t.heading, "Поменять резину до 16.05.2026");
+        assert_eq!(t.timestamp_type, Some("SCHEDULED".to_string()));
+        assert_eq!(t.timestamp_date, Some("2026-05-09".to_string()));
+    }
+
+    #[test]
+    fn extract_tasks_numeric_priority_with_deadline() {
+        // Numeric priority `[#1]` without TODO, with a DEADLINE line.
+        let content = "\
+### [#1] Numeric priority task\n\
+`DEADLINE: <2026-05-09 Sat>`\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        assert_eq!(tasks.len(), 1);
+        let t = &tasks[0];
+        assert_eq!(t.task_type, None);
+        assert_eq!(t.priority, Some(Priority::Numeric(1)));
+        assert_eq!(t.heading, "Numeric priority task");
+    }
+
+    #[test]
+    fn extract_tasks_priority_in_middle_drops_prefix() {
+        // Org-mode `.*?` semantics: text before `[#A]` is dropped.
+        let content = "\
+### Без приоритета и [#A] внутри\n\
+`SCHEDULED: <2026-05-09 Sat>`\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        assert_eq!(tasks.len(), 1);
+        let t = &tasks[0];
+        assert_eq!(t.task_type, None);
+        assert_eq!(t.priority, Some(Priority::A));
+        assert_eq!(t.heading, "внутри");
+    }
+
+    #[test]
+    fn extract_tasks_bug_report_minimal_reproduction() {
+        // Three-heading reproduction from the bug report: priority without
+        // TODO, TODO + priority, plain heading. SCHEDULED is wrapped in
+        // backticks so the existing inline-code parser picks it up.
+        let content = "\
+### [#A] Поменять резину до 16.05.2026\n\
+`SCHEDULED: <2026-05-09 Sat>`\n\
+\n\
+### TODO [#A] Поменять масло\n\
+`SCHEDULED: <2026-05-09 Sat>`\n\
+\n\
+### Купить фильтр\n\
+`SCHEDULED: <2026-05-09 Sat>`\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        assert_eq!(tasks.len(), 3);
+
+        assert_eq!(tasks[0].task_type, None);
+        assert_eq!(tasks[0].priority, Some(Priority::A));
+        assert_eq!(tasks[0].heading, "Поменять резину до 16.05.2026");
+
+        assert_eq!(tasks[1].task_type, Some(TaskType::Todo));
+        assert_eq!(tasks[1].priority, Some(Priority::A));
+        assert_eq!(tasks[1].heading, "Поменять масло");
+
+        assert_eq!(tasks[2].task_type, None);
+        assert_eq!(tasks[2].priority, None);
+        assert_eq!(tasks[2].heading, "Купить фильтр");
     }
 
     // Regression suite for the "indented planning line" cases. A heading

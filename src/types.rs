@@ -1,6 +1,8 @@
 use chrono::NaiveDate;
-use serde::{Deserialize, Serialize};
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
+use std::str::FromStr;
 
 /// Task status type (TODO or DONE)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -30,34 +32,76 @@ impl TaskType {
     }
 }
 
-/// Task priority (A is highest, C is lowest; D-Z preserved as `Other`)
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+/// Task priority.
+///
+/// Mirrors org-mode's `org-priority-value-regexp`: a single uppercase Latin
+/// letter `A-Z`, or an integer in the range `0..=64`. Lower numeric `order`
+/// means higher priority, matching `org-priority-to-value` semantics:
+///
+/// - `Numeric(n)` → `n` (so `0` is highest, `64` is lowest in the numeric range)
+/// - `A` → 65, `B` → 66, `C` → 67, `Other('D')` → 68, …, `Other('Z')` → 90
+///
+/// Variant order in the `enum` declaration mirrors this priority order, so
+/// `derive(Ord)` yields the same comparison as `order()`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Priority {
+    /// Numeric priority `[#0]`..`[#64]`. Outside this range is rejected.
+    Numeric(u8),
     A,
     B,
     C,
+    /// Letters D-Z, preserved verbatim.
     Other(char),
 }
 
 impl Priority {
-    /// Create priority from character. Only ASCII upper-case letters A-Z are accepted.
-    pub fn from_char(c: char) -> Option<Self> {
-        match c {
-            'A' => Some(Priority::A),
-            'B' => Some(Priority::B),
-            'C' => Some(Priority::C),
-            'D'..='Z' => Some(Priority::Other(c)),
-            _ => None,
+    /// Parse priority from the captured value of `\[#X\]`, i.e. without the
+    /// surrounding brackets. Accepts a single uppercase letter `A-Z` or a
+    /// decimal integer in the range `0..=64`.
+    pub fn parse(s: &str) -> Option<Self> {
+        if s.is_empty() {
+            return None;
+        }
+        let bytes = s.as_bytes();
+        if bytes.len() == 1 {
+            let b = bytes[0];
+            if b.is_ascii_uppercase() {
+                return Some(match b {
+                    b'A' => Priority::A,
+                    b'B' => Priority::B,
+                    b'C' => Priority::C,
+                    _ => Priority::Other(b as char),
+                });
+            }
+        }
+        // Decimal integer 0..=64. Reject leading zeros longer than one digit
+        // ("01") to stay close to org-mode's `[0-9]\|[1-5][0-9]\|6[0-4]`,
+        // which never matches a leading-zero two-digit run.
+        if bytes.len() > 1 && bytes[0] == b'0' {
+            return None;
+        }
+        if !bytes.iter().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let n: u8 = s.parse().ok()?;
+        if n <= 64 {
+            Some(Priority::Numeric(n))
+        } else {
+            None
         }
     }
 
-    /// Get numeric order for sorting (lower is higher priority)
+    /// Get numeric order for sorting (lower is higher priority).
+    ///
+    /// Implements `org-priority-to-value`: numbers map to themselves,
+    /// letters map to their ASCII code (`'A' as u32 == 65`).
     pub fn order(&self) -> u32 {
         match self {
-            Priority::A => 0,
-            Priority::B => 1,
-            Priority::C => 2,
-            Priority::Other(c) => (*c as u32) - ('A' as u32),
+            Priority::Numeric(n) => *n as u32,
+            Priority::A => 'A' as u32,
+            Priority::B => 'B' as u32,
+            Priority::C => 'C' as u32,
+            Priority::Other(c) => *c as u32,
         }
     }
 }
@@ -65,11 +109,56 @@ impl Priority {
 impl fmt::Display for Priority {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Priority::Numeric(n) => write!(f, "{n}"),
             Priority::A => f.write_str("A"),
             Priority::B => f.write_str("B"),
             Priority::C => f.write_str("C"),
             Priority::Other(c) => write!(f, "{c}"),
         }
+    }
+}
+
+impl FromStr for Priority {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Priority::parse(s).ok_or(())
+    }
+}
+
+impl Serialize for Priority {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        ser.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for Priority {
+    fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        struct PriorityVisitor;
+        impl Visitor<'_> for PriorityVisitor {
+            type Value = Priority;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("an uppercase letter A-Z or an integer 0..=64")
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Priority, E> {
+                Priority::parse(v).ok_or_else(|| E::custom(format!("invalid priority: {v}")))
+            }
+            fn visit_u64<E: de::Error>(self, v: u64) -> Result<Priority, E> {
+                if v <= 64 {
+                    Ok(Priority::Numeric(v as u8))
+                } else {
+                    Err(E::custom(format!("priority out of range: {v}")))
+                }
+            }
+            fn visit_i64<E: de::Error>(self, v: i64) -> Result<Priority, E> {
+                if (0..=64).contains(&v) {
+                    Ok(Priority::Numeric(v as u8))
+                } else {
+                    Err(E::custom(format!("priority out of range: {v}")))
+                }
+            }
+        }
+        de.deserialize_any(PriorityVisitor)
     }
 }
 
@@ -233,24 +322,77 @@ mod tests {
     }
 
     #[test]
-    fn priority_from_char_letters() {
-        assert_eq!(Priority::from_char('A'), Some(Priority::A));
-        assert_eq!(Priority::from_char('B'), Some(Priority::B));
-        assert_eq!(Priority::from_char('C'), Some(Priority::C));
-        assert_eq!(Priority::from_char('Z'), Some(Priority::Other('Z')));
+    fn priority_parse_letters() {
+        assert_eq!(Priority::parse("A"), Some(Priority::A));
+        assert_eq!(Priority::parse("B"), Some(Priority::B));
+        assert_eq!(Priority::parse("C"), Some(Priority::C));
+        assert_eq!(Priority::parse("Z"), Some(Priority::Other('Z')));
     }
 
     #[test]
-    fn priority_from_char_rejects_lower_and_digits() {
-        assert_eq!(Priority::from_char('a'), None);
-        assert_eq!(Priority::from_char('1'), None);
-        assert_eq!(Priority::from_char('@'), None);
+    fn priority_parse_numeric() {
+        assert_eq!(Priority::parse("0"), Some(Priority::Numeric(0)));
+        assert_eq!(Priority::parse("1"), Some(Priority::Numeric(1)));
+        assert_eq!(Priority::parse("9"), Some(Priority::Numeric(9)));
+        assert_eq!(Priority::parse("15"), Some(Priority::Numeric(15)));
+        assert_eq!(Priority::parse("64"), Some(Priority::Numeric(64)));
     }
 
     #[test]
-    fn priority_order() {
+    fn priority_parse_rejects_out_of_range() {
+        assert_eq!(Priority::parse("65"), None);
+        assert_eq!(Priority::parse("100"), None);
+        assert_eq!(Priority::parse("a"), None);
+        assert_eq!(Priority::parse("@"), None);
+        assert_eq!(Priority::parse("-1"), None);
+        assert_eq!(Priority::parse(""), None);
+    }
+
+    #[test]
+    fn priority_parse_rejects_leading_zero() {
+        // Matches org-mode's regex grammar: "01" is not a valid priority value.
+        assert_eq!(Priority::parse("01"), None);
+        assert_eq!(Priority::parse("00"), None);
+    }
+
+    #[test]
+    fn priority_order_matches_org_priority_to_value() {
+        // Numeric values map to themselves; letters to ASCII code.
+        assert_eq!(Priority::Numeric(0).order(), 0);
+        assert_eq!(Priority::Numeric(64).order(), 64);
+        assert_eq!(Priority::A.order(), 65);
+        assert_eq!(Priority::B.order(), 66);
+        assert_eq!(Priority::C.order(), 67);
+        assert_eq!(Priority::Other('D').order(), 68);
+        assert_eq!(Priority::Other('Z').order(), 90);
+        // Sorting must reflect priority: numeric below 65 outranks A.
+        assert!(Priority::Numeric(64).order() < Priority::A.order());
         assert!(Priority::A.order() < Priority::B.order());
-        assert!(Priority::B.order() < Priority::C.order());
         assert!(Priority::C.order() < Priority::Other('D').order());
+    }
+
+    #[test]
+    fn priority_serializes_as_string() {
+        let json = serde_json::to_string(&Priority::A).unwrap();
+        assert_eq!(json, "\"A\"");
+        let json = serde_json::to_string(&Priority::Other('D')).unwrap();
+        assert_eq!(json, "\"D\"");
+        let json = serde_json::to_string(&Priority::Numeric(5)).unwrap();
+        assert_eq!(json, "\"5\"");
+        let json = serde_json::to_string(&Priority::Numeric(64)).unwrap();
+        assert_eq!(json, "\"64\"");
+    }
+
+    #[test]
+    fn priority_deserializes_from_string_and_integer() {
+        let p: Priority = serde_json::from_str("\"A\"").unwrap();
+        assert_eq!(p, Priority::A);
+        let p: Priority = serde_json::from_str("\"5\"").unwrap();
+        assert_eq!(p, Priority::Numeric(5));
+        let p: Priority = serde_json::from_str("5").unwrap();
+        assert_eq!(p, Priority::Numeric(5));
+        // Out of range fails.
+        let r: Result<Priority, _> = serde_json::from_str("65");
+        assert!(r.is_err());
     }
 }

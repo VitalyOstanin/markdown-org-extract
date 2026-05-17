@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [\[Unreleased\]](#unreleased)
+- [\[0.2.2\] — 2026-05-17](#022--2026-05-17)
 - [\[0.2.1\] — 2026-05-17](#021--2026-05-17)
 - [\[0.2.0\] — 2026-05-17](#020--2026-05-17)
 - [\[0.1.6\] — 2026-05-11](#016--2026-05-11)
@@ -16,6 +17,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 _No user-visible changes yet._
+
+## [0.2.2] — 2026-05-17
+
+### Fixed
+
+- Heading parser now recognises a priority cookie `[#A]` / `[#1]` that is
+  not preceded by `TODO` or `DONE`. Previously the cookie ended up as part
+  of `task.heading` and `task.priority` was `null`, while in emacs org-mode
+  the cookie is parsed independently of the TODO keyword
+  (`org-element--headline-parse-title` / `org-priority-regexp`).
+- Heading parser follows org-mode's `.*?` semantics: `[#X]` is matched at
+  any position after the optional TODO/DONE keyword. The text between the
+  keyword (or the start of the heading) and the cookie is dropped, matching
+  `goto-char (match-end 0)` in the reference implementation. Example:
+  `### TODO Buy [#A] filter` now yields `priority=A`, `heading="filter"`.
+
+### Added
+
+- Numeric priorities `[#0]`..`[#64]` from emacs org-mode
+  (`org-priority-value-regexp = "[A-Z]\\|[0-9]\\|[1-5][0-9]\\|6[0-4]"`).
+  Values outside this range stay inside the heading verbatim.
+- `Priority::parse(&str)` replaces `Priority::from_char(char)` so multi-digit
+  numeric values can be parsed in a single call.
+
+### Changed
+
+- **Breaking (JSON)**: `Priority` is now serialised as a plain string in all
+  outputs. Previously `Priority::Other('D'..='Z')` was emitted as
+  `{"Other":"D"}` due to the default `serde` enum representation, which most
+  consumers could not interpret as a priority. After the change, every
+  priority — `A`, `B`, `C`, `D`..`Z`, or `0`..`64` — is a string (e.g. `"A"`,
+  `"D"`, `"5"`). Deserialisation also accepts an integer for backward
+  convenience.
+- `Priority::order()` now matches `org-priority-to-value`: numeric priorities
+  map to their integer value (`0..=64`), letters map to their ASCII code
+  (`A`=65, …, `Z`=90). This means numeric priorities sort _before_ all
+  letter priorities, which is the same total order emacs uses.
 
 ## [0.2.1] — 2026-05-17
 

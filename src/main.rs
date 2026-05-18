@@ -14,8 +14,8 @@ use clap::Parser;
 use grep_regex::RegexMatcher;
 use grep_searcher::{Searcher, Sink, SinkMatch};
 use ignore::WalkBuilder;
-use std::fs;
-use std::io::{self, Write};
+use std::fs::{self, File};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::agenda::filter_agenda;
@@ -30,7 +30,7 @@ fn main() {
     if let Err(e) = run() {
         // Use eprintln directly: tracing may not be initialized if argument parsing failed,
         // and a hard error should always reach the user regardless of `--quiet`.
-        eprintln!("Error: {e}");
+        eprintln!("error: {e}");
         std::process::exit(1);
     }
 }
@@ -40,39 +40,84 @@ fn run() -> Result<(), AppError> {
     cli.init_tracing();
 
     if let Some(year) = cli.holidays {
-        let calendar = holidays::HolidayCalendar::global();
-        let holidays = calendar.get_holidays_for_year(year);
-        let dates: Vec<String> = holidays
-            .iter()
-            .map(|d| d.format("%Y-%m-%d").to_string())
-            .collect();
-        let output = serde_json::to_string_pretty(&dates)?;
-        io::stdout().write_all(output.as_bytes())?;
-        return Ok(());
+        return handle_holidays(year);
     }
 
     if let Some(ref out_path) = cli.output {
-        validate_output_path(out_path)?;
+        if !is_stdout_sigil(out_path) {
+            validate_output_path(out_path)?;
+        }
     }
 
+    let dir_canonical = validate_dir(&cli.dir)?;
     let mappings = get_weekday_mappings(&cli.locale);
 
-    if !cli.dir.exists() {
-        return Err(AppError::InvalidDirectory(format!(
-            "Directory does not exist: {}",
-            cli.dir.display()
-        )));
-    }
-    if !cli.dir.is_dir() {
-        return Err(AppError::InvalidDirectory(format!(
-            "Path is not a directory: {}",
-            cli.dir.display()
-        )));
+    let (tasks, stats) = scan_files(&cli, &dir_canonical, &mappings)?;
+
+    tracing::info!(
+        files = stats.files_processed,
+        tasks = tasks.len(),
+        "scan finished"
+    );
+
+    if stats.has_warnings() {
+        stats.print_summary();
     }
 
-    let dir_canonical = fs::canonicalize(&cli.dir)
-        .map_err(|e| AppError::InvalidDirectory(format!("{}: {e}", cli.dir.display())))?;
+    let agenda_output = filter_agenda(
+        tasks,
+        cli.agenda_scope(),
+        cli.date.as_deref(),
+        cli.from.as_deref(),
+        cli.to.as_deref(),
+        &cli.tz,
+        cli.current_date.as_deref(),
+    )?;
 
+    render_output(&cli, agenda_output)
+}
+
+/// Handle the `--holidays YEAR` short-circuit: emit a JSON array of
+/// `YYYY-MM-DD` dates and exit before any file scanning happens.
+fn handle_holidays(year: i32) -> Result<(), AppError> {
+    let calendar = holidays::HolidayCalendar::global();
+    let holidays = calendar.get_holidays_for_year(year);
+    let dates: Vec<String> = holidays
+        .iter()
+        .map(|d| d.format("%Y-%m-%d").to_string())
+        .collect();
+    let output = serde_json::to_string_pretty(&dates)?;
+    io::stdout().write_all(output.as_bytes())?;
+    Ok(())
+}
+
+/// Validate that `--dir` points to an existing directory and canonicalize it.
+fn validate_dir(dir: &Path) -> Result<PathBuf, AppError> {
+    if !dir.exists() {
+        return Err(AppError::InvalidDirectory(format!(
+            "directory does not exist: {}",
+            dir.display()
+        )));
+    }
+    if !dir.is_dir() {
+        return Err(AppError::InvalidDirectory(format!(
+            "path is not a directory: {}",
+            dir.display()
+        )));
+    }
+    fs::canonicalize(dir).map_err(|e| {
+        AppError::InvalidDirectory(format!("cannot canonicalize {}: {e}", dir.display()))
+    })
+}
+
+/// Walk `dir_canonical`, apply the `--glob` filter and a keyword pre-filter,
+/// then parse matching files into `Task`s. Returns the accumulated tasks and
+/// a `ProcessingStats` recording skipped/failed files.
+fn scan_files(
+    cli: &Cli,
+    dir_canonical: &Path,
+    mappings: &[(&'static str, &'static str)],
+) -> Result<(Vec<types::Task>, ProcessingStats), AppError> {
     let glob_matcher = compile_glob(&cli.glob)?;
 
     let mut tasks = Vec::new();
@@ -100,27 +145,20 @@ fn run() -> Result<(), AppError> {
 
         let path = entry.path();
 
-        if !glob_match(&glob_matcher, path, &dir_canonical) {
+        if !glob_match(&glob_matcher, path, dir_canonical) {
             continue;
         }
 
-        match fs::metadata(path) {
-            Ok(metadata) => {
-                if metadata.len() > MAX_FILE_SIZE {
-                    stats.files_skipped_size += 1;
-                    continue;
-                }
-            }
-            Err(_) => {
-                stats.files_failed_read += 1;
-                stats.record_failed_path(&path.display().to_string());
+        // Read once with a hard cap. Avoids the TOCTOU window where a separate
+        // metadata() check might say a file is small but the subsequent read()
+        // pulls in a file that has since grown — `read_capped` probes one byte
+        // past the cap and refuses anything larger.
+        let bytes = match read_capped(path, MAX_FILE_SIZE) {
+            Ok(Some(b)) => b,
+            Ok(None) => {
+                stats.files_skipped_size += 1;
                 continue;
             }
-        }
-
-        // Read file once and reuse the buffer for both the keyword pre-filter and the parser.
-        let bytes = match fs::read(path) {
-            Ok(b) => b,
             Err(_) => {
                 stats.files_failed_read += 1;
                 stats.record_failed_path(&path.display().to_string());
@@ -156,7 +194,7 @@ fn run() -> Result<(), AppError> {
             path.display().to_string()
         } else {
             match path
-                .strip_prefix(&dir_canonical)
+                .strip_prefix(dir_canonical)
                 .or_else(|_| path.strip_prefix(&cli.dir))
             {
                 Ok(rel) => rel.display().to_string(),
@@ -164,7 +202,14 @@ fn run() -> Result<(), AppError> {
             }
         };
 
-        let extracted = extract_tasks(Path::new(&display_path), &content, &mappings, cli.max_tasks);
+        // Wrap parsing in a span so every debug!/trace! emitted by the parser,
+        // timestamp extractor, and clock extractor inherits `path` automatically.
+        // Without this, multi-file runs at `-vv` produce a soup of messages
+        // without any way to tie a warning back to the file it came from.
+        let span = tracing::debug_span!("file", path = %display_path);
+        let extracted = span.in_scope(|| {
+            extract_tasks(Path::new(&display_path), &content, mappings, cli.max_tasks)
+        });
         tasks.extend(extracted);
         stats.files_processed += 1;
 
@@ -175,20 +220,12 @@ fn run() -> Result<(), AppError> {
         }
     }
 
-    if stats.has_warnings() {
-        stats.print_summary();
-    }
+    Ok((tasks, stats))
+}
 
-    let agenda_output = filter_agenda(
-        tasks,
-        cli.get_agenda_mode(),
-        cli.date.as_deref(),
-        cli.from.as_deref(),
-        cli.to.as_deref(),
-        &cli.tz,
-        cli.current_date.as_deref(),
-    )?;
-
+/// Serialize the agenda result into the requested format and either write it
+/// to `--output` or to stdout.
+fn render_output(cli: &Cli, agenda_output: agenda::AgendaOutput) -> Result<(), AppError> {
     let output = match cli.format {
         OutputFormat::Json => match agenda_output {
             agenda::AgendaOutput::Days(days) => serde_json::to_string_pretty(&days)?,
@@ -204,13 +241,20 @@ fn run() -> Result<(), AppError> {
         },
     };
 
-    if let Some(out_path) = cli.output {
-        fs::write(&out_path, output)?;
-    } else {
-        io::stdout().write_all(output.as_bytes())?;
+    match cli.output.as_deref() {
+        Some(p) if !is_stdout_sigil(p) => fs::write(p, output)?,
+        // None or `--output -` both mean stdout. The explicit `-` form is the
+        // standard unix sigil for stdout and lets shell pipelines target it
+        // unambiguously when stdout is otherwise reserved (e.g. tee chains).
+        _ => io::stdout().write_all(output.as_bytes())?,
     }
 
     Ok(())
+}
+
+/// Returns true when the path is the standard unix sigil `-` meaning stdout.
+fn is_stdout_sigil(path: &Path) -> bool {
+    path.as_os_str() == "-"
 }
 
 /// Validate that the `--output` target is safe to write:
@@ -236,16 +280,45 @@ fn validate_output_path(path: &Path) -> Result<(), AppError> {
         )));
     }
 
-    if let Ok(meta) = fs::symlink_metadata(path) {
-        if meta.file_type().is_symlink() {
+    // NotFound is the expected case when --output names a fresh file. Any other
+    // error (PermissionDenied on the path itself, EIO, etc.) means we cannot
+    // confirm symlink safety — fail loudly here instead of letting fs::write
+    // produce a confusing error message later.
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
             return Err(AppError::InvalidOutput(format!(
                 "refusing to overwrite symlink: {}",
+                path.display()
+            )));
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(AppError::InvalidOutput(format!(
+                "cannot inspect output path {}: {e}",
                 path.display()
             )));
         }
     }
 
     Ok(())
+}
+
+/// Read a file with a hard size cap, returning `Ok(None)` if the file exceeds
+/// the cap. Defense-in-depth against TOCTOU: we cannot trust a prior
+/// `fs::metadata` call because the file may have grown (or been swapped out
+/// for a symlink target on a different filesystem) between the metadata read
+/// and the content read. Reading `cap + 1` bytes lets us detect overruns
+/// without first asking the filesystem how large the file claims to be.
+fn read_capped(path: &Path, cap: u64) -> io::Result<Option<Vec<u8>>> {
+    let file = File::open(path)?;
+    let mut buf = Vec::new();
+    let probe = cap.saturating_add(1);
+    file.take(probe).read_to_end(&mut buf)?;
+    if buf.len() as u64 > cap {
+        return Ok(None);
+    }
+    Ok(Some(buf))
 }
 
 struct FoundSink<'a> {
@@ -274,7 +347,21 @@ fn compile_glob(pattern: &str) -> Result<globset::GlobMatcher, AppError> {
     }
     globset::Glob::new(pattern)
         .map(|g| g.compile_matcher())
-        .map_err(|e| AppError::InvalidGlob(format!("invalid pattern '{pattern}': {e}")))
+        .map_err(|e| AppError::InvalidGlob(format_error_chain(pattern, &e)))
+}
+
+/// Flatten a `globset::Error` (or any `std::error::Error`) into a single line
+/// that preserves its `source()` chain. Without this the user only sees the
+/// top-level `Display`, which sometimes elides the underlying reason (e.g. the
+/// specific syntax error inside a brace alternative).
+fn format_error_chain(pattern: &str, err: &dyn std::error::Error) -> String {
+    let mut msg = format!("invalid pattern '{pattern}': {err}");
+    let mut source = err.source();
+    while let Some(cause) = source {
+        msg.push_str(&format!(" (caused by: {cause})"));
+        source = cause.source();
+    }
+    msg
 }
 
 /// Match a path against the compiled glob. The matcher is tried against:
@@ -296,6 +383,7 @@ fn glob_match(matcher: &globset::GlobMatcher, path: &Path, dir_root: &Path) -> b
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use tempfile::tempdir;
 
     fn m(pattern: &str, file: &str) -> bool {
         let matcher = compile_glob(pattern).unwrap();
@@ -331,11 +419,127 @@ mod tests {
     }
 
     #[test]
+    fn compile_glob_message_echoes_offending_pattern() {
+        // The user-facing message must mention the pattern so the user does
+        // not have to guess which invocation produced the error.
+        let err = compile_glob("{md,").unwrap_err();
+        let s = err.to_string();
+        assert!(s.contains("{md,"), "pattern missing in message: {s}");
+        assert!(s.contains("invalid pattern"), "expected prefix, got: {s}");
+    }
+
+    #[test]
+    fn format_error_chain_walks_source() {
+        use std::error::Error;
+        use std::fmt;
+        // Two-link chain: Outer ── source ──> Inner.
+        #[derive(Debug)]
+        struct Inner;
+        impl fmt::Display for Inner {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "inner reason")
+            }
+        }
+        impl Error for Inner {}
+
+        #[derive(Debug)]
+        struct Outer(Inner);
+        impl fmt::Display for Outer {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "outer failure")
+            }
+        }
+        impl Error for Outer {
+            fn source(&self) -> Option<&(dyn Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        let msg = format_error_chain("pat", &Outer(Inner));
+        assert!(msg.contains("invalid pattern 'pat'"), "got: {msg}");
+        assert!(msg.contains("outer failure"), "top-level missing: {msg}");
+        assert!(
+            msg.contains("caused by: inner reason"),
+            "source missing: {msg}"
+        );
+    }
+
+    #[test]
     fn validate_output_rejects_missing_parent() {
         let p = PathBuf::from("/nonexistent_definitely_xyz/out.json");
         assert!(matches!(
             validate_output_path(&p),
             Err(AppError::InvalidOutput(_))
         ));
+    }
+
+    #[test]
+    fn validate_output_accepts_missing_target_in_existing_dir() {
+        // NotFound on the target itself is the normal "write to a fresh file" case.
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("fresh.json");
+        validate_output_path(&target).expect("missing target in existing dir must be OK");
+    }
+
+    #[test]
+    fn validate_output_accepts_existing_regular_file() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("regular.json");
+        fs::write(&target, b"existing").unwrap();
+        validate_output_path(&target).expect("existing regular file must be OK");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn validate_output_rejects_existing_symlink_target() {
+        use std::os::unix::fs::symlink;
+        let dir = tempdir().unwrap();
+        let real = dir.path().join("real.json");
+        fs::write(&real, b"data").unwrap();
+        let link = dir.path().join("link.json");
+        symlink(&real, &link).unwrap();
+        let err = validate_output_path(&link).expect_err("symlink must be rejected");
+        assert!(matches!(err, AppError::InvalidOutput(ref m) if m.contains("symlink")));
+    }
+
+    #[test]
+    fn read_capped_returns_some_when_file_within_limit() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("small.md");
+        fs::write(&path, b"hello world").unwrap();
+        let result = read_capped(&path, 1024).unwrap();
+        assert_eq!(result.as_deref(), Some(&b"hello world"[..]));
+    }
+
+    #[test]
+    fn read_capped_returns_some_when_file_at_exact_limit() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("exact.md");
+        let payload = vec![b'x'; 64];
+        fs::write(&path, &payload).unwrap();
+        let result = read_capped(&path, 64).unwrap();
+        assert_eq!(result.as_deref(), Some(payload.as_slice()));
+    }
+
+    #[test]
+    fn read_capped_returns_none_when_file_over_limit() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("big.md");
+        let payload = vec![b'x'; 65];
+        fs::write(&path, &payload).unwrap();
+        // cap is 64, file is 65 bytes — must be rejected, not truncated.
+        let result = read_capped(&path, 64).unwrap();
+        assert!(
+            result.is_none(),
+            "expected None for file exceeding cap, got {:?}",
+            result.as_ref().map(|v| v.len())
+        );
+    }
+
+    #[test]
+    fn read_capped_returns_err_for_missing_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("missing.md");
+        assert!(read_capped(&path, 64).is_err());
     }
 }

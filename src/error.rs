@@ -28,17 +28,21 @@ pub enum AppError {
 
 impl fmt::Display for AppError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The CLI prepends `error: ` to whatever this returns. Avoid adding a
+        // second category prefix when the inner `msg` is already a complete
+        // sentence; for opaque variants (Io / Walk / Regex / Serialization /
+        // InvalidTimezone) keep a short lowercase tag so output stays grepable.
         match self {
-            AppError::Io(e) => write!(f, "IO error: {e}"),
-            AppError::InvalidDirectory(path) => write!(f, "Invalid directory: {path}"),
-            AppError::InvalidGlob(pattern) => write!(f, "Invalid glob pattern: {pattern}"),
-            AppError::InvalidDate(msg) => write!(f, "Invalid date: {msg}"),
-            AppError::InvalidTimezone(tz) => write!(f, "Invalid timezone: {tz}"),
-            AppError::InvalidOutput(msg) => write!(f, "Invalid output path: {msg}"),
-            AppError::DateRange(msg) => write!(f, "Invalid date range: {msg}"),
-            AppError::Serialization(msg) => write!(f, "Serialization error: {msg}"),
-            AppError::Regex(msg) => write!(f, "Regex error: {msg}"),
-            AppError::Walk(msg) => write!(f, "Walk error: {msg}"),
+            AppError::Io(e) => write!(f, "io: {e}"),
+            AppError::InvalidDirectory(msg) => write!(f, "{msg}"),
+            AppError::InvalidGlob(msg) => write!(f, "{msg}"),
+            AppError::InvalidDate(msg) => write!(f, "{msg}"),
+            AppError::InvalidTimezone(tz) => write!(f, "invalid timezone: {tz}"),
+            AppError::InvalidOutput(msg) => write!(f, "{msg}"),
+            AppError::DateRange(msg) => write!(f, "{msg}"),
+            AppError::Serialization(msg) => write!(f, "serialization: {msg}"),
+            AppError::Regex(msg) => write!(f, "regex: {msg}"),
+            AppError::Walk(msg) => write!(f, "walk: {msg}"),
         }
     }
 }
@@ -70,29 +74,29 @@ mod tests {
 
     #[test]
     fn display_invalid_directory() {
-        let e = AppError::InvalidDirectory("/no/such".into());
-        assert_eq!(e.to_string(), "Invalid directory: /no/such");
+        let e = AppError::InvalidDirectory("directory does not exist: /no/such".into());
+        assert_eq!(e.to_string(), "directory does not exist: /no/such");
     }
 
     #[test]
     fn display_invalid_glob() {
-        let e = AppError::InvalidGlob("[".into());
-        assert_eq!(e.to_string(), "Invalid glob pattern: [");
+        let e = AppError::InvalidGlob("invalid pattern '[': ...".into());
+        assert_eq!(e.to_string(), "invalid pattern '[': ...");
     }
 
     #[test]
     fn display_invalid_timezone() {
         assert_eq!(
             AppError::InvalidTimezone("X".into()).to_string(),
-            "Invalid timezone: X"
+            "invalid timezone: X"
         );
     }
 
     #[test]
     fn display_invalid_output() {
         assert_eq!(
-            AppError::InvalidOutput("symlink".into()).to_string(),
-            "Invalid output path: symlink"
+            AppError::InvalidOutput("refusing to overwrite symlink: /tmp/foo".into()).to_string(),
+            "refusing to overwrite symlink: /tmp/foo"
         );
     }
 
@@ -100,7 +104,7 @@ mod tests {
     fn display_date_range() {
         assert_eq!(
             AppError::DateRange("from > to".into()).to_string(),
-            "Invalid date range: from > to"
+            "from > to"
         );
     }
 
@@ -109,7 +113,7 @@ mod tests {
         let io = io::Error::new(ErrorKind::NotFound, "missing");
         let e: AppError = io.into();
         assert!(matches!(e, AppError::Io(_)));
-        assert!(e.to_string().contains("IO error"));
+        assert!(e.to_string().starts_with("io: "));
     }
 
     #[test]
@@ -117,7 +121,7 @@ mod tests {
         let parsed: Result<serde_json::Value, _> = serde_json::from_str("not json");
         let e: AppError = parsed.unwrap_err().into();
         assert!(matches!(e, AppError::Serialization(_)));
-        assert!(e.to_string().starts_with("Serialization error: "));
+        assert!(e.to_string().starts_with("serialization: "));
     }
 
     #[test]

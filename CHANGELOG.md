@@ -16,7 +16,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No user-visible changes yet._
+### Changed
+
+- MSRV (minimum supported Rust version) raised from 1.80 to 1.85.
+  Required by the `comrak` 0.50+ upgrade and locked in CI via a
+  dedicated `msrv` job that builds with `cargo +1.85 build --locked`.
+- `comrak` dependency bumped from 0.48 to 0.52: backward-compatible
+  for our usage of `NodeValue::{Heading, Paragraph, Code, CodeBlock,
+  Text, Emph, Strong, Link, Strikethrough}`; no parser code changes
+  were needed.
+
+### Removed
+
+- `CONTRIBUTING.md` was removed: the project does not yet have an external
+  contributor community, and the document had drifted from the actual
+  release workflow. Project conventions live in `CLAUDE.md` instead.
 
 ## [0.2.2] — 2026-05-17
 

@@ -10,10 +10,12 @@ CLI утилита для извлечения задач из markdown файл
 
 - [Установка и сборка](#установка-и-сборка)
 - [Использование](#использование)
-- [Параметры](#параметры)
-- [Примеры](#примеры)
-- [Поддерживаемые конструкции Org-mode](#поддерживаемые-конструкции-org-mode)
-- [Календарь рабочих дней](#календарь-рабочих-дней)
+- [Примеры файлов](#примеры-файлов)
+- [Режимы Agenda](#режимы-agenda)
+- [Поддерживаемые метки](#поддерживаемые-метки)
+- [Поддержка локалей](#поддержка-локалей)
+- [Формат вывода](#формат-вывода)
+- [Повторяющиеся задачи](#повторяющиеся-задачи)
 - [Структура проекта](#структура-проекта)
 - [Зависимости](#зависимости)
 - [Лицензия](#лицензия)
@@ -89,19 +91,19 @@ cargo clippy
 
 #### Покрытие тестами функционала рабочих дней
 
-Модуль `holidays` (9 тестов):
+Модуль `holidays`:
 - Загрузка календаря праздников
 - Проверка обычных выходных и рабочих дней
 - Новогодние каникулы 2025 (1-8 января) и 2026 (1-9 января)
 - Переносы праздников 2026 (8 марта → 9 марта, 9 мая → 11 мая)
 - Пропуск выходных и праздников при поиске следующего рабочего дня
 
-Модуль `timestamp::repeater` (6 тестов):
+Модуль `timestamp::repeater`:
 - Парсинг повторов `+1wd`, `+2wd`, `++1wd`, `.+1wd`
 - Расчет следующего повтора по рабочим дням
 - Пропуск праздников в повторах
 
-Модуль `timestamp::parser` (2 теста):
+Модуль `timestamp::parser`:
 - Парсинг временных меток с `+1wd` и `+2wd`
 
 ## Использование
@@ -252,11 +254,31 @@ markdown-org-extract --dir ./notes -v
 
 ## Примеры файлов
 
-В каталоге `examples/` находятся примеры markdown файлов с различными метками:
+В каталоге `examples/` находятся примеры markdown файлов с различными
+метками. Эти же файлы используются интеграционными тестами `tests/cli.rs`.
+
+Общие сценарии:
 
 - `project-tasks.md` - задачи разработки проекта
 - `personal-notes.md` - личные заметки и задачи
 - `meeting-notes.md` - заметки со встреч
+- `work-log.md` - смешанный лог с SCHEDULED, DEADLINE и CLOCK
+
+Демонстрация конкретных меток org-mode:
+
+- `priorities.md` - задачи с приоритетами `[#A]`, `[#B]`, `[#C]`
+- `org-mode-timestamps.md` - timestamp-форматы, диапазоны, повторы
+- `created-test.md` - использование `CREATED:` для даты постановки
+- `workdays-test.md` - повторы по рабочим дням (`+1wd`, `+2wd`) и
+  взаимодействие с календарём праздников
+
+Демонстрация CLOCK-блоков (учёт времени):
+
+- `clock-formats.md` - все поддерживаемые формы CLOCK-строк
+- `clock-inline.md` - CLOCK в inline-code (`` `CLOCK: ...` ``)
+- `clock-test.md` - закрытые CLOCK-интервалы с `=> HH:MM`
+- `simple-clock.md` - CLOCK в fenced code-блоках
+- `done-clock.md` - CLOCK на DONE-задаче (учёт post-completion)
 
 Попробуйте запустить:
 ```bash
@@ -493,21 +515,23 @@ CLOCK: [2024-12-09 Mon 14:00]--[2024-12-09 Mon 16:15] =>  2:15
 
 #### JSON
 
+Опциональные поля (`priority`, `created`, `timestamp_time`,
+`timestamp_end_time`, `clocks`, `total_clock_time`, `task_type`) при
+отсутствии значения опускаются в выводе, а не сериализуются как
+`null`. Это совпадает с конвенцией `#[serde(skip_serializing_if =
+"Option::is_none")]` в `src/types.rs`.
+
 ```json
 [
   {
-    "file": "/path/to/file.md",
-    "line": 42,
-    "heading": "Task title",
-    "content": "Task description",
+    "file": "workdays-test.md",
+    "line": 3,
+    "heading": "Ежедневная задача",
+    "content": "Обычная задача каждый день.",
     "task_type": "TODO",
-    "priority": "A",
-    "created": "CREATED: <2024-12-01 Mon>",
-    "timestamp": "DEADLINE: <2024-12-15 Sun>",
-    "timestamp_type": "DEADLINE",
-    "timestamp_date": "2024-12-15",
-    "timestamp_time": null,
-    "timestamp_end_time": null
+    "timestamp": "SCHEDULED: <2025-12-05 Thu +1d>",
+    "timestamp_type": "SCHEDULED",
+    "timestamp_date": "2025-12-05"
   }
 ]
 ```
@@ -517,14 +541,12 @@ CLOCK: [2024-12-09 Mon 14:00]--[2024-12-09 Mon 16:15] =>  2:15
 ```markdown
 # Tasks
 
-## Task title
-**File:** /path/to/file.md:42
+## Ежедневная задача
+**File:** `workdays-test.md:3`
 **Type:** TODO
-**Priority:** [#A]
-**Created:** CREATED: <2024-12-01 Mon>
-**Time:** DEADLINE: <2024-12-15 Sun>
+**Time:** `SCHEDULED: <2025-12-05 Thu +1d>`
 
-Task description
+Обычная задача каждый день.
 ```
 
 ### Режимы `--agenda day` и `--agenda week` (дневная agenda)
@@ -540,47 +562,40 @@ Task description
 
 #### JSON
 
+Пути файлов выводятся относительно `--dir` (или абсолютно при
+`--absolute-paths`). Опциональные поля опускаются при отсутствии
+значения, как и в режиме `--tasks`.
+
 ```json
 [
   {
-    "date": "2024-12-05",
-    "overdue": [],
-    "scheduled_timed": [
+    "date": "2025-12-05",
+    "overdue": [
       {
-        "file": "./examples/project-tasks.md",
+        "file": "project-tasks.md",
         "line": 5,
         "heading": "Design database schema",
-        "content": "Need to finalize the database structure.",
+        "content": "Need to finalize the database structure before implementation.",
         "task_type": "TODO",
         "priority": "A",
-        "timestamp": "SCHEDULED: <2024-12-05 Wed 10:00>",
-        "timestamp_type": "SCHEDULED",
-        "timestamp_date": "2024-12-05",
-        "timestamp_time": "10:00"
-      }
-    ],
-    "scheduled_no_time": [
-      {
-        "file": "./examples/project-tasks.md",
-        "line": 10,
-        "heading": "Review code",
-        "content": "Code review needed.",
-        "task_type": "TODO",
         "timestamp": "SCHEDULED: <2024-12-05 Wed>",
         "timestamp_type": "SCHEDULED",
-        "timestamp_date": "2024-12-05"
+        "timestamp_date": "2024-12-05",
+        "days_offset": -365
       }
     ],
+    "scheduled_timed": [],
+    "scheduled_no_time": [],
     "upcoming": [
       {
-        "file": "./examples/project-tasks.md",
+        "file": "project-tasks.md",
         "line": 47,
         "heading": "Review pull request #42",
         "content": "Critical bug fix needs review.",
         "task_type": "TODO",
-        "timestamp": "DEADLINE: <2024-12-06 Thu>",
+        "timestamp": "DEADLINE: <2025-12-06 Sat>",
         "timestamp_type": "DEADLINE",
-        "timestamp_date": "2024-12-06",
+        "timestamp_date": "2025-12-06",
         "days_offset": 1
       }
     ]
@@ -595,36 +610,39 @@ Task description
 
 #### Markdown
 
+Пути файлов и timestamp выводятся в inline-code (`` `...` ``) для
+сохранения форматирования. `Type:` использует `TODO` / `DONE` (а не
+`Todo` / `Done`); `Priority:` выводится буквой без `[#]`-обёртки.
+
 ```markdown
 # Agenda
 
-## 2024-12-05
+## 2025-12-05
 
 ### Overdue
 
-#### Create project repository (4 days ago)
-**File:** ./examples/project-tasks.md:13
-**Type:** Done
-**Time:** CLOSED: <2024-12-01 Mon>
+#### Design database schema (365 days ago)
+**File:** `project-tasks.md:5`
+**Type:** TODO
+**Priority:** A
+**Time:** `SCHEDULED: <2024-12-05 Wed>`
 
-Repository created and initial structure set up.
+Need to finalize the database structure before implementation.
 
 ### Scheduled
 
-#### Design database schema
-**File:** ./examples/project-tasks.md:5
-**Type:** Todo
-**Priority:** A
-**Time:** SCHEDULED: <2024-12-05 Wed>
+#### Daily standup
+**File:** `project-tasks.md:33`
+**Time:** `<2025-12-05 Friday 09:00-09:15>`
 
-Need to finalize the database structure.
+Daily standup meeting.
 
 ### Upcoming
 
-#### Review pull request #42 (in 1 days)
-**File:** ./examples/project-tasks.md:47
-**Type:** Todo
-**Time:** DEADLINE: <2024-12-06 Thu>
+#### Review pull request \#42 (in 1 days)
+**File:** `project-tasks.md:47`
+**Type:** TODO
+**Time:** `DEADLINE: <2025-12-06 Sat>`
 
 Critical bug fix needs review.
 ```
@@ -729,7 +747,6 @@ markdown-org-extract/
 │   └── outdated.yml        # Еженедельный non-blocking `cargo outdated`
 ├── Cargo.toml
 ├── CHANGELOG.md
-├── CONTRIBUTING.md
 ├── TODO.md                 # Отложенные технические задачи
 ├── LICENSE                 # MIT
 └── README.md
@@ -738,7 +755,6 @@ markdown-org-extract/
 См. также:
 - [docs/CLOCK_IMPLEMENTATION.md](docs/CLOCK_IMPLEMENTATION.md) — детали реализации CLOCK-меток
 - [docs/org-mode-keywords.md](docs/org-mode-keywords.md) — справка по поддерживаемым ключевым словам
-- [CONTRIBUTING.md](CONTRIBUTING.md) — гайд для контрибьюторов
 - [CHANGELOG.md](CHANGELOG.md) — история версий
 - [TODO.md](TODO.md) — отложенные технические задачи
 
@@ -759,3 +775,15 @@ markdown-org-extract/
 ## Лицензия
 
 MIT — см. файл [LICENSE](LICENSE).
+
+### Происхождение данных `holidays_ru.json`
+
+Календарь праздников и переносов выходных в `holidays_ru.json` составлен
+автором проекта на основе официальных постановлений Правительства РФ о
+переносе выходных дней. Это публичная фактическая информация, не
+подлежащая копирайту. Файл распространяется под той же MIT-лицензией,
+что и остальной код, для удобства упаковки.
+
+Атрибуция и описание схемы продублированы внутри самого файла в поле
+`_meta` (build.rs игнорирует подчёркнутые ключи, поэтому добавление не
+влияет на сборку).

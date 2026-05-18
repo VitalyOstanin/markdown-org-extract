@@ -1,4 +1,10 @@
 {
+  "_meta": {
+    "description": "Russian Federation public holidays and shifted workdays per year. Calendar facts compiled from official government decrees (постановления Правительства РФ о переносе выходных дней) -- publicly available factual information that is not subject to copyright.",
+    "source": "Public-domain facts compiled by the project author from official RF government decrees.",
+    "license": "Calendar dates are facts and not subject to copyright; this file is distributed under the same MIT license as the rest of the crate.",
+    "schema": "Top-level keys are years (YYYY) plus an optional `_meta` block. Each year has `holidays` and `workdays` arrays of YYYY-MM-DD strings. Underscore-prefixed keys are ignored by build.rs."
+  },
   "2025": {
     "holidays": [
       "2025-01-01", "2025-01-02", "2025-01-03", "2025-01-04", "2025-01-05",

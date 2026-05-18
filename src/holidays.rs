@@ -54,7 +54,10 @@ impl HolidayCalendar {
         !matches!(date.weekday(), Weekday::Sat | Weekday::Sun)
     }
 
-    /// Return the next workday strictly after the given date
+    /// Return the next workday strictly after the given date.
+    /// Test-only: production code reaches workday occurrences through the
+    /// O(log n) `nth_workday_after` / `workdays_between_exclusive` helpers.
+    #[cfg(test)]
     pub fn next_workday(&self, date: NaiveDate) -> NaiveDate {
         let mut current = date + chrono::Duration::days(1);
         while !self.is_workday(current) {
@@ -255,6 +258,26 @@ mod tests {
         let next = calendar.next_workday(jan_4);
         let jan_12 = NaiveDate::from_ymd_opt(2026, 1, 12).unwrap();
         assert_eq!(next, jan_12);
+    }
+
+    /// Attribution must stay in the data file: a future contributor stripping
+    /// `_meta` accidentally would lose the licensing context the README points
+    /// at. Lock the keys we promise are there (description/source/license/schema).
+    #[test]
+    fn holidays_json_carries_attribution_meta() {
+        let raw = include_str!("../holidays_ru.json");
+        let parsed: serde_json::Value =
+            serde_json::from_str(raw).expect("holidays_ru.json is JSON");
+        let meta = parsed
+            .get("_meta")
+            .and_then(|v| v.as_object())
+            .expect("`_meta` block must be present at the top level");
+        for key in ["description", "source", "license", "schema"] {
+            assert!(
+                meta.contains_key(key) && meta[key].is_string(),
+                "_meta is missing required string field `{key}`"
+            );
+        }
     }
 
     /// End-to-end check of the `build.rs` pipeline: the JSON file shipped with

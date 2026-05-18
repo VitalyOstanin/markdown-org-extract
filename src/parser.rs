@@ -11,27 +11,27 @@ use crate::timestamp::{
     extract_created_normalized, extract_timestamp_normalized, normalize_weekdays,
     parse_timestamp_fields,
 };
-use crate::types::{Priority, Task, TaskType};
+use crate::types::{Priority, Task, TaskType, MAX_DIAGNOSTIC_ITEMS};
 
-/// Cap on how many invalid-timestamp warnings we emit per process. Without a cap
-/// a corrupt or hostile input could flood stderr; the count is global because
-/// warnings come from per-file parsing and we want one bound across all files.
-const MAX_TS_WARNINGS: usize = 20;
+// Per-process cap on invalid-timestamp warnings reuses `MAX_DIAGNOSTIC_ITEMS`
+// so both diagnostic surfaces (failed-path list and parse-warning stream)
+// stay aligned: "20 entries is already noisy". The counter is global because
+// warnings come from per-file parsing and we want one bound across all files.
 static TS_WARNINGS_EMITTED: AtomicUsize = AtomicUsize::new(0);
 
 fn warn_invalid_timestamp(path: &Path, line: u32, ts: &str) {
     let n = TS_WARNINGS_EMITTED.fetch_add(1, Ordering::Relaxed);
-    if n < MAX_TS_WARNINGS {
+    if n < MAX_DIAGNOSTIC_ITEMS {
         tracing::warn!(
             file = %path.display(),
             line,
             timestamp = ts.trim(),
             "cannot parse timestamp"
         );
-    } else if n == MAX_TS_WARNINGS {
+    } else if n == MAX_DIAGNOSTIC_ITEMS {
         tracing::warn!(
-            limit = MAX_TS_WARNINGS,
-            "more invalid timestamps suppressed (showed first {MAX_TS_WARNINGS})"
+            limit = MAX_DIAGNOSTIC_ITEMS,
+            "more invalid timestamps suppressed (showed first {MAX_DIAGNOSTIC_ITEMS})"
         );
     }
 }
@@ -97,6 +97,13 @@ pub fn extract_tasks(
             tasks.push(task);
         }
     }
+
+    tracing::debug!(
+        file = %path.display(),
+        bytes = content.len(),
+        tasks = tasks.len(),
+        "parsed file"
+    );
 
     tasks
 }
@@ -281,7 +288,9 @@ fn parse_heading(text: &str) -> (Option<TaskType>, Option<Priority>, String) {
     // Step 1: optional TODO/DONE prefix.
     let (task_type, rest) = if let Some(caps) = HEADING_TODO_RE.captures(text) {
         let kw = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-        let m = caps.get(0).unwrap();
+        let m = caps
+            .get(0)
+            .expect("Captures::get(0) is Some when captures() succeeds");
         (TaskType::from_keyword(kw), &text[m.end()..])
     } else {
         (None, text)
@@ -291,7 +300,10 @@ fn parse_heading(text: &str) -> (Option<TaskType>, Option<Priority>, String) {
     if let Some(caps) = HEADING_PRIORITY_RE.captures(rest) {
         let value = caps.get(1).map(|m| m.as_str()).unwrap_or("");
         if let Some(priority) = Priority::parse(value) {
-            let after = &rest[caps.get(0).unwrap().end()..];
+            let whole = caps
+                .get(0)
+                .expect("Captures::get(0) is Some when captures() succeeds");
+            let after = &rest[whole.end()..];
             return (task_type, Some(priority), after.trim().to_string());
         }
     }
@@ -742,26 +754,16 @@ Second paragraph.\n\
     #[test]
     fn extract_tasks_with_ru_mappings_reproduces_cli_pipeline() {
         // Reproduce what `main.rs` feeds to `extract_tasks` when the default
-        // `--locale ru,en` is in effect. Mappings must not interfere with
-        // the indented-inline-code DEADLINE recovery.
+        // `--locale ru,en` is in effect. Pulling the table from `cli` keeps
+        // this test in sync with whatever `get_weekday_mappings("ru")` would
+        // produce in production.
         let content = "#### TODO Birthday\n    `DEADLINE: <2026-05-07 Thu +1y>`\n";
-        let mappings: &[(&str, &str)] = &[
-            ("Понедельник", "Monday"),
-            ("Вторник", "Tuesday"),
-            ("Среда", "Wednesday"),
-            ("Четверг", "Thursday"),
-            ("Пятница", "Friday"),
-            ("Суббота", "Saturday"),
-            ("Воскресенье", "Sunday"),
-            ("Пн", "Mon"),
-            ("Вт", "Tue"),
-            ("Ср", "Wed"),
-            ("Чт", "Thu"),
-            ("Пт", "Fri"),
-            ("Сб", "Sat"),
-            ("Вс", "Sun"),
-        ];
-        let tasks = extract_tasks(Path::new("t.md"), content, mappings, DEFAULT_MAX_TASKS);
+        let tasks = extract_tasks(
+            Path::new("t.md"),
+            content,
+            crate::cli::RU_WEEKDAY_MAPPINGS,
+            DEFAULT_MAX_TASKS,
+        );
         assert_eq!(tasks.len(), 1);
         let t = &tasks[0];
         assert_eq!(t.task_type, Some(TaskType::Todo));

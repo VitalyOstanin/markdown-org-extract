@@ -14,6 +14,18 @@ use regex::{Regex, RegexBuilder};
 const SIZE_LIMIT_BYTES: usize = 1 << 20; // 1 MiB
 const DFA_SIZE_LIMIT_BYTES: usize = 1 << 20; // 1 MiB
 
+/// Upper bound on the body of a single bracketed org-mode timestamp
+/// (the run of `[^>]` chars between `<` and `>`). Caps how far the regex
+/// engine will scan if the closing `>` is missing — defense in depth, not
+/// a semantic limit. Used by every timestamp pattern in
+/// `src/timestamp/extract.rs`.
+pub const TS_BODY_MAX: usize = 256;
+
+/// Upper bound on the body of a single CLOCK timestamp inside `[…]` / `<…>`.
+/// CLOCK bodies are well-formed `YYYY-MM-DD Day HH:MM` strings (~22 chars),
+/// so this cap is generous but bounded. Used by `src/clock.rs`.
+pub const CLOCK_BODY_MAX: usize = 128;
+
 /// Compile a regex with conservative size limits. Panics if `pattern` is invalid
 /// or exceeds the limits — both indicate a programmer error and should be caught
 /// in tests (every call site goes through `LazyLock::new`, so the panic happens

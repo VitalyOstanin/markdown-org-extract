@@ -38,6 +38,10 @@ pub enum RepeaterUnit {
     Week,
     Month,
     Year,
+    /// `+Nh` — intra-day repeater. For the agenda-by-day view this projects
+    /// onto a daily grid: every day is an occurrence regardless of the numeric
+    /// value `N`. A hypothetical "+25h" therefore still shows up every day, not
+    /// every other day. Documented behaviour, see `closest_date`.
     Hour,
     Workday,
 }
@@ -60,6 +64,10 @@ impl RepeaterUnit {
 ///
 /// Returns `None` for malformed input or when the numeric value is zero
 /// (zero-step repeaters cause division-by-zero in occurrence math).
+///
+/// At `trace` level, every rejection is logged with a specific reason so a
+/// caller running with `-vvv` can tell `+1` (missing unit), `+1ф` (non-ASCII
+/// unit), `+0d` (zero step) and `1d` (missing prefix) apart without rerunning.
 pub fn parse_repeater(s: &str) -> Option<Repeater> {
     let s = s.trim();
 
@@ -70,17 +78,26 @@ pub fn parse_repeater(s: &str) -> Option<Repeater> {
     } else if let Some(r) = s.strip_prefix('+') {
         (RepeaterType::Cumulative, r)
     } else {
+        tracing::trace!(input = %s, reason = "missing prefix", "parse_repeater: rejected");
         return None;
     };
 
     if rest.is_empty() {
+        tracing::trace!(input = %s, reason = "empty after prefix", "parse_repeater: rejected");
         return None;
     }
 
     // Check for "wd" suffix first
     if let Some(value_str) = rest.strip_suffix("wd") {
-        let value: u32 = value_str.parse().ok()?;
+        let value: u32 = match value_str.parse() {
+            Ok(v) => v,
+            Err(_) => {
+                tracing::trace!(input = %s, reason = "non-numeric value for wd", "parse_repeater: rejected");
+                return None;
+            }
+        };
         if value == 0 {
+            tracing::trace!(input = %s, reason = "zero step for wd", "parse_repeater: rejected");
             return None;
         }
         return Some(Repeater {
@@ -90,10 +107,23 @@ pub fn parse_repeater(s: &str) -> Option<Repeater> {
         });
     }
 
-    let unit_char = rest.chars().last()?;
-    let value_str = &rest[..rest.len() - 1];
-    let value: u32 = value_str.parse().ok()?;
+    let unit_char = match rest.chars().last() {
+        Some(c) => c,
+        None => {
+            tracing::trace!(input = %s, reason = "empty rest after wd check", "parse_repeater: rejected");
+            return None;
+        }
+    };
+    let value_str = &rest[..rest.len() - unit_char.len_utf8()];
+    let value: u32 = match value_str.parse() {
+        Ok(v) => v,
+        Err(_) => {
+            tracing::trace!(input = %s, reason = "non-numeric value", "parse_repeater: rejected");
+            return None;
+        }
+    };
     if value == 0 {
+        tracing::trace!(input = %s, reason = "zero step", "parse_repeater: rejected");
         return None;
     }
 
@@ -103,7 +133,15 @@ pub fn parse_repeater(s: &str) -> Option<Repeater> {
         'm' => RepeaterUnit::Month,
         'y' => RepeaterUnit::Year,
         'h' => RepeaterUnit::Hour,
-        _ => return None,
+        _ => {
+            tracing::trace!(
+                input = %s,
+                unit_char = %unit_char,
+                reason = "unknown unit",
+                "parse_repeater: rejected"
+            );
+            return None;
+        }
     };
 
     Some(Repeater {
@@ -122,6 +160,158 @@ pub enum DatePreference {
     Future,
 }
 
+/// Select the occurrence side (`n1` or `n2`) that matches the requested
+/// `prefer`ence, given the bracket `n1 <= current < n2` (or `current == n1`).
+fn pick(
+    prefer: DatePreference,
+    current: NaiveDate,
+    n1: NaiveDate,
+    n2: NaiveDate,
+) -> Option<NaiveDate> {
+    Some(match prefer {
+        DatePreference::Past => {
+            if current >= n2 {
+                n2
+            } else {
+                n1
+            }
+        }
+        DatePreference::Future => {
+            if current <= n1 {
+                n1
+            } else {
+                n2
+            }
+        }
+    })
+}
+
+/// Bracket containing `current` on the year-repeater grid.
+/// Returns `(latest occurrence <= current, earliest occurrence > current)`.
+/// Skips truncations for Feb-29 by walking valid `from_ymd_opt` candidates.
+fn bracket_year(
+    base_date: NaiveDate,
+    current: NaiveDate,
+    value: u32,
+) -> Option<(NaiveDate, NaiveDate)> {
+    use chrono::Datelike;
+
+    let value = value as i32;
+    let base_month = base_date.month();
+    let base_day = base_date.day();
+    let base_year = base_date.year();
+    let current_year = current.year();
+
+    // Search for the latest valid occurrence on or before `current`.
+    // For dates like Feb 29 we skip non-leap years entirely instead of truncating.
+    let max_complete = (current_year - base_year) / value;
+    let mut n1: Option<NaiveDate> = None;
+    let mut k = max_complete;
+    while k >= 0 {
+        let y = base_year + k * value;
+        if let Some(d) = NaiveDate::from_ymd_opt(y, base_month, base_day) {
+            if d <= current {
+                n1 = Some(d);
+                break;
+            }
+        }
+        k -= 1;
+    }
+    // n1 = None requires `current < base_date`, which `closest_date` rules out
+    // before dispatching here. Assert in debug, return None in release as a
+    // safe degradation rather than panicking on a malformed call.
+    debug_assert!(
+        n1.is_some(),
+        "bracket_year: n1=None despite current >= base_date"
+    );
+    let n1 = n1?;
+
+    // Next valid occurrence strictly after `current`.
+    let mut k2 = (n1.year() - base_year) / value + 1;
+    let safety_limit = max_complete + 200; // accommodate Feb-29 (gap up to 8 years)
+    let n2 = loop {
+        if k2 > safety_limit {
+            return None;
+        }
+        let y = base_year + k2 * value;
+        if let Some(d) = NaiveDate::from_ymd_opt(y, base_month, base_day) {
+            if d > current {
+                break d;
+            }
+        }
+        k2 += 1;
+    };
+
+    Some((n1, n2))
+}
+
+/// Bracket on the month-repeater grid, truncating the day to fit the
+/// destination month while always starting from `base_date` so that
+/// `base_day` is preserved across truncations.
+fn bracket_month(
+    base_date: NaiveDate,
+    current: NaiveDate,
+    value: u32,
+) -> Option<(NaiveDate, NaiveDate)> {
+    use chrono::Datelike;
+
+    let months_to_add = value as i32;
+    let base_day = base_date.day();
+
+    let months_diff = (current.year() - base_date.year()) * 12
+        + (current.month() as i32 - base_date.month() as i32);
+    let complete_months = (months_diff / months_to_add) * months_to_add;
+
+    let n1_raw = add_months(base_date, complete_months)?;
+    let n1 = NaiveDate::from_ymd_opt(
+        n1_raw.year(),
+        n1_raw.month(),
+        base_day.min(days_in_month(n1_raw.year(), n1_raw.month())),
+    )?;
+
+    let n2_raw = add_months(base_date, complete_months + months_to_add)?;
+    let n2 = NaiveDate::from_ymd_opt(
+        n2_raw.year(),
+        n2_raw.month(),
+        base_day.min(days_in_month(n2_raw.year(), n2_raw.month())),
+    )?;
+
+    Some((n1, n2))
+}
+
+/// Bracket on a uniform daily grid (Day/Week/Hour repeaters).
+/// `days` is the period length expressed in days.
+fn bracket_uniform_days(
+    base_date: NaiveDate,
+    current: NaiveDate,
+    days: i64,
+) -> (NaiveDate, NaiveDate) {
+    let days_diff = (current - base_date).num_days();
+    let complete_periods = days_diff / days;
+
+    let n1 = base_date + chrono::Duration::days(complete_periods * days);
+    let n2 = n1 + chrono::Duration::days(days);
+    (n1, n2)
+}
+
+/// Bracket on the workday-repeater grid using the calendar's O(log n)
+/// workday-counting primitive instead of walking day-by-day.
+fn bracket_workday(base_date: NaiveDate, current: NaiveDate, value: u32) -> (NaiveDate, NaiveDate) {
+    let calendar = HolidayCalendar::global();
+    let step = value as i64;
+
+    let m = calendar.workdays_between_exclusive(base_date, current);
+    let k = m / step;
+
+    let n1 = if k == 0 {
+        base_date
+    } else {
+        calendar.nth_workday_after(base_date, (k * step) as u64)
+    };
+    let n2 = calendar.nth_workday_after(n1, step as u64);
+    (n1, n2)
+}
+
 /// Calculate closest occurrence date relative to `current` for the given repeater.
 ///
 /// Contract:
@@ -137,8 +327,6 @@ pub fn closest_date(
     prefer: DatePreference,
     repeater: &Repeater,
 ) -> Option<NaiveDate> {
-    use chrono::Datelike;
-
     if current == base_date {
         return Some(base_date);
     }
@@ -149,297 +337,22 @@ pub fn closest_date(
         };
     }
 
-    match repeater.unit {
-        RepeaterUnit::Year => {
-            let value = repeater.value as i32;
-            let base_month = base_date.month();
-            let base_day = base_date.day();
-            let base_year = base_date.year();
-            let current_year = current.year();
+    let (n1, n2) = match repeater.unit {
+        RepeaterUnit::Year => bracket_year(base_date, current, repeater.value)?,
+        RepeaterUnit::Month => bracket_month(base_date, current, repeater.value)?,
+        RepeaterUnit::Day => bracket_uniform_days(base_date, current, repeater.value as i64),
+        RepeaterUnit::Week => bracket_uniform_days(base_date, current, (repeater.value * 7) as i64),
+        // Hour repeaters always project onto a daily grid: any +Nh repeater is
+        // intra-day so for an agenda-by-day view every day is an occurrence.
+        // The numeric value is intentionally ignored — see docstring on
+        // `RepeaterUnit::Hour` and the README "Repeaters" section. Documented
+        // explicitly so a future contributor does not "fix" this by using
+        // `repeater.value`, which would silently turn +5h into "every 5 days".
+        RepeaterUnit::Hour => bracket_uniform_days(base_date, current, 1),
+        RepeaterUnit::Workday => bracket_workday(base_date, current, repeater.value),
+    };
 
-            // Search for the latest valid occurrence on or before `current`.
-            // For dates like Feb 29 we skip non-leap years entirely instead of truncating.
-            let max_complete = (current_year - base_year) / value;
-            let mut n1: Option<NaiveDate> = None;
-            let mut k = max_complete;
-            while k >= 0 {
-                let y = base_year + k * value;
-                if let Some(d) = NaiveDate::from_ymd_opt(y, base_month, base_day) {
-                    if d <= current {
-                        n1 = Some(d);
-                        break;
-                    }
-                }
-                k -= 1;
-            }
-            let n1 = n1?;
-
-            // Next valid occurrence strictly after `current`.
-            let mut k2 = (n1.year() - base_year) / value + 1;
-            let safety_limit = max_complete + 200; // accommodate Feb-29 (gap up to 8 years)
-            let n2 = loop {
-                if k2 > safety_limit {
-                    return None;
-                }
-                let y = base_year + k2 * value;
-                if let Some(d) = NaiveDate::from_ymd_opt(y, base_month, base_day) {
-                    if d > current {
-                        break d;
-                    }
-                }
-                k2 += 1;
-            };
-
-            match prefer {
-                DatePreference::Past => {
-                    if current >= n2 {
-                        Some(n2)
-                    } else {
-                        Some(n1)
-                    }
-                }
-                DatePreference::Future => {
-                    if current <= n1 {
-                        Some(n1)
-                    } else {
-                        Some(n2)
-                    }
-                }
-            }
-        }
-        RepeaterUnit::Month => {
-            let months_to_add = repeater.value as i32;
-            let base_day = base_date.day();
-
-            let months_diff = (current.year() - base_date.year()) * 12
-                + (current.month() as i32 - base_date.month() as i32);
-            let complete_months = (months_diff / months_to_add) * months_to_add;
-
-            // Compute n1 and n2 from base_date so that base_day is preserved across truncations
-            let n1_raw = add_months(base_date, complete_months)?;
-            let n1 = NaiveDate::from_ymd_opt(
-                n1_raw.year(),
-                n1_raw.month(),
-                base_day.min(days_in_month(n1_raw.year(), n1_raw.month())),
-            )?;
-
-            let n2_raw = add_months(base_date, complete_months + months_to_add)?;
-            let n2 = NaiveDate::from_ymd_opt(
-                n2_raw.year(),
-                n2_raw.month(),
-                base_day.min(days_in_month(n2_raw.year(), n2_raw.month())),
-            )?;
-
-            match prefer {
-                DatePreference::Past => {
-                    if current >= n2 {
-                        Some(n2)
-                    } else {
-                        Some(n1)
-                    }
-                }
-                DatePreference::Future => {
-                    if current <= n1 {
-                        Some(n1)
-                    } else {
-                        Some(n2)
-                    }
-                }
-            }
-        }
-        RepeaterUnit::Day | RepeaterUnit::Week | RepeaterUnit::Hour => {
-            // Hour repeaters are projected onto a daily grid for agenda purposes
-            let days = match repeater.unit {
-                RepeaterUnit::Day => repeater.value as i64,
-                RepeaterUnit::Week => (repeater.value * 7) as i64,
-                RepeaterUnit::Hour => 1,
-                _ => unreachable!(),
-            };
-
-            let days_diff = (current - base_date).num_days();
-            let complete_periods = days_diff / days;
-
-            let n1 = base_date + chrono::Duration::days(complete_periods * days);
-            let n2 = n1 + chrono::Duration::days(days);
-
-            match prefer {
-                DatePreference::Past => {
-                    if current >= n2 {
-                        Some(n2)
-                    } else {
-                        Some(n1)
-                    }
-                }
-                DatePreference::Future => {
-                    if current <= n1 {
-                        Some(n1)
-                    } else {
-                        Some(n2)
-                    }
-                }
-            }
-        }
-        RepeaterUnit::Workday => {
-            let calendar = HolidayCalendar::global();
-            let step = repeater.value as i64;
-
-            // Grid: base_date (k=0), then k>=1 means the (k*step)-th workday
-            // strictly after base_date. Find the largest k with grid[k] <= current
-            // by counting workdays in (base_date, current] once (O(log n)), instead
-            // of walking the grid step-by-step (O(N) calendar days).
-            let m = calendar.workdays_between_exclusive(base_date, current);
-            let k = m / step;
-
-            let n1 = if k == 0 {
-                base_date
-            } else {
-                calendar.nth_workday_after(base_date, (k * step) as u64)
-            };
-            let n2 = calendar.nth_workday_after(n1, step as u64);
-
-            match prefer {
-                DatePreference::Past => {
-                    if current >= n2 {
-                        Some(n2)
-                    } else {
-                        Some(n1)
-                    }
-                }
-                DatePreference::Future => {
-                    if current <= n1 {
-                        Some(n1)
-                    } else {
-                        Some(n2)
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Calculate next occurrence date for a repeater (CatchUp/Restart semantics)
-#[allow(dead_code)]
-pub fn next_occurrence(
-    base_date: NaiveDate,
-    repeater: &Repeater,
-    from_date: NaiveDate,
-) -> Option<NaiveDate> {
-    if repeater.unit == RepeaterUnit::Workday {
-        let calendar = HolidayCalendar::global();
-        let step = repeater.value;
-
-        match repeater.repeater_type {
-            RepeaterType::Cumulative => {
-                if from_date < base_date {
-                    return Some(base_date);
-                }
-                // Walk on the grid until we strictly pass from_date
-                let mut current = base_date;
-                while current <= from_date {
-                    for _ in 0..step {
-                        current = calendar.next_workday(current);
-                    }
-                }
-                Some(current)
-            }
-            RepeaterType::CatchUp | RepeaterType::Restart => {
-                let mut current = from_date;
-                for _ in 0..step {
-                    current = calendar.next_workday(current);
-                }
-                Some(current)
-            }
-        }
-    } else {
-        match repeater.repeater_type {
-            RepeaterType::Cumulative => match repeater.unit {
-                RepeaterUnit::Month | RepeaterUnit::Year => {
-                    let months_to_add = if repeater.unit == RepeaterUnit::Year {
-                        (repeater.value * 12) as i32
-                    } else {
-                        repeater.value as i32
-                    };
-
-                    if from_date < base_date {
-                        return Some(base_date);
-                    }
-
-                    let mut current = base_date;
-                    while current <= from_date {
-                        current = add_months(current, months_to_add)?;
-                    }
-                    Some(current)
-                }
-                _ => {
-                    let days = match repeater.unit {
-                        RepeaterUnit::Day => repeater.value as i64,
-                        RepeaterUnit::Week => (repeater.value * 7) as i64,
-                        RepeaterUnit::Hour => 1,
-                        RepeaterUnit::Workday => unreachable!(),
-                        _ => unreachable!(),
-                    };
-
-                    if from_date < base_date {
-                        return Some(base_date);
-                    }
-
-                    let mut current = base_date;
-                    while current <= from_date {
-                        current += chrono::Duration::days(days);
-                    }
-                    Some(current)
-                }
-            },
-            RepeaterType::CatchUp => {
-                // CatchUp on the grid (base_date + N*step)
-                match repeater.unit {
-                    RepeaterUnit::Month => {
-                        let months = repeater.value as i32;
-                        let mut current = base_date;
-                        while current <= from_date {
-                            current = add_months(current, months)?;
-                        }
-                        Some(current)
-                    }
-                    RepeaterUnit::Year => {
-                        let months = (repeater.value * 12) as i32;
-                        let mut current = base_date;
-                        while current <= from_date {
-                            current = add_months(current, months)?;
-                        }
-                        Some(current)
-                    }
-                    _ => {
-                        let days = match repeater.unit {
-                            RepeaterUnit::Day => repeater.value as i64,
-                            RepeaterUnit::Week => (repeater.value * 7) as i64,
-                            RepeaterUnit::Hour => 1,
-                            RepeaterUnit::Workday => unreachable!(),
-                            _ => unreachable!(),
-                        };
-                        let mut current = base_date;
-                        while current <= from_date {
-                            current += chrono::Duration::days(days);
-                        }
-                        Some(current)
-                    }
-                }
-            }
-            RepeaterType::Restart => {
-                let days = match repeater.unit {
-                    RepeaterUnit::Day => repeater.value as i64,
-                    RepeaterUnit::Week => (repeater.value * 7) as i64,
-                    RepeaterUnit::Month => return add_months(from_date, repeater.value as i32),
-                    RepeaterUnit::Year => {
-                        return add_months(from_date, (repeater.value * 12) as i32)
-                    }
-                    RepeaterUnit::Hour => 1,
-                    RepeaterUnit::Workday => unreachable!(),
-                };
-                Some(from_date + chrono::Duration::days(days))
-            }
-        }
-    }
+    pick(prefer, current, n1, n2)
 }
 
 /// Add `months` to a date, truncating the day to fit the destination month.
@@ -520,31 +433,31 @@ mod tests {
     }
 
     #[test]
-    fn test_next_occurrence_workday() {
-        let base = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap(); // Friday
-        let repeater = Repeater {
-            repeater_type: RepeaterType::Cumulative,
-            value: 1,
-            unit: RepeaterUnit::Workday,
-        };
-        let from = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap();
-        let next = next_occurrence(base, &repeater, from).unwrap();
-        let expected = NaiveDate::from_ymd_opt(2025, 12, 8).unwrap(); // Monday
-        assert_eq!(next, expected);
+    fn test_parse_repeater_multibyte_last_char_no_panic() {
+        // Last char is multibyte (Cyrillic / emoji). Must return None, not panic
+        // on a byte-index-not-char-boundary slice.
+        assert!(parse_repeater("+1й").is_none());
+        assert!(parse_repeater("++2д").is_none());
+        assert!(parse_repeater(".+3Й").is_none());
+        assert!(parse_repeater("+1\u{1F600}").is_none());
     }
 
     #[test]
-    fn test_next_occurrence_workday_skip_holidays() {
-        let base = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap(); // Monday in holidays
-        let repeater = Repeater {
-            repeater_type: RepeaterType::Cumulative,
-            value: 1,
-            unit: RepeaterUnit::Workday,
-        };
-        let from = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
-        let next = next_occurrence(base, &repeater, from).unwrap();
-        let expected = NaiveDate::from_ymd_opt(2026, 1, 12).unwrap(); // First workday after holidays
-        assert_eq!(next, expected);
+    fn parse_repeater_rejects_each_failure_mode() {
+        // Each rejection branch logs a distinct reason at trace-level; we cannot
+        // observe the trace output here without a test subscriber, but at least
+        // pin that every branch still returns None so a future refactor cannot
+        // silently turn one of them into Some(...).
+        // missing prefix
+        assert!(parse_repeater("1d").is_none(), "no prefix");
+        // empty after prefix
+        assert!(parse_repeater("+").is_none(), "prefix only");
+        // non-numeric wd value
+        assert!(parse_repeater("+abwd").is_none(), "non-numeric wd");
+        // unknown ASCII unit
+        assert!(parse_repeater("+1q").is_none(), "unknown unit");
+        // non-numeric value with valid unit
+        assert!(parse_repeater("+abd").is_none(), "non-numeric value");
     }
 
     #[test]
@@ -561,51 +474,6 @@ mod tests {
         assert_eq!(r.repeater_type, RepeaterType::Cumulative);
         assert_eq!(r.value, 1);
         assert_eq!(r.unit, RepeaterUnit::Hour);
-    }
-
-    #[test]
-    fn test_next_occurrence_year() {
-        let base = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
-        let repeater = Repeater {
-            repeater_type: RepeaterType::Cumulative,
-            value: 1,
-            unit: RepeaterUnit::Year,
-        };
-        let from = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
-        let next = next_occurrence(base, &repeater, from).unwrap();
-        let expected = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap();
-        assert_eq!(next, expected);
-    }
-
-    #[test]
-    fn test_next_occurrence_year_before_base() {
-        let base = NaiveDate::from_ymd_opt(2025, 12, 11).unwrap();
-        let repeater = Repeater {
-            repeater_type: RepeaterType::Cumulative,
-            value: 1,
-            unit: RepeaterUnit::Year,
-        };
-        let from = NaiveDate::from_ymd_opt(2025, 12, 6).unwrap();
-        let next = next_occurrence(base, &repeater, from).unwrap();
-        let expected = NaiveDate::from_ymd_opt(2025, 12, 11).unwrap();
-        assert_eq!(
-            next, expected,
-            "Next occurrence should be base date when from < base"
-        );
-    }
-
-    #[test]
-    fn test_next_occurrence_month() {
-        let base = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
-        let repeater = Repeater {
-            repeater_type: RepeaterType::Cumulative,
-            value: 1,
-            unit: RepeaterUnit::Month,
-        };
-        let from = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
-        let next = next_occurrence(base, &repeater, from).unwrap();
-        let expected = NaiveDate::from_ymd_opt(2025, 1, 5).unwrap();
-        assert_eq!(next, expected);
     }
 
     // --- Regression tests for fixed bugs ---
@@ -634,20 +502,6 @@ mod tests {
     }
 
     #[test]
-    fn test_next_occurrence_cumulative_workday_value_2() {
-        // base = Mon 2025-12-08, +2wd. from = Wed 12-10 → next should be Fri 12-12
-        let base = NaiveDate::from_ymd_opt(2025, 12, 8).unwrap();
-        let repeater = Repeater {
-            repeater_type: RepeaterType::Cumulative,
-            value: 2,
-            unit: RepeaterUnit::Workday,
-        };
-        let from = NaiveDate::from_ymd_opt(2025, 12, 10).unwrap();
-        let next = next_occurrence(base, &repeater, from).unwrap();
-        assert_eq!(next, NaiveDate::from_ymd_opt(2025, 12, 12).unwrap());
-    }
-
-    #[test]
     fn test_closest_date_hour_repeater_advances_daily() {
         // Hour repeater is projected onto daily grid; for +1h:
         // base = 2025-12-05, current = 2025-12-08 → past must be 2025-12-08 (every day is an occurrence)
@@ -662,6 +516,50 @@ mod tests {
         let fut = closest_date(base, current, DatePreference::Future, &repeater).unwrap();
         assert_eq!(past, current);
         assert_eq!(fut, current);
+    }
+
+    #[test]
+    fn test_closest_date_hour_repeater_ignores_value() {
+        // Documented behaviour: hour-repeaters project onto a daily grid; the
+        // numeric value is irrelevant for agenda-by-day. +1h, +12h, and even
+        // +25h all yield "every day is an occurrence" — this test locks the
+        // semantics so a refactor that uses repeater.value can't slip past CI.
+        let base = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap();
+        let current = NaiveDate::from_ymd_opt(2025, 12, 8).unwrap();
+        for value in [1u32, 5, 12, 25] {
+            let repeater = Repeater {
+                repeater_type: RepeaterType::Cumulative,
+                value,
+                unit: RepeaterUnit::Hour,
+            };
+            assert_eq!(
+                closest_date(base, current, DatePreference::Past, &repeater),
+                Some(current),
+                "+{value}h Past must be current day"
+            );
+            assert_eq!(
+                closest_date(base, current, DatePreference::Future, &repeater),
+                Some(current),
+                "+{value}h Future must be current day"
+            );
+        }
+    }
+
+    #[test]
+    fn test_closest_date_year_value_greater_than_diff() {
+        // base = 2025-01-01, +10y. current = 2025-12-05 → max_complete = 0,
+        // n1 must be base (k=0 candidate), n2 must be 2035-01-01.
+        let base = NaiveDate::from_ymd_opt(2025, 1, 1).unwrap();
+        let repeater = Repeater {
+            repeater_type: RepeaterType::Cumulative,
+            value: 10,
+            unit: RepeaterUnit::Year,
+        };
+        let current = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap();
+        let past = closest_date(base, current, DatePreference::Past, &repeater).unwrap();
+        let fut = closest_date(base, current, DatePreference::Future, &repeater).unwrap();
+        assert_eq!(past, base, "+10y past from year-0 must stay on base");
+        assert_eq!(fut, NaiveDate::from_ymd_opt(2035, 1, 1).unwrap());
     }
 
     #[test]
@@ -861,20 +759,5 @@ mod tests {
             cal.nth_workday_after(base, 6),
             NaiveDate::from_ymd_opt(2025, 12, 15).unwrap()
         );
-    }
-
-    #[test]
-    fn test_next_occurrence_catchup_week_with_value() {
-        // base = 2024-12-01 Sun, ++2w. Occurrences: 12-01, 12-15, 12-29, 2025-01-12, ...
-        // from = 2024-12-10 → next must be 2024-12-15 (NOT 12-08).
-        let base = NaiveDate::from_ymd_opt(2024, 12, 1).unwrap();
-        let repeater = Repeater {
-            repeater_type: RepeaterType::CatchUp,
-            value: 2,
-            unit: RepeaterUnit::Week,
-        };
-        let from = NaiveDate::from_ymd_opt(2024, 12, 10).unwrap();
-        let next = next_occurrence(base, &repeater, from).unwrap();
-        assert_eq!(next, NaiveDate::from_ymd_opt(2024, 12, 15).unwrap());
     }
 }

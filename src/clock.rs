@@ -1,19 +1,20 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
-use crate::regex_limits::compile_bounded;
+use crate::regex_limits::{compile_bounded, CLOCK_BODY_MAX};
 use crate::types::ClockEntry;
 
 /// Regex for CLOCK entries: CLOCK: [timestamp]--[timestamp] => duration
 ///
 /// Supports both square brackets (org-mode inactive timestamps) and angle
 /// brackets (active timestamps), but the opening and closing bracket of each
-/// timestamp must match — `[…>` or `<…]` are rejected as malformed.
-/// Inner bodies capped at 128 chars to bound the work done on malformed input.
+/// timestamp must match — `[…>` or `<…]` are rejected as malformed. Inner
+/// bodies capped at `CLOCK_BODY_MAX` chars to bound the work done on
+/// malformed input.
 static CLOCK_RE: LazyLock<Regex> = LazyLock::new(|| {
-    compile_bounded(
-        r"CLOCK:\s*(?:\[([^\]<>]{1,128})\]|<([^\]<>]{1,128})>)(?:--(?:\[([^\]<>]{1,128})\]|<([^\]<>]{1,128})>))?(?:\s*=>\s*([0-9]{1,5}:[0-9]{1,2}))?",
-    )
+    compile_bounded(&format!(
+        r"CLOCK:\s*(?:\[([^\]<>]{{1,{CLOCK_BODY_MAX}}})\]|<([^\]<>]{{1,{CLOCK_BODY_MAX}}})>)(?:--(?:\[([^\]<>]{{1,{CLOCK_BODY_MAX}}})\]|<([^\]<>]{{1,{CLOCK_BODY_MAX}}})>))?(?:\s*=>\s*([0-9]{{1,5}}:[0-9]{{1,2}}))?"
+    ))
 });
 
 /// Extract all CLOCK entries from text.
@@ -28,41 +29,51 @@ static CLOCK_RE: LazyLock<Regex> = LazyLock::new(|| {
 /// The duration tail (`=> HH:MM`) is optional even on closed clocks; org-mode
 /// inserts it automatically but does not require it for the line to parse.
 pub fn extract_clocks(text: &str) -> Vec<ClockEntry> {
-    CLOCK_RE
+    let clocks: Vec<ClockEntry> = CLOCK_RE
         .captures_iter(text)
-        .map(|cap| {
-            let start = cap
-                .get(1)
-                .or_else(|| cap.get(2))
-                .expect("CLOCK regex matched without a start timestamp")
-                .as_str()
-                .to_string();
+        .filter_map(|cap| {
+            // Skip silently if the regex is ever changed so the start
+            // alternatives are no longer guaranteed — never panic on input.
+            let start = cap.get(1).or_else(|| cap.get(2))?.as_str().to_string();
             let end = cap
                 .get(3)
                 .or_else(|| cap.get(4))
                 .map(|m| m.as_str().to_string());
             let duration = cap.get(5).map(|m| m.as_str().to_string());
-            ClockEntry {
+            Some(ClockEntry {
                 start,
                 end,
                 duration,
-            }
+            })
         })
-        .collect()
+        .collect();
+    if !clocks.is_empty() {
+        tracing::trace!(count = clocks.len(), "extracted clocks");
+    }
+    clocks
 }
 
-/// Calculate total time from clock entries (in minutes). Returns None on overflow
-/// or empty result; uses `checked_add` so a malicious or buggy input cannot wrap.
+/// Calculate total time from clock entries (in minutes).
+///
+/// Returns `None` when no entry has a parseable `duration` (e.g. only open
+/// clocks were present, or the input slice is empty) — there is nothing to
+/// report. Returns `Some(total)` when at least one entry contributed a
+/// duration, even if the sum is zero: a legitimate `0:00` CLOCK must be
+/// distinguishable from "no duration recorded" in the output.
+///
+/// Returns `None` on arithmetic overflow; `checked_add` prevents wrap.
 pub fn calculate_total_minutes(clocks: &[ClockEntry]) -> Option<u32> {
     let mut total = 0u32;
+    let mut saw_duration = false;
     for clock in clocks {
         if let Some(ref dur) = clock.duration {
             if let Some(mins) = parse_duration(dur) {
                 total = total.checked_add(mins)?;
+                saw_duration = true;
             }
         }
     }
-    if total > 0 {
+    if saw_duration {
         Some(total)
     } else {
         None
@@ -178,6 +189,73 @@ mod tests {
         assert_eq!(parse_duration("1:99"), None);
         assert_eq!(parse_duration("99999:00"), None, "hours capped");
         assert_eq!(parse_duration("1:2:3"), None, "single colon only");
+    }
+
+    #[test]
+    fn clock_body_within_limit_is_accepted() {
+        use crate::regex_limits::CLOCK_BODY_MAX;
+        // Body chars must satisfy `[^\]<>]`. Use ASCII spaces.
+        let filler = " ".repeat(CLOCK_BODY_MAX);
+        let input = format!("CLOCK: [{filler}]");
+        let clocks = extract_clocks(&input);
+        assert_eq!(clocks.len(), 1, "body at exactly the cap must match");
+        assert_eq!(clocks[0].start.len(), CLOCK_BODY_MAX);
+    }
+
+    #[test]
+    fn clock_body_just_over_limit_is_rejected() {
+        use crate::regex_limits::CLOCK_BODY_MAX;
+        let filler = " ".repeat(CLOCK_BODY_MAX + 1);
+        let input = format!("CLOCK: [{filler}]");
+        // The regex requires {1,CLOCK_BODY_MAX}; with the closing bracket
+        // pushed past that window, no match should be produced.
+        assert!(
+            extract_clocks(&input).is_empty(),
+            "body of CLOCK_BODY_MAX+1 chars must not match"
+        );
+    }
+
+    #[test]
+    fn calculate_total_minutes_returns_some_zero_for_zero_duration() {
+        // A closed clock that legitimately recorded 0:00 should be reported as
+        // Some(0), not swallowed into None. Otherwise a CLOCK with an actual
+        // duration field is indistinguishable from a missing/open clock.
+        let clocks = vec![ClockEntry {
+            start: "2024-01-01 Mon 10:00".to_string(),
+            end: Some("2024-01-01 Mon 10:00".to_string()),
+            duration: Some("0:00".to_string()),
+        }];
+        assert_eq!(calculate_total_minutes(&clocks), Some(0));
+    }
+
+    #[test]
+    fn calculate_total_minutes_returns_none_for_only_open_clocks() {
+        // No duration fields anywhere -> nothing to sum -> None is correct.
+        let clocks = vec![ClockEntry {
+            start: "2024-01-01 Mon 10:00".to_string(),
+            end: None,
+            duration: None,
+        }];
+        assert_eq!(calculate_total_minutes(&clocks), None);
+    }
+
+    #[test]
+    fn calculate_total_minutes_mixes_open_and_zero_clocks() {
+        // One open clock (ignored) + one closed 0:00 -> Some(0), proving the
+        // 0:00 entry is what surfaces in the result, not the open one.
+        let clocks = vec![
+            ClockEntry {
+                start: "x".to_string(),
+                end: None,
+                duration: None,
+            },
+            ClockEntry {
+                start: "y".to_string(),
+                end: Some("z".to_string()),
+                duration: Some("0:00".to_string()),
+            },
+        ];
+        assert_eq!(calculate_total_minutes(&clocks), Some(0));
     }
 
     #[test]

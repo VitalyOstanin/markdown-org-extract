@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use crate::types::{DayAgenda, Task, TaskWithOffset};
+use crate::types::{ClockEntry, DayAgenda, Task, TaskWithOffset};
 
 /// Escape markdown special characters in plain text. Used for headings and
 /// labels that originate from user input — keeps formatting from being broken
@@ -17,269 +17,6 @@ fn md_escape(s: &str) -> String {
         }
     }
     out
-}
-
-/// Render day agendas as Markdown
-pub fn render_days_markdown(days: &[DayAgenda]) -> String {
-    let mut output = String::from("# Agenda\n\n");
-
-    for day in days {
-        let _ = writeln!(output, "## {}\n", day.date);
-
-        if !day.overdue.is_empty() {
-            output.push_str("### Overdue\n\n");
-            for task_with_offset in &day.overdue {
-                render_task_with_offset_md(&mut output, task_with_offset);
-            }
-            output.push('\n');
-        }
-
-        if !day.scheduled_timed.is_empty() {
-            output.push_str("### Scheduled\n\n");
-            for task_with_offset in &day.scheduled_timed {
-                render_task_with_offset_md(&mut output, task_with_offset);
-            }
-            output.push('\n');
-        }
-
-        if !day.scheduled_no_time.is_empty() {
-            if day.scheduled_timed.is_empty() {
-                output.push_str("### Scheduled\n\n");
-            }
-            for task_with_offset in &day.scheduled_no_time {
-                render_task_with_offset_md(&mut output, task_with_offset);
-            }
-            output.push('\n');
-        }
-
-        if !day.upcoming.is_empty() {
-            output.push_str("### Upcoming\n\n");
-            for task_with_offset in &day.upcoming {
-                render_task_with_offset_md(&mut output, task_with_offset);
-            }
-            output.push('\n');
-        }
-    }
-
-    output
-}
-
-fn render_task_with_offset_md(output: &mut String, task_with_offset: &TaskWithOffset) {
-    let task = &task_with_offset.task;
-
-    let _ = write!(output, "#### {}", md_escape(&task.heading));
-    if let Some(offset) = task_with_offset.days_offset {
-        if offset > 0 {
-            let _ = write!(output, " (in {offset} days)");
-        } else {
-            let _ = write!(output, " ({} days ago)", -offset);
-        }
-    }
-    output.push('\n');
-
-    let _ = writeln!(output, "**File:** `{}:{}`", task.file, task.line);
-    if let Some(ref t) = task.task_type {
-        let _ = writeln!(output, "**Type:** {t}");
-    }
-    if let Some(ref p) = task.priority {
-        let _ = writeln!(output, "**Priority:** {p}");
-    }
-    if let Some(ref ts) = task.timestamp {
-        let _ = writeln!(output, "**Time:** `{ts}`");
-    }
-    if !task.content.is_empty() {
-        let _ = write!(output, "\n{}\n\n", task.content);
-    } else {
-        output.push('\n');
-    }
-}
-
-/// Render day agendas as HTML
-pub fn render_days_html(days: &[DayAgenda]) -> String {
-    let mut output = String::from("<html><body><h1>Agenda</h1>\n");
-
-    for day in days {
-        let _ = writeln!(output, "<h2>{}</h2>", html_escape(&day.date));
-
-        if !day.overdue.is_empty() {
-            output.push_str("<h3>Overdue</h3>\n");
-            for task_with_offset in &day.overdue {
-                render_task_with_offset_html(&mut output, task_with_offset);
-            }
-        }
-
-        if !day.scheduled_timed.is_empty() {
-            output.push_str("<h3>Scheduled</h3>\n");
-            for task_with_offset in &day.scheduled_timed {
-                render_task_with_offset_html(&mut output, task_with_offset);
-            }
-        }
-
-        if !day.scheduled_no_time.is_empty() {
-            if day.scheduled_timed.is_empty() {
-                output.push_str("<h3>Scheduled</h3>\n");
-            }
-            for task_with_offset in &day.scheduled_no_time {
-                render_task_with_offset_html(&mut output, task_with_offset);
-            }
-        }
-
-        if !day.upcoming.is_empty() {
-            output.push_str("<h3>Upcoming</h3>\n");
-            for task_with_offset in &day.upcoming {
-                render_task_with_offset_html(&mut output, task_with_offset);
-            }
-        }
-    }
-
-    output.push_str("</body></html>");
-    output
-}
-
-fn render_task_with_offset_html(output: &mut String, task_with_offset: &TaskWithOffset) {
-    let task = &task_with_offset.task;
-
-    let _ = write!(output, "<h4>{}", html_escape(&task.heading));
-    if let Some(offset) = task_with_offset.days_offset {
-        let label = if offset > 0 {
-            format!(" (in {offset} days)")
-        } else {
-            format!(" ({} days ago)", -offset)
-        };
-        let _ = write!(output, "{}", html_escape(&label));
-    }
-    output.push_str("</h4>\n");
-
-    let _ = writeln!(
-        output,
-        "<p><strong>File:</strong> {}:{}</p>",
-        html_escape(&task.file),
-        task.line
-    );
-    if let Some(ref t) = task.task_type {
-        let _ = writeln!(output, "<p><strong>Type:</strong> {t}</p>");
-    }
-    if let Some(ref p) = task.priority {
-        let _ = writeln!(output, "<p><strong>Priority:</strong> {p}</p>");
-    }
-    if let Some(ref ts) = task.timestamp {
-        let _ = writeln!(output, "<p><strong>Time:</strong> {}</p>", html_escape(ts));
-    }
-    if !task.content.is_empty() {
-        let _ = writeln!(output, "<p>{}</p>", html_escape(&task.content));
-    }
-}
-
-/// Render tasks as Markdown
-pub fn render_markdown(tasks: &[Task]) -> String {
-    let mut output = String::from("# Tasks\n\n");
-    for task in tasks {
-        let _ = writeln!(output, "## {}", md_escape(&task.heading));
-        let _ = writeln!(output, "**File:** `{}:{}`", task.file, task.line);
-        if let Some(ref t) = task.task_type {
-            let _ = writeln!(output, "**Type:** {t}");
-        }
-        if let Some(ref p) = task.priority {
-            let _ = writeln!(output, "**Priority:** {p}");
-        }
-        if let Some(ref c) = task.created {
-            let _ = writeln!(output, "**Created:** `{c}`");
-        }
-        if let Some(ref ts) = task.timestamp {
-            let _ = writeln!(output, "**Time:** `{ts}`");
-        }
-        if let Some(ref total) = task.total_clock_time {
-            let _ = writeln!(output, "**Total Time:** {total}");
-        }
-        if let Some(ref clocks) = task.clocks {
-            output.push_str("\n**Clock:**\n");
-            for clock in clocks {
-                if let Some(ref end) = clock.end {
-                    if let Some(ref dur) = clock.duration {
-                        let _ = writeln!(output, "- `{}` → `{}` ({})", clock.start, end, dur);
-                    } else {
-                        let _ = writeln!(output, "- `{}` → `{}`", clock.start, end);
-                    }
-                } else {
-                    let _ = writeln!(output, "- `{}` (active)", clock.start);
-                }
-            }
-        }
-        if !task.content.is_empty() {
-            let _ = write!(output, "\n{}\n\n", task.content);
-        } else {
-            output.push('\n');
-        }
-    }
-    output
-}
-
-/// Render tasks as HTML
-pub fn render_html(tasks: &[Task]) -> String {
-    let mut output = String::from("<html><body><h1>Tasks</h1>\n");
-    for task in tasks {
-        let _ = writeln!(output, "<h2>{}</h2>", html_escape(&task.heading));
-        let _ = writeln!(
-            output,
-            "<p><strong>File:</strong> {}:{}</p>",
-            html_escape(&task.file),
-            task.line
-        );
-        if let Some(ref t) = task.task_type {
-            let _ = writeln!(output, "<p><strong>Type:</strong> {t}</p>");
-        }
-        if let Some(ref p) = task.priority {
-            let _ = writeln!(output, "<p><strong>Priority:</strong> {p}</p>");
-        }
-        if let Some(ref c) = task.created {
-            let _ = writeln!(
-                output,
-                "<p><strong>Created:</strong> {}</p>",
-                html_escape(c)
-            );
-        }
-        if let Some(ref ts) = task.timestamp {
-            let _ = writeln!(output, "<p><strong>Time:</strong> {}</p>", html_escape(ts));
-        }
-        if let Some(ref total) = task.total_clock_time {
-            let _ = writeln!(
-                output,
-                "<p><strong>Total Time:</strong> {}</p>",
-                html_escape(total)
-            );
-        }
-        if let Some(ref clocks) = task.clocks {
-            output.push_str("<p><strong>Clock:</strong></p>\n<ul>\n");
-            for clock in clocks {
-                if let Some(ref end) = clock.end {
-                    if let Some(ref dur) = clock.duration {
-                        let _ = writeln!(
-                            output,
-                            "<li>{} → {} ({})</li>",
-                            html_escape(&clock.start),
-                            html_escape(end),
-                            html_escape(dur)
-                        );
-                    } else {
-                        let _ = writeln!(
-                            output,
-                            "<li>{} → {}</li>",
-                            html_escape(&clock.start),
-                            html_escape(end)
-                        );
-                    }
-                } else {
-                    let _ = writeln!(output, "<li>{} (active)</li>", html_escape(&clock.start));
-                }
-            }
-            output.push_str("</ul>\n");
-        }
-        if !task.content.is_empty() {
-            let _ = writeln!(output, "<p>{}</p>", html_escape(&task.content));
-        }
-    }
-    output.push_str("</body></html>");
-    output
 }
 
 /// Escape HTML special characters in pre-existing text content.
@@ -300,6 +37,301 @@ fn html_escape(s: &str) -> String {
         }
     }
     out
+}
+
+fn offset_suffix(days_offset: Option<i64>) -> Option<String> {
+    days_offset.map(|offset| {
+        if offset > 0 {
+            format!(" (in {offset} days)")
+        } else {
+            format!(" ({} days ago)", -offset)
+        }
+    })
+}
+
+/// Common formatting strategy for one output format (Markdown or HTML).
+///
+/// All `render_*` entry points delegate field traversal to `write_task`, which
+/// drives this trait's methods. Adding a new `Task` field means touching
+/// `write_task` once instead of four renderers.
+trait TaskFormat {
+    fn doc_open(&self, title: &str) -> String;
+    fn doc_close(&self, out: &mut String);
+    fn day_header(&self, out: &mut String, date: &str);
+    fn section(&self, out: &mut String, title: &str);
+    fn after_section(&self, out: &mut String);
+    fn task_heading(&self, out: &mut String, level: u8, heading: &str, days_offset: Option<i64>);
+    /// Single `Label: value` field. `code` requests inline-code wrapping
+    /// for formats that support it (Markdown); HTML ignores the hint.
+    fn field(&self, out: &mut String, label: &str, value: &str, code: bool);
+    fn clocks_open(&self, out: &mut String);
+    fn clock_complete(&self, out: &mut String, start: &str, end: &str, duration: Option<&str>);
+    fn clock_active(&self, out: &mut String, start: &str);
+    fn clocks_close(&self, out: &mut String);
+    fn content(&self, out: &mut String, body: &str);
+}
+
+struct MdFormat;
+struct HtmlFormat;
+
+impl TaskFormat for MdFormat {
+    fn doc_open(&self, title: &str) -> String {
+        format!("# {title}\n\n")
+    }
+    fn doc_close(&self, _out: &mut String) {}
+
+    fn day_header(&self, out: &mut String, date: &str) {
+        let _ = writeln!(out, "## {date}\n");
+    }
+    fn section(&self, out: &mut String, title: &str) {
+        let _ = write!(out, "### {title}\n\n");
+    }
+    fn after_section(&self, out: &mut String) {
+        out.push('\n');
+    }
+
+    fn task_heading(&self, out: &mut String, level: u8, heading: &str, days_offset: Option<i64>) {
+        let hashes: String = "#".repeat(level as usize);
+        let _ = write!(out, "{hashes} {}", md_escape(heading));
+        if let Some(suffix) = offset_suffix(days_offset) {
+            let _ = write!(out, "{suffix}");
+        }
+        out.push('\n');
+    }
+
+    fn field(&self, out: &mut String, label: &str, value: &str, code: bool) {
+        if code {
+            let _ = writeln!(out, "**{label}:** `{value}`");
+        } else {
+            let _ = writeln!(out, "**{label}:** {value}");
+        }
+    }
+
+    fn clocks_open(&self, out: &mut String) {
+        out.push_str("\n**Clock:**\n");
+    }
+    fn clock_complete(&self, out: &mut String, start: &str, end: &str, duration: Option<&str>) {
+        match duration {
+            Some(dur) => {
+                let _ = writeln!(out, "- `{start}` → `{end}` ({dur})");
+            }
+            None => {
+                let _ = writeln!(out, "- `{start}` → `{end}`");
+            }
+        }
+    }
+    fn clock_active(&self, out: &mut String, start: &str) {
+        let _ = writeln!(out, "- `{start}` (active)");
+    }
+    fn clocks_close(&self, _out: &mut String) {}
+
+    fn content(&self, out: &mut String, body: &str) {
+        if body.is_empty() {
+            out.push('\n');
+        } else {
+            let _ = write!(out, "\n{body}\n\n");
+        }
+    }
+}
+
+impl TaskFormat for HtmlFormat {
+    fn doc_open(&self, title: &str) -> String {
+        format!("<html><body><h1>{title}</h1>\n")
+    }
+    fn doc_close(&self, out: &mut String) {
+        out.push_str("</body></html>");
+    }
+
+    fn day_header(&self, out: &mut String, date: &str) {
+        let _ = writeln!(out, "<h2>{}</h2>", html_escape(date));
+    }
+    fn section(&self, out: &mut String, title: &str) {
+        let _ = writeln!(out, "<h3>{title}</h3>");
+    }
+    fn after_section(&self, _out: &mut String) {}
+
+    fn task_heading(&self, out: &mut String, level: u8, heading: &str, days_offset: Option<i64>) {
+        let _ = write!(out, "<h{level}>{}", html_escape(heading));
+        if let Some(suffix) = offset_suffix(days_offset) {
+            let _ = write!(out, "{}", html_escape(&suffix));
+        }
+        let _ = writeln!(out, "</h{level}>");
+    }
+
+    fn field(&self, out: &mut String, label: &str, value: &str, _code: bool) {
+        let _ = writeln!(
+            out,
+            "<p><strong>{label}:</strong> {}</p>",
+            html_escape(value)
+        );
+    }
+
+    fn clocks_open(&self, out: &mut String) {
+        out.push_str("<p><strong>Clock:</strong></p>\n<ul>\n");
+    }
+    fn clock_complete(&self, out: &mut String, start: &str, end: &str, duration: Option<&str>) {
+        match duration {
+            Some(dur) => {
+                let _ = writeln!(
+                    out,
+                    "<li>{} → {} ({})</li>",
+                    html_escape(start),
+                    html_escape(end),
+                    html_escape(dur)
+                );
+            }
+            None => {
+                let _ = writeln!(
+                    out,
+                    "<li>{} → {}</li>",
+                    html_escape(start),
+                    html_escape(end)
+                );
+            }
+        }
+    }
+    fn clock_active(&self, out: &mut String, start: &str) {
+        let _ = writeln!(out, "<li>{} (active)</li>", html_escape(start));
+    }
+    fn clocks_close(&self, out: &mut String) {
+        out.push_str("</ul>\n");
+    }
+
+    fn content(&self, out: &mut String, body: &str) {
+        if !body.is_empty() {
+            let _ = writeln!(out, "<p>{}</p>", html_escape(body));
+        }
+    }
+}
+
+/// Write one Task to `out` using the supplied format strategy.
+///
+/// `level` controls heading depth (2 for top-level lists, 4 for day-agenda
+/// sub-sections). `include_history` toggles fields that are only meaningful in
+/// the "all tasks" view -- `Created`, `Total Time`, `Clock:` -- so day agendas
+/// stay focused on the schedule.
+fn write_task<F: TaskFormat>(
+    out: &mut String,
+    task: &Task,
+    days_offset: Option<i64>,
+    level: u8,
+    include_history: bool,
+    fmt: &F,
+) {
+    fmt.task_heading(out, level, &task.heading, days_offset);
+
+    let file_value = format!("{}:{}", task.file, task.line);
+    fmt.field(out, "File", &file_value, true);
+
+    if let Some(ref t) = task.task_type {
+        fmt.field(out, "Type", &t.to_string(), false);
+    }
+    if let Some(ref p) = task.priority {
+        fmt.field(out, "Priority", &p.to_string(), false);
+    }
+    if include_history {
+        if let Some(ref c) = task.created {
+            fmt.field(out, "Created", c, true);
+        }
+    }
+    if let Some(ref ts) = task.timestamp {
+        fmt.field(out, "Time", ts, true);
+    }
+    if include_history {
+        if let Some(ref total) = task.total_clock_time {
+            fmt.field(out, "Total Time", total, false);
+        }
+        if let Some(ref clocks) = task.clocks {
+            write_clocks(out, clocks, fmt);
+        }
+    }
+
+    fmt.content(out, &task.content);
+}
+
+fn write_clocks<F: TaskFormat>(out: &mut String, clocks: &[ClockEntry], fmt: &F) {
+    fmt.clocks_open(out);
+    for clock in clocks {
+        match (&clock.end, &clock.duration) {
+            (Some(end), Some(dur)) => fmt.clock_complete(out, &clock.start, end, Some(dur)),
+            (Some(end), None) => fmt.clock_complete(out, &clock.start, end, None),
+            (None, _) => fmt.clock_active(out, &clock.start),
+        }
+    }
+    fmt.clocks_close(out);
+}
+
+fn write_day_section<F: TaskFormat>(
+    out: &mut String,
+    title: &str,
+    tasks: &[TaskWithOffset],
+    fmt: &F,
+) {
+    if tasks.is_empty() {
+        return;
+    }
+    fmt.section(out, title);
+    for two in tasks {
+        write_task(out, &two.task, two.days_offset, 4, false, fmt);
+    }
+    fmt.after_section(out);
+}
+
+fn render_days<F: TaskFormat>(days: &[DayAgenda], fmt: &F) -> String {
+    let mut output = fmt.doc_open("Agenda");
+
+    for day in days {
+        fmt.day_header(&mut output, &day.date);
+
+        write_day_section(&mut output, "Overdue", &day.overdue, fmt);
+
+        // "Scheduled" header is shared by timed + no-time groups: print it once
+        // if either is non-empty, then list both without a second header.
+        if !day.scheduled_timed.is_empty() || !day.scheduled_no_time.is_empty() {
+            fmt.section(&mut output, "Scheduled");
+            for two in &day.scheduled_timed {
+                write_task(&mut output, &two.task, two.days_offset, 4, false, fmt);
+            }
+            for two in &day.scheduled_no_time {
+                write_task(&mut output, &two.task, two.days_offset, 4, false, fmt);
+            }
+            fmt.after_section(&mut output);
+        }
+
+        write_day_section(&mut output, "Upcoming", &day.upcoming, fmt);
+    }
+
+    fmt.doc_close(&mut output);
+    output
+}
+
+fn render_tasks<F: TaskFormat>(tasks: &[Task], fmt: &F) -> String {
+    let mut output = fmt.doc_open("Tasks");
+    for task in tasks {
+        write_task(&mut output, task, None, 2, true, fmt);
+    }
+    fmt.doc_close(&mut output);
+    output
+}
+
+/// Render day agendas as Markdown
+pub fn render_days_markdown(days: &[DayAgenda]) -> String {
+    render_days(days, &MdFormat)
+}
+
+/// Render day agendas as HTML
+pub fn render_days_html(days: &[DayAgenda]) -> String {
+    render_days(days, &HtmlFormat)
+}
+
+/// Render tasks as Markdown
+pub fn render_markdown(tasks: &[Task]) -> String {
+    render_tasks(tasks, &MdFormat)
+}
+
+/// Render tasks as HTML
+pub fn render_html(tasks: &[Task]) -> String {
+    render_tasks(tasks, &HtmlFormat)
 }
 
 #[cfg(test)]

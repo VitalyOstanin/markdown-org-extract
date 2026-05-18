@@ -2,24 +2,34 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 use super::weekdays::normalize_weekdays;
-use crate::regex_limits::compile_bounded;
+use crate::regex_limits::{compile_bounded, TS_BODY_MAX};
 
-// `[^>]{0,256}` caps the body length of a single bracketed timestamp so that a
-// hostile or malformed line cannot make `[^>]*` scan thousands of characters
-// before the engine notices the missing `>`.
+// `[^>]{0,TS_BODY_MAX}` caps the body length of a single bracketed timestamp
+// so that a hostile or malformed line cannot make `[^>]*` scan thousands of
+// characters before the engine notices the missing `>`.
 static TIMESTAMP_RE: LazyLock<Regex> = LazyLock::new(|| {
-    compile_bounded(r"^\s*((?:SCHEDULED|DEADLINE|CLOSED):\s*)<(\d{4}-\d{2}-\d{2}[^>]{0,256})>")
+    compile_bounded(&format!(
+        r"^\s*((?:SCHEDULED|DEADLINE|CLOSED):\s*)<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>"
+    ))
 });
 
 static RANGE_TIMESTAMP_RE: LazyLock<Regex> = LazyLock::new(|| {
-    compile_bounded(r"^\s*<(\d{4}-\d{2}-\d{2}[^>]{0,256})>--<(\d{4}-\d{2}-\d{2}[^>]{0,256})>")
+    compile_bounded(&format!(
+        r"^\s*<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>--<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>"
+    ))
 });
 
-static SIMPLE_TIMESTAMP_RE: LazyLock<Regex> =
-    LazyLock::new(|| compile_bounded(r"^\s*<(\d{4}-\d{2}-\d{2}[^>]{0,256})>"));
+static SIMPLE_TIMESTAMP_RE: LazyLock<Regex> = LazyLock::new(|| {
+    compile_bounded(&format!(
+        r"^\s*<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>"
+    ))
+});
 
-static CREATED_RE: LazyLock<Regex> =
-    LazyLock::new(|| compile_bounded(r"^\s*CREATED:\s*<(\d{4}-\d{2}-\d{2}[^>]{0,256})>"));
+static CREATED_RE: LazyLock<Regex> = LazyLock::new(|| {
+    compile_bounded(&format!(
+        r"^\s*CREATED:\s*<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>"
+    ))
+});
 
 static DATE_RE: LazyLock<Regex> = LazyLock::new(|| compile_bounded(r"\b(\d{4}-\d{2}-\d{2})"));
 
@@ -226,5 +236,31 @@ mod tests {
         assert_eq!(date, Some("2024-12-05".to_string()));
         assert_eq!(time, None);
         assert_eq!(end_time, None);
+    }
+
+    #[test]
+    fn timestamp_body_within_limit_is_accepted() {
+        use crate::regex_limits::TS_BODY_MAX;
+        // Build a timestamp whose body length after the date is exactly the cap.
+        // Body chars must satisfy `[^>]`, so use ASCII spaces.
+        let filler = " ".repeat(TS_BODY_MAX);
+        let input = format!("SCHEDULED: <2024-12-05{filler}>");
+        let ts = extract_timestamp(&input, &[]).expect("should match at exactly the cap");
+        // Body length = "2024-12-05" (10) + filler (TS_BODY_MAX).
+        assert!(ts.contains("2024-12-05"));
+        assert_eq!(ts.len(), "SCHEDULED: <>".len() + 10 + TS_BODY_MAX);
+    }
+
+    #[test]
+    fn timestamp_body_just_over_limit_is_rejected() {
+        use crate::regex_limits::TS_BODY_MAX;
+        // One char past the cap and without a closing `>` after the cap window
+        // must NOT match — proves the upper bound is enforced.
+        let filler = " ".repeat(TS_BODY_MAX + 1);
+        let input = format!("SCHEDULED: <2024-12-05{filler}>");
+        assert!(
+            extract_timestamp(&input, &[]).is_none(),
+            "body of TS_BODY_MAX+1 chars must not match"
+        );
     }
 }

@@ -7,6 +7,12 @@ use crate::types::{DayAgenda, Task, TaskType, TaskWithOffset};
 
 const DEADLINE_WARNING_DAYS: i64 = 14;
 
+/// Sort key used in the `--tasks` flat list for tasks with `priority = None`.
+/// `u32::MAX` is strictly greater than every value `Priority::order()` can
+/// return (numeric `0..=64`, letters `A..Z` = `65..=90`), so no-priority
+/// tasks always sort last regardless of how the priority range evolves.
+const NO_PRIORITY_ORDER: u32 = u32::MAX;
+
 /// Task with its timestamp pre-parsed once, to avoid re-parsing on every day
 /// of a week/month agenda.
 struct PreparedTask<'a> {
@@ -33,9 +39,45 @@ pub enum AgendaOutput {
     Tasks(Vec<Task>),
 }
 
+/// Effective agenda scope after resolving CLI flags. `Tasks` is selected via
+/// `--tasks` instead of `--agenda`; the other three correspond directly to
+/// `--agenda day|week|month`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgendaScope {
+    Day,
+    Week,
+    Month,
+    Tasks,
+}
+
+fn parse_date_arg(label: &str, value: &str) -> Result<NaiveDate, AppError> {
+    NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|e| AppError::InvalidDate(format!("{label} '{value}': {e}")))
+}
+
+/// Parse an explicit `--from`/`--to` range; both must be present together, and
+/// `from <= to`. Returns `Ok(None)` if either side is missing so the caller can
+/// fall back to a `--date`-derived or current-period range.
+fn parse_range(
+    from: Option<&str>,
+    to: Option<&str>,
+) -> Result<Option<(NaiveDate, NaiveDate)>, AppError> {
+    let (Some(from_str), Some(to_str)) = (from, to) else {
+        return Ok(None);
+    };
+    let start = parse_date_arg("from", from_str)?;
+    let end = parse_date_arg("to", to_str)?;
+    if start > end {
+        return Err(AppError::DateRange(format!(
+            "Start date {from_str} is after end date {to_str}"
+        )));
+    }
+    Ok(Some((start, end)))
+}
+
 pub fn filter_agenda(
     tasks: Vec<Task>,
-    mode: &str,
+    scope: AgendaScope,
     date: Option<&str>,
     from: Option<&str>,
     to: Option<&str>,
@@ -46,20 +88,27 @@ pub fn filter_agenda(
         .parse()
         .map_err(|_| AppError::InvalidTimezone(tz.to_string()))?;
 
-    let today = if let Some(date_str) = current_date_override {
-        NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
-            .map_err(|e| AppError::InvalidDate(format!("current-date '{date_str}': {e}")))?
-    } else {
-        chrono::Utc::now().with_timezone(&tz).date_naive()
+    let today = match current_date_override {
+        Some(date_str) => parse_date_arg("current-date", date_str)?,
+        None => chrono::Utc::now().with_timezone(&tz).date_naive(),
     };
 
-    match mode {
-        "day" => {
-            let target_date = if let Some(date_str) = date {
-                NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
-                    .map_err(|e| AppError::InvalidDate(format!("date '{date_str}': {e}")))?
-            } else {
-                today
+    tracing::debug!(
+        scope = ?scope,
+        date,
+        from,
+        to,
+        tz = %tz,
+        today = %today,
+        input_tasks = tasks.len(),
+        "filter_agenda input"
+    );
+
+    match scope {
+        AgendaScope::Day => {
+            let target_date = match date {
+                Some(date_str) => parse_date_arg("date", date_str)?,
+                None => today,
             };
             Ok(AgendaOutput::Days(vec![build_day_agenda(
                 &tasks,
@@ -67,24 +116,11 @@ pub fn filter_agenda(
                 today,
             )]))
         }
-        "week" => {
-            let (start_date, end_date) = if let (Some(from_str), Some(to_str)) = (from, to) {
-                let start = NaiveDate::parse_from_str(from_str, "%Y-%m-%d")
-                    .map_err(|e| AppError::InvalidDate(format!("from '{from_str}': {e}")))?;
-                let end = NaiveDate::parse_from_str(to_str, "%Y-%m-%d")
-                    .map_err(|e| AppError::InvalidDate(format!("to '{to_str}': {e}")))?;
-
-                if start > end {
-                    return Err(AppError::DateRange(format!(
-                        "Start date {from_str} is after end date {to_str}"
-                    )));
-                }
-
-                (start, end)
+        AgendaScope::Week => {
+            let (start_date, end_date) = if let Some(range) = parse_range(from, to)? {
+                range
             } else if let Some(date_str) = date {
-                let target_date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
-                    .map_err(|e| AppError::InvalidDate(format!("date '{date_str}': {e}")))?;
-                get_week_for_date(target_date)
+                get_week_for_date(parse_date_arg("date", date_str)?)
             } else {
                 get_current_week(&tz)
             };
@@ -93,24 +129,11 @@ pub fn filter_agenda(
                 &tasks, start_date, end_date, today,
             )))
         }
-        "month" => {
-            let (start_date, end_date) = if let (Some(from_str), Some(to_str)) = (from, to) {
-                let start = NaiveDate::parse_from_str(from_str, "%Y-%m-%d")
-                    .map_err(|e| AppError::InvalidDate(format!("from '{from_str}': {e}")))?;
-                let end = NaiveDate::parse_from_str(to_str, "%Y-%m-%d")
-                    .map_err(|e| AppError::InvalidDate(format!("to '{to_str}': {e}")))?;
-
-                if start > end {
-                    return Err(AppError::DateRange(format!(
-                        "Start date {from_str} is after end date {to_str}"
-                    )));
-                }
-
-                (start, end)
+        AgendaScope::Month => {
+            let (start_date, end_date) = if let Some(range) = parse_range(from, to)? {
+                range
             } else if let Some(date_str) = date {
-                let target_date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
-                    .map_err(|e| AppError::InvalidDate(format!("date '{date_str}': {e}")))?;
-                get_month_for_date(target_date)
+                get_month_for_date(parse_date_arg("date", date_str)?)
             } else {
                 get_current_month(&tz)
             };
@@ -119,17 +142,19 @@ pub fn filter_agenda(
                 &tasks, start_date, end_date, today,
             )))
         }
-        "tasks" => {
+        AgendaScope::Tasks => {
             let mut filtered: Vec<Task> = tasks
                 .into_iter()
                 .filter(|t| matches!(t.task_type, Some(TaskType::Todo)))
                 .collect();
-            filtered.sort_by_key(|t| t.priority.as_ref().map(|p| p.order()).unwrap_or(999));
+            filtered.sort_by_key(|t| {
+                t.priority
+                    .as_ref()
+                    .map(|p| p.order())
+                    .unwrap_or(NO_PRIORITY_ORDER)
+            });
             Ok(AgendaOutput::Tasks(filtered))
         }
-        _ => Err(AppError::InvalidDate(format!(
-            "Invalid agenda mode '{mode}'"
-        ))),
     }
 }
 
@@ -317,8 +342,11 @@ fn handle_repeating_task(
     let is_today = day_date == current_date;
 
     let deadline = closest_date(base_date, current_date, DatePreference::Past, repeater);
+    // `repeat` is "should this exact day show the recurring task?" — that
+    // question is local to `day_date`, not to `current_date`, otherwise past
+    // occurrence days in a week/month agenda would be silently empty.
     let repeat = if day_date <= current_date {
-        deadline
+        closest_date(base_date, day_date, DatePreference::Past, repeater)
     } else {
         closest_date(base_date, day_date, DatePreference::Future, repeater)
     };
@@ -423,11 +451,15 @@ fn get_current_week(tz: &Tz) -> (NaiveDate, NaiveDate) {
 
 /// Get month boundaries (first to last day) for a specific date
 fn get_month_for_date(date: NaiveDate) -> (NaiveDate, NaiveDate) {
-    let first_day = NaiveDate::from_ymd_opt(date.year(), date.month(), 1).unwrap();
+    // `date` is a valid NaiveDate, so its (year, month) is in range and
+    // day 1 always exists. Likewise Dec 31 and the 1st of any month <= 12
+    // are constructible. The unwraps below cannot panic.
+    let first_day = NaiveDate::from_ymd_opt(date.year(), date.month(), 1).expect("y/m valid");
     let last_day = if date.month() == 12 {
-        NaiveDate::from_ymd_opt(date.year(), 12, 31).unwrap()
+        NaiveDate::from_ymd_opt(date.year(), 12, 31).expect("Dec 31 always valid")
     } else {
-        NaiveDate::from_ymd_opt(date.year(), date.month() + 1, 1).unwrap()
+        NaiveDate::from_ymd_opt(date.year(), date.month() + 1, 1)
+            .expect("next month 1st always valid")
             - chrono::Duration::days(1)
     };
     (first_day, last_day)
@@ -823,12 +855,14 @@ mod tests {
             TaskType::Todo,
         )];
 
+        // +2d from 2024-12-01 → occurrences 12-01, 12-03, 12-05, 12-07, ...
+        // Past occurrence days are shown (so week/month agenda surfaces them).
         let test_dates = vec![
-            (NaiveDate::from_ymd_opt(2024, 12, 1).unwrap(), false), // Past, not deadline day
+            (NaiveDate::from_ymd_opt(2024, 12, 1).unwrap(), true), // base, occurrence
             (NaiveDate::from_ymd_opt(2024, 12, 2).unwrap(), false),
-            (NaiveDate::from_ymd_opt(2024, 12, 3).unwrap(), false), // Past, not deadline day
+            (NaiveDate::from_ymd_opt(2024, 12, 3).unwrap(), true), // past occurrence
             (NaiveDate::from_ymd_opt(2024, 12, 4).unwrap(), false),
-            (NaiveDate::from_ymd_opt(2024, 12, 5).unwrap(), true), // deadline = 2024-12-05 (last occurrence <= today)
+            (NaiveDate::from_ymd_opt(2024, 12, 5).unwrap(), true), // today, occurrence
         ];
 
         let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
@@ -840,6 +874,34 @@ mod tests {
             } else {
                 assert_eq!(agenda.scheduled_no_time.len(), 0, "Failed for date {date}");
             }
+        }
+    }
+
+    #[test]
+    fn test_week_agenda_daily_repeater_shows_each_past_occurrence() {
+        // Regression: in a week-agenda, a +1d task with base on Monday must
+        // appear on every Mon..Sun day, including past days before `today`.
+        let tasks = vec![create_test_task_with_repeater(
+            "2024-12-02 Mon",
+            None,
+            "+1d",
+            TaskType::Todo,
+        )];
+
+        let start_date = NaiveDate::from_ymd_opt(2024, 12, 2).unwrap(); // Monday
+        let end_date = NaiveDate::from_ymd_opt(2024, 12, 8).unwrap(); // Sunday
+        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap(); // Thursday
+
+        let week = build_week_agenda(&tasks, start_date, end_date, current_date);
+
+        assert_eq!(week.len(), 7);
+        for day in &week {
+            assert_eq!(
+                day.scheduled_no_time.len(),
+                1,
+                "+1d task must appear on {}",
+                day.date
+            );
         }
     }
 
@@ -1221,6 +1283,56 @@ mod tests {
             agenda.overdue.len(),
             0,
             "DONE tasks should not appear in overdue"
+        );
+    }
+
+    #[test]
+    fn tasks_scope_sorts_by_priority_with_no_priority_last() {
+        // Locks the sort-key invariant: a task without `priority` must sort
+        // strictly after every defined Priority, including the lowest one
+        // (`Other('Z')` → order 90). Catches a regression where the sentinel
+        // for missing priority would fall inside the valid range.
+        use crate::types::Priority;
+
+        let mut t_z = create_test_task("2024-12-05 Wed", None, TaskType::Todo);
+        t_z.priority = Some(Priority::Other('Z'));
+        t_z.heading = "Z-priority".to_string();
+
+        let mut t_a = create_test_task("2024-12-05 Wed", None, TaskType::Todo);
+        t_a.priority = Some(Priority::A);
+        t_a.heading = "A-priority".to_string();
+
+        let mut t_none = create_test_task("2024-12-05 Wed", None, TaskType::Todo);
+        t_none.priority = None;
+        t_none.heading = "no-priority".to_string();
+
+        let mut t_num0 = create_test_task("2024-12-05 Wed", None, TaskType::Todo);
+        t_num0.priority = Some(Priority::Numeric(0));
+        t_num0.heading = "numeric-0".to_string();
+
+        // Mixed input order so the assertion proves the sort is doing the work.
+        let input = vec![t_none.clone(), t_z.clone(), t_a.clone(), t_num0.clone()];
+
+        let result = filter_agenda(
+            input,
+            AgendaScope::Tasks,
+            None,
+            None,
+            None,
+            "UTC",
+            Some("2024-12-05"),
+        )
+        .expect("filter_agenda");
+
+        let tasks = match result {
+            AgendaOutput::Tasks(tasks) => tasks,
+            other => panic!("expected AgendaOutput::Tasks, got {other:?}"),
+        };
+        let headings: Vec<&str> = tasks.iter().map(|t| t.heading.as_str()).collect();
+        assert_eq!(
+            headings,
+            vec!["numeric-0", "A-priority", "Z-priority", "no-priority"],
+            "no-priority must sort strictly after every defined priority"
         );
     }
 

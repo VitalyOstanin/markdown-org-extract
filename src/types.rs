@@ -222,6 +222,13 @@ pub const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 /// under it, while pathological / hostile inputs hit it quickly.
 pub const DEFAULT_MAX_TASKS: usize = 10_000;
 
+/// Per-run cap on user-visible diagnostic entries (failed-path list,
+/// invalid-timestamp warnings). Beyond this we stop appending so a corrupt
+/// or hostile input cannot flood stderr or `ProcessingStats`. The value is
+/// shared across categories because the UX rationale is identical
+/// ("20 entries is already noisy; the rest can be inferred from totals").
+pub const MAX_DIAGNOSTIC_ITEMS: usize = 20;
+
 /// File processing statistics surfaced to stderr after a run.
 #[derive(Debug, Default)]
 pub struct ProcessingStats {
@@ -246,8 +253,7 @@ impl ProcessingStats {
     }
 
     pub fn record_failed_path(&mut self, path: &str) {
-        const MAX_REPORT: usize = 20;
-        if self.failed_paths.len() < MAX_REPORT {
+        if self.failed_paths.len() < MAX_DIAGNOSTIC_ITEMS {
             self.failed_paths.push(path.to_string());
         }
     }
@@ -268,7 +274,7 @@ impl ProcessingStats {
         if !self.failed_paths.is_empty() {
             tracing::warn!(
                 count = self.failed_paths.len(),
-                "failed paths (up to first 20):"
+                "failed paths (up to first {MAX_DIAGNOSTIC_ITEMS}):"
             );
             for p in &self.failed_paths {
                 tracing::warn!(path = %p, "failed path");
@@ -319,6 +325,27 @@ mod tests {
         assert_eq!(TaskType::from_keyword("TODO"), Some(TaskType::Todo));
         assert_eq!(TaskType::from_keyword("DONE"), Some(TaskType::Done));
         assert_eq!(TaskType::from_keyword("MAYBE"), None);
+    }
+
+    #[test]
+    fn record_failed_path_caps_list_at_diagnostic_limit() {
+        // The summary shouldn't grow without bound — a directory with millions
+        // of unreadable files must not consume O(n) memory in `failed_paths`.
+        let mut stats = ProcessingStats::default();
+        for i in 0..(MAX_DIAGNOSTIC_ITEMS * 3) {
+            stats.record_failed_path(&format!("/tmp/file-{i}.md"));
+        }
+        assert_eq!(
+            stats.failed_paths.len(),
+            MAX_DIAGNOSTIC_ITEMS,
+            "failed_paths must be capped at MAX_DIAGNOSTIC_ITEMS regardless of input size"
+        );
+        // Order is "first N" — index 0 keeps the very first path.
+        assert_eq!(stats.failed_paths[0], "/tmp/file-0.md");
+        assert_eq!(
+            stats.failed_paths[MAX_DIAGNOSTIC_ITEMS - 1],
+            format!("/tmp/file-{}.md", MAX_DIAGNOSTIC_ITEMS - 1)
+        );
     }
 
     #[test]

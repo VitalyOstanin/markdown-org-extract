@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
@@ -41,19 +41,51 @@ jobs:
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
 
-      - name: Verify tag matches Cargo.toml version
+      - name: Resolve tag and version
+        # Single source of truth for "what are we releasing". Both push and
+        # workflow_dispatch end up here; later steps read steps.tag.outputs.tag
+        # (with `v` prefix, e.g. `v0.2.3`) and steps.tag.outputs.version
+        # (without prefix, e.g. `0.2.3`) instead of re-deriving them.
+        id: tag
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG_VERSION="${{ inputs.tag }}"
-            TAG_VERSION="${TAG_VERSION#v}"
+            TAG="${{ inputs.tag }}"
           else
-            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+            TAG="${GITHUB_REF#refs/tags/}"
           fi
-          CARGO_VERSION=$(awk -F'"' '/^version = / {print $2; exit}' Cargo.toml)
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag matches Cargo.toml and Cargo.lock versions
+        env:
+          TAG_VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          # cargo pkgid emits e.g. `path+file:///work/repo#0.2.2`. The suffix
+          # after `#` is the resolved package version straight from Cargo's
+          # parser, so we don't need an ad-hoc awk pattern that could match
+          # a `version = "..."` line inside a [dependencies.*] block or a
+          # workspace manifest before [package].
+          CARGO_VERSION=$(cargo pkgid | sed -E 's/.*#//')
           if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
             echo "::error::Tag v$TAG_VERSION does not match Cargo.toml version $CARGO_VERSION"
             exit 1
           fi
+          # Cargo.lock holds the resolved version of the crate itself. If the
+          # author forgot to commit a refreshed lock after bumping Cargo.toml,
+          # the tag would ship with a stale lock and `--locked` later in this
+          # workflow would catch it -- but with a confusing "package not found"
+          # error. Fail loudly here with a precise message instead.
+          LOCK_VERSION=$(awk '/^name = "markdown-org-extract"$/{getline; sub(/^version = "/, ""); sub(/"$/, ""); print; exit}' Cargo.lock)
+          if [ "$LOCK_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Cargo.lock version $LOCK_VERSION does not match tag v$TAG_VERSION. Run \`cargo update -p markdown-org-extract\` and commit Cargo.lock."
+            exit 1
+          fi
+
+      - name: Verify CHANGELOG is ready for publication
+        # Refuses to publish if `## [<version>]` is missing or if
+        # `## [Unreleased]` still carries entries that were not moved over.
+        run: ./scripts/check-changelog.sh "${{ steps.tag.outputs.version }}"
 
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
@@ -64,30 +96,40 @@ jobs:
       - name: cargo test
         run: cargo test --all-features
 
+      - name: Release smoke test
+        # Run on the LTO-enabled release profile. Catches optimizer-only bugs
+        # (UB exposed by inlining, dead-code elimination collapsing a side
+        # effect, etc.) that the debug-profile tests above cannot see. Uses
+        # --quiet to suppress diagnostic chatter; the exit code is the
+        # signal of interest, not the output content.
+        run: |
+          cargo build --release --locked
+          ./target/release/markdown-org-extract --version
+          ./target/release/markdown-org-extract --help >/dev/null
+          ./target/release/markdown-org-extract --dir examples --current-date 2025-12-05 --quiet >/dev/null
+
       - name: cargo package --list
         run: cargo package --list
 
       - name: cargo publish --dry-run
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --dry-run
+        # --locked forbids Cargo from regenerating Cargo.lock; the published
+        # version is whatever was committed at the tagged commit. Pairs with
+        # the lock-version check above so a stale lock cannot reach crates.io.
+        run: cargo publish --dry-run --locked
 
       - name: cargo publish
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish
+        run: cargo publish --locked
 
       - name: Extract release notes from CHANGELOG.md
-        id: notes
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
+        env:
+          VER: ${{ steps.tag.outputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ inputs.tag }}"
-          else
-            TAG="${GITHUB_REF#refs/tags/}"
-          fi
-          VER="${TAG#v}"
           awk -v ver="$VER" '
             $0 ~ "^## \\["ver"\\]" { flag=1; next }
             flag && /^## \[/ { exit }
@@ -97,14 +139,13 @@ jobs:
             echo "::warning::No CHANGELOG.md entry found for $VER; falling back to a placeholder note."
             echo "_See git history._" > release-notes.md
           fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          TAG="${{ steps.notes.outputs.tag }}"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $TAG already exists, skipping create."
             exit 0

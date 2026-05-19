@@ -5,6 +5,15 @@
 //! `## [Unreleased]` section still carries entries that should have been
 //! moved over. Tests drive it through `bash` with a temporary fixture so we
 //! don't depend on the project's real `CHANGELOG.md`.
+//!
+//! Unix-only: the script is a POSIX bash script that runs only on the
+//! ubuntu-24.04 release runner. On Windows CI, `Command::new("bash")` is
+//! unreliable (PATH/EOL issues with Git for Windows), and the script is
+//! never executed there in production, so the tests have no Windows
+//! behaviour to defend. Gating the entire file with `cfg(unix)` keeps the
+//! Windows CI matrix green without weakening Linux/macOS coverage.
+
+#![cfg(unix)]
 
 use std::fs;
 use std::path::PathBuf;

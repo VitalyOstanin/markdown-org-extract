@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [\[Unreleased\]](#unreleased)
+- [\[0.3.1\] — 2026-05-19](#031--2026-05-19)
 - [\[0.3.0\] — 2026-05-19](#030--2026-05-19)
 - [\[0.2.2\] — 2026-05-17](#022--2026-05-17)
 - [\[0.2.1\] — 2026-05-17](#021--2026-05-17)
@@ -18,6 +19,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 _No user-visible changes yet._
+
+## [0.3.1] — 2026-05-19
+
+Patch release. No user-visible code changes — both fixes are about
+release-pipeline correctness and CI matrix coverage.
+
+### Fixed
+
+- `tests/release_check_changelog.rs` is now gated behind `#![cfg(unix)]`.
+  These integration tests drive `scripts/check-changelog.sh` through
+  `Command::new("bash")`; on `windows-latest` GitHub Actions runners the
+  Git for Windows bash plus default CRLF line endings caused 6 of the 8
+  tests to fail with empty stderr. The script itself is a POSIX bash
+  helper that runs only on the ubuntu-24.04 release runner — its
+  behaviour on Windows is not part of any production code path, so
+  compile-gating the file keeps the Windows CI matrix green without
+  removing any Linux/macOS coverage.
+
+### Changed
+
+- `.github/workflows/release.yml` is hardened against publishing on a
+  failing test suite. Previously the workflow contained only a single
+  `publish` job that combined fmt/clippy/cargo-test/smoke-test/publish
+  on ubuntu-24.04 — `release.yml` and `ci.yml` were independent, so a
+  failing CI run on the same commit did not block a tag-triggered
+  publish. The workflow now has four jobs:
+  - `test` — `cargo test --all-features` on the same matrix as CI
+    (`ubuntu-24.04`, `macos-latest`, `windows-latest`).
+  - `lint` — `cargo fmt --check` + `cargo clippy -D warnings`.
+  - `msrv` — `cargo build --locked` against the declared MSRV (1.85).
+  - `publish` — declares `needs: [test, lint, msrv]`. Any failing
+    pre-publish job aborts the workflow before `cargo publish` is
+    invoked.
+  The duplicated `cargo fmt`/`clippy`/`cargo test` steps inside the old
+  `publish` job were removed since those gates are now enforced by the
+  dedicated jobs. The LTO release smoke test, CHANGELOG gate, version
+  cross-check, and `cargo publish --locked` step are unchanged.
+
+### Documentation
+
+- README now uses a CI status badge instead of a docs.rs badge. The
+  project is a binary-only crate (no `src/lib.rs`), so docs.rs cannot
+  build documentation for it (`cargo doc` reports
+  `no library targets found in package`) and the badge stays
+  permanently red on every published version. The CI badge points at
+  `.github/workflows/ci.yml` on `master` and conveys actually useful
+  information.
+- The `documentation = "https://docs.rs/markdown-org-extract"` field
+  removed from `Cargo.toml` for the same reason — docs.rs has no
+  rendered documentation for this crate and the link only leads to a
+  failed build page.
+
+### Context
+
+The 0.3.0 release went out while the `test (windows-latest)` job of
+`ci.yml` was red. That failure was the very `release_check_changelog.rs`
+problem this release fixes — and there was nothing in the release
+pipeline to notice it. 0.3.0 is not yanked because the actual crate
+content is unaffected (only the release helper's test on Windows was
+broken); users running `cargo install markdown-org-extract` or pulling
+the crate as a dependency are not exposed to the failure.
 
 ## [0.3.0] — 2026-05-19
 

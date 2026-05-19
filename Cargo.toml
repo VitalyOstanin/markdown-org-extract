@@ -1,6 +1,6 @@
 [package]
 name = "markdown-org-extract"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 rust-version = "1.85"
 authors = ["Vitaly Ostanin <vitaly.ostanin@gmail.com>"]
@@ -8,7 +8,6 @@ description = "CLI utility for extracting tasks from markdown files with Emacs O
 license = "MIT"
 repository = "https://github.com/VitalyOstanin/markdown-org-extract"
 homepage = "https://github.com/VitalyOstanin/markdown-org-extract"
-documentation = "https://docs.rs/markdown-org-extract"
 readme = "README.md"
 keywords = ["markdown", "org-mode", "cli", "tasks", "agenda"]
 categories = ["command-line-utilities", "text-processing"]

@@ -1,7 +1,7 @@
 # markdown-org-extract
 
 [![crates.io](https://img.shields.io/crates/v/markdown-org-extract.svg)](https://crates.io/crates/markdown-org-extract)
-[![docs.rs](https://img.shields.io/docsrs/markdown-org-extract)](https://docs.rs/markdown-org-extract)
+[![CI](https://github.com/VitalyOstanin/markdown-org-extract/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/VitalyOstanin/markdown-org-extract/actions/workflows/ci.yml?query=branch%3Amaster)
 [![license](https://img.shields.io/crates/l/markdown-org-extract.svg)](https://github.com/VitalyOstanin/markdown-org-extract/blob/master/LICENSE)
 
 CLI utility for extracting tasks from markdown files with support for Emacs Org-mode markers.

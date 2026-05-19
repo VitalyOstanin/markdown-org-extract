@@ -1,62 +1,77 @@
 # TODO
 
-Отложенные задачи, требующие отдельного согласования или существенного объёма работы.
+Deferred tasks that need separate sign-off or carry a substantial work
+package.
 
-## Содержание
+## Table of contents
 
-- [Переход на edition 2024](#переход-на-edition-2024)
-- [Параллельный walker (rayon)](#параллельный-walker-rayon)
-- [Property-based и fuzz-тесты](#property-based-и-fuzz-тесты)
-- [Локализация сообщений CLI](#локализация-сообщений-cli)
-- [Бенчмарки (criterion)](#бенчмарки-criterion)
+- [Switch to edition 2024](#switch-to-edition-2024)
+- [Parallel walker (rayon)](#parallel-walker-rayon)
+- [Property-based and fuzz tests](#property-based-and-fuzz-tests)
+- [Localising CLI messages](#localising-cli-messages)
+- [Benchmarks (criterion)](#benchmarks-criterion)
 
-## Переход на edition 2024
+## Switch to edition 2024
 
-Сейчас проект использует `edition = "2021"` и `rust-version = "1.80"`. Edition 2024 стабилизирована в Rust 1.85.
+The project sets `edition = "2021"` while `rust-version = "1.85"` is
+already in place (raised in 0.3.0 to take in the `comrak` 0.50+
+upgrade). Edition 2024 stabilised in Rust 1.85, so the MSRV
+requirement is already satisfied; only the edition flip itself is
+pending.
 
-План:
+Plan:
 
-1. Поднять `rust-version = "1.85"` в `Cargo.toml`.
-2. Прогнать `cargo fix --edition` и проверить тесты.
-3. Обновить MSRV в README и CI (`dtolnay/rust-toolchain@<SHA> # 1.85.0`).
+1. Run `cargo fix --edition` and verify the test suite stays green.
+2. Bump `edition = "2024"` in `Cargo.toml`.
+3. Audit any new lints introduced by the 2024 edition and address
+   them.
 
-Не делается сейчас: повышает MSRV, требует у пользователей свежего toolchain'а.
+Not done yet: separate task, deserves its own review cycle because
+the 2024 edition changes capture rules in closures and a few other
+lifetime/borrow defaults.
 
-## Параллельный walker (rayon)
+## Parallel walker (rayon)
 
-Crate `ignore` поддерживает параллельный walker через `WalkBuilder::build_parallel()`. На больших vault даёт 2-4x ускорение.
+The `ignore` crate supports a parallel walker through
+`WalkBuilder::build_parallel()`. On large vaults it gives a 2–4x
+speedup.
 
-Требует:
+Requires:
 
-- Передачи `mappings`, `matcher`, `stats` через `Arc`/каналы.
-- Сбора `tasks` через `Mutex<Vec<Task>>` или `mpsc`.
+- Passing `mappings`, `matcher`, and `stats` through `Arc` / channels.
+- Collecting `tasks` through `Mutex<Vec<Task>>` or `mpsc`.
 
-По правилам не повышать параллелизм без согласования.
+Per project rules, parallelism is not raised without explicit sign-off
+from the user.
 
-## Property-based и fuzz-тесты
+## Property-based and fuzz tests
 
-Зоны риска:
+Risk areas:
 
-- `closest_date` для разных `value`, `unit`, `prefer` — инвариант `Past <= current <= Future`.
+- `closest_date` across all combinations of `value`, `unit`, and
+  `prefer` — invariant `Past <= current <= Future`.
 - `parse_repeater(format(...))` round-trip.
-- `add_months` ассоциативность.
+- `add_months` associativity.
 
-Инструменты: `proptest` или `quickcheck`. `cargo-fuzz` для регексов в `timestamp/*`.
+Tools: `proptest` or `quickcheck`. `cargo-fuzz` for the regexes under
+`timestamp/*`.
 
-## Локализация сообщений CLI
+## Localising CLI messages
 
-CLI ориентирована на ru-локаль (RU-праздники, `--locale ru,en`), но все сообщения и `--help` на английском. Варианты:
+The CLI targets an RU locale (RF holidays, `--locale ru,en`), but
+every message and `--help` string is in English. Options:
 
-1. Перевод всех сообщений на русский (ломает пайплайны, ожидающие английский текст).
-2. Двуязычные сообщения с переключателем через `LANG`/`LC_ALL`.
-3. Оставить как есть.
+1. Translate all messages into Russian (breaks pipelines that grep
+   for English text).
+2. Bilingual messages switched via `LANG` / `LC_ALL`.
+3. Leave as is.
 
-## Бенчмарки (criterion)
+## Benchmarks (criterion)
 
-Зоны:
+Areas:
 
-- `extract_tasks` на больших markdown.
-- `build_week_agenda` / `build_day_agenda` с большим числом repeating-задач.
-- `closest_date` для разных `unit`.
+- `extract_tasks` on large markdown inputs.
+- `build_week_agenda` / `build_day_agenda` with many repeating tasks.
+- `closest_date` across different `unit` values.
 
-Каталог `benches/`, dev-dependency `criterion`.
+Directory `benches/`, with `criterion` as a dev-dependency.

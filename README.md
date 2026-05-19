@@ -4,193 +4,194 @@
 [![docs.rs](https://img.shields.io/docsrs/markdown-org-extract)](https://docs.rs/markdown-org-extract)
 [![license](https://img.shields.io/crates/l/markdown-org-extract.svg)](https://github.com/VitalyOstanin/markdown-org-extract/blob/master/LICENSE)
 
-CLI утилита для извлечения задач из markdown файлов с поддержкой меток Emacs Org-mode.
+CLI utility for extracting tasks from markdown files with support for Emacs Org-mode markers.
 
-## Содержание
+## Table of contents
 
-- [Установка и сборка](#установка-и-сборка)
-- [Использование](#использование)
-- [Примеры файлов](#примеры-файлов)
-- [Режимы Agenda](#режимы-agenda)
-- [Поддерживаемые метки](#поддерживаемые-метки)
-- [Поддержка локалей](#поддержка-локалей)
-- [Формат вывода](#формат-вывода)
-- [Повторяющиеся задачи](#повторяющиеся-задачи)
-- [Структура проекта](#структура-проекта)
-- [Зависимости](#зависимости)
-- [Лицензия](#лицензия)
+- [Installation and build](#installation-and-build)
+- [Usage](#usage)
+- [Example files](#example-files)
+- [Agenda modes](#agenda-modes)
+- [Supported markers](#supported-markers)
+- [Locale support](#locale-support)
+- [Output format](#output-format)
+- [Repeating tasks](#repeating-tasks)
+- [Project layout](#project-layout)
+- [Dependencies](#dependencies)
+- [License](#license)
 
-## Установка и сборка
+## Installation and build
 
-### Требования
+### Requirements
 
-- Rust 1.80 или новее (используется `std::sync::LazyLock`)
+- Rust 1.85 or newer (the `comrak` 0.50+ upgrade requires the 2024 edition)
 - Cargo
 
-### Установка из crates.io
+### Install from crates.io
 
-Если нужен только бинарник, без клонирования репозитория:
+If you only need the binary and do not want to clone the repository:
 
 ```bash
 cargo install markdown-org-extract
 ```
 
-После установки бинарь окажется в `~/.cargo/bin/markdown-org-extract` (этот
-путь должен быть в `PATH`).
+After installation the binary lands in `~/.cargo/bin/markdown-org-extract`
+(this path must be on your `PATH`).
 
-### Сборка проекта
+### Building the project
 
-Сборка в режиме разработки:
+Debug build:
 ```bash
 cargo build
 ```
 
-Сборка оптимизированной версии для production:
+Optimised release build:
 ```bash
 cargo build --release
 ```
 
-Бинарный файл будет создан в:
+The resulting binary appears in:
 - Debug: `target/debug/markdown-org-extract`
 - Release: `target/release/markdown-org-extract`
 
-### Запуск
+### Running
 
-После сборки запустите утилиту:
+After building, run the utility:
 
 ```bash
-# Debug версия
+# Debug build
 ./target/debug/markdown-org-extract [OPTIONS]
 
-# Release версия
+# Release build
 ./target/release/markdown-org-extract [OPTIONS]
 ```
 
-Или используйте cargo для запуска без явной сборки:
+Or use cargo to run it without an explicit build step:
 ```bash
 cargo run -- [OPTIONS]
 ```
 
-### Тестирование
+### Testing
 
-Запуск тестов:
+Run the test suite:
 ```bash
 cargo test
 ```
 
-Запуск с подробным выводом:
+Run with verbose output:
 ```bash
 cargo test -- --nocapture
 ```
 
-Проверка кода:
+Static checks:
 ```bash
 cargo check
 cargo clippy
 ```
 
-#### Покрытие тестами функционала рабочих дней
+#### Workday-handling test coverage
 
-Модуль `holidays`:
-- Загрузка календаря праздников
-- Проверка обычных выходных и рабочих дней
-- Новогодние каникулы 2025 (1-8 января) и 2026 (1-9 января)
-- Переносы праздников 2026 (8 марта → 9 марта, 9 мая → 11 мая)
-- Пропуск выходных и праздников при поиске следующего рабочего дня
+`holidays` module:
+- Loading the holiday calendar
+- Distinguishing regular weekends and working days
+- 2025 New Year holidays (1–8 January) and 2026 (1–9 January)
+- 2026 holiday shifts (8 March → 9 March, 9 May → 11 May)
+- Skipping weekends and holidays when locating the next working day
 
-Модуль `timestamp::repeater`:
-- Парсинг повторов `+1wd`, `+2wd`, `++1wd`, `.+1wd`
-- Расчет следующего повтора по рабочим дням
-- Пропуск праздников в повторах
+`timestamp::repeater` module:
+- Parsing repeaters `+1wd`, `+2wd`, `++1wd`, `.+1wd`
+- Computing the next occurrence over working days
+- Skipping holidays in repeater arithmetic
 
-Модуль `timestamp::parser`:
-- Парсинг временных меток с `+1wd` и `+2wd`
+`timestamp::parser` module:
+- Parsing timestamps that carry `+1wd` and `+2wd`
 
-## Использование
+## Usage
 
 ```bash
 markdown-org-extract [OPTIONS]
 ```
 
-### Параметры
+### Options
 
-- `--dir <DIR>` - каталог для поиска (по умолчанию: `.`)
-- `--glob <GLOB>` - шаблон для фильтрации файлов (по умолчанию: `*.md`)
-- `--format <FORMAT>` - формат вывода: `json`, `md`, `html` (по умолчанию: `json`)
-- `--output <OUTPUT>` - файл для записи результата (по умолчанию: stdout)
-- `--locale <LOCALE>` - локали для дней недели через запятую (по умолчанию: `ru,en`)
-- `--agenda <MODE>` - режим agenda: `day`, `week`, `month` (по умолчанию: `day`)
-- `--tasks` - показать все TODO задачи, отсортированные по приоритету (альтернатива `--agenda tasks`)
-- `--date <DATE>` - дата для режима `day` в формате YYYY-MM-DD (по умолчанию: текущая дата)
-- `--from <DATE>` - начальная дата для режима `week` в формате YYYY-MM-DD (по умолчанию: понедельник текущей недели)
-- `--to <DATE>` - конечная дата для режима `week` в формате YYYY-MM-DD (по умолчанию: воскресенье текущей недели)
-- `--tz <TIMEZONE>` - часовой пояс для определения текущей даты (по умолчанию: `Europe/Moscow`)
-- `--current-date <DATE>` - явная текущая дата для расчета overdue в формате YYYY-MM-DD (по умолчанию: сегодня в указанной таймзоне)
-- `--holidays <YEAR>` - вывести список праздников для указанного года (1900-2100) в формате JSON
-- `--absolute-paths` - выводить абсолютные пути файлов вместо относительных к `--dir`
-- `--max-tasks <N>` - предельное число задач (1..=10_000_000, по умолчанию 10_000). Применяется и как per-file, и как глобальный потолок
-- `-v`, `--verbose` - подробный лог в stderr (`-v` = info, `-vv` = debug, `-vvv` = trace). Несовместим с `--quiet`
-- `-q`, `--quiet` - подавить все диагностические сообщения, кроме критических ошибок
-- `--no-color` - отключить ANSI-цвета в логах. Также уважается переменная окружения `NO_COLOR`
+- `--dir <DIR>` — directory to scan (default: `.`)
+- `--glob <GLOB>` — file filter pattern (default: `*.md`)
+- `--format <FORMAT>` — output format: `json`, `md`, `html` (default: `json`)
+- `--output <OUTPUT>` — file to write the result to; `-` means stdout (default: stdout)
+- `--locale <LOCALE>` — weekday locales, comma-separated (default: `ru,en`)
+- `--agenda <MODE>` — agenda mode: `day`, `week`, `month`, `tasks` (default: `day`)
+- `--tasks` — show all TODO tasks sorted by priority (alias for `--agenda tasks`)
+- `--date <DATE>` — date for `day` mode in `YYYY-MM-DD` (default: today)
+- `--from <DATE>` — start date for `week`/`month` mode in `YYYY-MM-DD` (default: Monday of the current week / first day of the current month)
+- `--to <DATE>` — end date for `week`/`month` mode in `YYYY-MM-DD` (default: Sunday of the current week / last day of the current month)
+- `--tz <TIMEZONE>` — IANA timezone for determining the current date (default: `Europe/Moscow`)
+- `--current-date <DATE>` — explicit current date for overdue calculation in `YYYY-MM-DD` (default: today in the configured timezone)
+- `--holidays <YEAR>` — print the holiday list for the given year (1900–2100) as JSON
+- `--absolute-paths` — emit absolute file paths instead of paths relative to `--dir`
+- `--max-tasks <N>` — task limit (1..=10_000_000, default 10_000). Applied both as a per-file cap and as a global ceiling
+- `-v`, `--verbose` — verbose stderr log (`-v` = info, `-vv` = debug, `-vvv` = trace). Mutually exclusive with `--quiet`
+- `-q`, `--quiet` — suppress all diagnostic messages except critical errors
+- `--color <MODE>` — control ANSI colour in logs: `auto` (default), `always`, `never`
+- `--no-color` — disable ANSI colour in logs; equivalent to `--color never`. The `NO_COLOR` environment variable has the same effect (see [no-color.org](https://no-color.org))
 
-### Примеры использования
+### Examples
 
-Извлечь задачи из текущего каталога в JSON:
+Extract tasks from the current directory as JSON:
 ```bash
 markdown-org-extract
 ```
 
-Извлечь задачи из конкретного каталога:
+Extract tasks from a specific directory:
 ```bash
 markdown-org-extract --dir ./notes
 ```
 
-Сохранить результат в HTML файл:
+Save the result to an HTML file:
 ```bash
 markdown-org-extract --dir ./notes --format html --output agenda.html
 ```
 
-Вывести в markdown формате:
+Emit markdown:
 ```bash
 markdown-org-extract --dir ./notes --format md
 ```
 
-Использовать примеры из проекта:
+Run against the bundled examples:
 ```bash
 markdown-org-extract --dir ./examples
 markdown-org-extract --dir ./examples --format md
 markdown-org-extract --dir ./examples --format html --output examples-agenda.html
 ```
 
-Использовать только русские дни недели:
+Use only Russian weekday names:
 ```bash
 markdown-org-extract --dir ./notes --locale ru
 ```
 
-Использовать только английские дни недели:
+Use only English weekday names:
 ```bash
 markdown-org-extract --dir ./notes --locale en
 ```
 
-#### Примеры работы с agenda
+#### Agenda examples
 
-Задачи на сегодня (по умолчанию):
+Today's tasks (default):
 ```bash
 markdown-org-extract --dir ./notes
 ```
 
-Задачи на конкретную дату:
+Tasks for a specific date:
 ```bash
 markdown-org-extract --dir ./notes --agenda day --date 2025-12-10
 ```
 
-Получить список праздников для года:
+Retrieve the holiday list for a year:
 ```bash
 markdown-org-extract --holidays 2025
 markdown-org-extract --holidays 2026
 ```
 
-Пример вывода праздников:
+Sample holiday output:
 ```json
 [
   "2025-01-01",
@@ -210,191 +211,198 @@ markdown-org-extract --holidays 2026
 ]
 ```
 
-Задачи на текущую неделю:
+Tasks for the current week:
 ```bash
 markdown-org-extract --dir ./notes --agenda week
 ```
 
-Задачи на текущий месяц:
+Tasks for the current month:
 ```bash
 markdown-org-extract --dir ./notes --agenda month
 ```
 
-Задачи на диапазон дат:
+Tasks across a date range:
 ```bash
 markdown-org-extract --dir ./notes --agenda week --from 2025-12-01 --to 2025-12-07
 markdown-org-extract --dir ./notes --agenda month --from 2025-12-01 --to 2025-12-31
 ```
 
-Все TODO задачи, отсортированные по приоритету:
+All TODO tasks sorted by priority:
 ```bash
 markdown-org-extract --dir ./notes --tasks
 ```
 
-Использовать другой часовой пояс:
+Use a different timezone:
 ```bash
 markdown-org-extract --dir ./notes --tz UTC
 markdown-org-extract --dir ./notes --tz America/New_York
 ```
 
-Использовать явную текущую дату (для тестов):
+Use an explicit current date (useful for tests and deterministic output):
 ```bash
 markdown-org-extract --dir ./notes --agenda week --current-date 2024-12-05
 ```
 
-Ограничить число извлекаемых задач (полезно при пакетной обработке очень больших каталогов):
+Cap the number of extracted tasks (useful for batch processing of very large trees):
 ```bash
 markdown-org-extract --dir ./notes --max-tasks 1000
 ```
 
-Включить подробный лог обработки в stderr:
+Enable verbose processing logs on stderr:
 ```bash
 markdown-org-extract --dir ./notes -v
 ```
 
-## Примеры файлов
+## Example files
 
-В каталоге `examples/` находятся примеры markdown файлов с различными
-метками. Эти же файлы используются интеграционными тестами `tests/cli.rs`.
+The `examples/` directory contains markdown files with various markers.
+The integration tests in `tests/cli.rs` exercise the same files.
 
-Общие сценарии:
+General scenarios:
 
-- `project-tasks.md` - задачи разработки проекта
-- `personal-notes.md` - личные заметки и задачи
-- `meeting-notes.md` - заметки со встреч
-- `work-log.md` - смешанный лог с SCHEDULED, DEADLINE и CLOCK
+- `project-tasks.md` — project development tasks
+- `personal-notes.md` — personal notes and tasks
+- `meeting-notes.md` — meeting notes
+- `work-log.md` — mixed log with SCHEDULED, DEADLINE, and CLOCK entries
 
-Демонстрация конкретных меток org-mode:
+Org-mode marker demonstrations:
 
-- `priorities.md` - задачи с приоритетами `[#A]`, `[#B]`, `[#C]`
-- `org-mode-timestamps.md` - timestamp-форматы, диапазоны, повторы
-- `created-test.md` - использование `CREATED:` для даты постановки
-- `workdays-test.md` - повторы по рабочим дням (`+1wd`, `+2wd`) и
-  взаимодействие с календарём праздников
+- `priorities.md` — tasks with priorities `[#A]`, `[#B]`, `[#C]`
+- `org-mode-timestamps.md` — timestamp forms, ranges, and repeaters
+- `created-test.md` — using `CREATED:` for the creation date
+- `workdays-test.md` — workday repeaters (`+1wd`, `+2wd`) interacting
+  with the holiday calendar
 
-Демонстрация CLOCK-блоков (учёт времени):
+CLOCK-block demonstrations (time tracking):
 
-- `clock-formats.md` - все поддерживаемые формы CLOCK-строк
-- `clock-inline.md` - CLOCK в inline-code (`` `CLOCK: ...` ``)
-- `clock-test.md` - закрытые CLOCK-интервалы с `=> HH:MM`
-- `simple-clock.md` - CLOCK в fenced code-блоках
-- `done-clock.md` - CLOCK на DONE-задаче (учёт post-completion)
+- `clock-formats.md` — every supported CLOCK line form
+- `clock-inline.md` — CLOCK inside inline code (`` `CLOCK: ...` ``)
+- `clock-test.md` — closed CLOCK intervals with `=> HH:MM`
+- `simple-clock.md` — CLOCK inside fenced code blocks
+- `done-clock.md` — CLOCK attached to a DONE task (post-completion accounting)
 
-Попробуйте запустить:
+Try running:
 ```bash
 ./target/release/markdown-org-extract --dir ./examples --format md
 ```
 
-## Режимы Agenda
+## Agenda modes
 
-Утилита поддерживает четыре режима работы с задачами, аналогично Emacs Org-mode:
+The utility supports four task-listing modes, mirroring Emacs Org-mode:
 
-### day - Задачи на день
+### day — tasks for a single day
 
-Показывает задачи с временными метками (SCHEDULED, DEADLINE) на указанную дату. По умолчанию используется текущая дата в указанной таймзоне.
+Shows tasks whose timestamps (SCHEDULED, DEADLINE) fall on the given date.
+The default is today in the configured timezone.
 
 ```bash
-# Задачи на сегодня
+# Today's tasks
 markdown-org-extract --agenda day
 
-# Задачи на конкретную дату
+# Tasks for a specific date
 markdown-org-extract --agenda day --date 2025-12-10
 ```
 
-### week - Задачи на неделю
+### week — tasks for a week
 
-Показывает задачи с временными метками в диапазоне дат. По умолчанию используется текущая неделя (понедельник-воскресенье).
+Shows tasks whose timestamps fall within a date range. The default is the
+current week (Monday–Sunday).
 
-Каждый день показывает:
-- Задачи, запланированные на этот день (scheduled)
-- Предстоящие задачи относительно этого дня (upcoming)
-- Просроченные задачи (overdue) - только для текущей даты
+Each day lists:
+- Tasks scheduled for that day (scheduled)
+- Upcoming tasks relative to that day (upcoming)
+- Overdue tasks (overdue) — only for the current date
 
 ```bash
-# Задачи на текущую неделю
+# Current week
 markdown-org-extract --agenda week
 
-# Задачи на конкретный диапазон
+# Explicit range
 markdown-org-extract --agenda week --from 2025-12-01 --to 2025-12-07
 ```
 
-### month - Задачи на месяц
+### month — tasks for a month
 
-Показывает задачи с временными метками в диапазоне дат. По умолчанию используется текущий месяц (с первого по последний день).
+Shows tasks whose timestamps fall within a date range. The default is the
+current month (first to last day).
 
-Работает аналогично режиму `week` - каждый день показывает scheduled, upcoming и overdue задачи.
+Behaves the same way as `week` — each day surfaces scheduled, upcoming,
+and overdue tasks.
 
 ```bash
-# Задачи на текущий месяц
+# Current month
 markdown-org-extract --agenda month
 
-# Задачи на конкретный диапазон
+# Explicit range
 markdown-org-extract --agenda month --from 2025-12-01 --to 2025-12-31
 ```
 
-### tasks - Все TODO задачи
+### tasks — all TODO tasks
 
-Показывает все задачи со статусом TODO, отсортированные по приоритету (A → B → C → без приоритета). Временные метки не учитываются.
+Lists every task whose state is TODO, sorted by priority
+(A → B → C → no priority). Timestamps are ignored.
 
 ```bash
-# Все TODO задачи по приоритетам
+# All TODO tasks by priority
 markdown-org-extract --tasks
 ```
 
-### Часовые пояса
+### Timezones
 
-Параметр `--tz` определяет часовой пояс для вычисления текущей даты и недели. Поддерживаются все стандартные IANA таймзоны.
+The `--tz` option controls which timezone is used to derive the current
+date and current week. All standard IANA timezones are accepted.
 
 ```bash
-# Московское время (по умолчанию)
+# Moscow time (default)
 markdown-org-extract --agenda day --tz Europe/Moscow
 
 # UTC
 markdown-org-extract --agenda day --tz UTC
 
-# Нью-Йорк
+# New York
 markdown-org-extract --agenda day --tz America/New_York
 ```
 
-## Поддерживаемые метки
+## Supported markers
 
-### Метки задач
+### Task markers
 
-Утилита распознает метки TODO и DONE в заголовках:
+The utility recognises TODO and DONE markers in headings:
 
 ```markdown
 ### TODO Implement feature
 ### DONE Complete task
 ```
 
-### Приоритеты задач
+### Task priorities
 
-Поддерживаются приоритеты в формате org-mode (буквы A-Z в квадратных скобках):
+Priorities follow the org-mode convention (letters A–Z inside square brackets):
 
 ```markdown
-### TODO [#A] Критическая задача
-### TODO [#B] Важная задача
-### TODO [#C] Обычная задача
-### DONE [#A] Завершенная задача высокого приоритета
+### TODO [#A] Critical task
+### TODO [#B] Important task
+### TODO [#C] Regular task
+### DONE [#A] Completed high-priority task
 ```
 
-Приоритет указывается после метки TODO/DONE и перед текстом задачи. Наиболее распространенные приоритеты:
-- `[#A]` - высокий приоритет (критические задачи)
-- `[#B]` - средний приоритет (важные задачи)
-- `[#C]` - низкий приоритет (обычные задачи)
+The priority appears after the TODO/DONE marker and before the task text.
+The most common priorities are:
+- `[#A]` — high priority (critical tasks)
+- `[#B]` — medium priority (important tasks)
+- `[#C]` — low priority (regular tasks)
 
-Приоритет является необязательным параметром.
+Priority is optional.
 
-### Временные метки
+### Timestamps
 
-Временные метки должны быть заключены в обратные кавычки:
+Timestamps must be wrapped in backticks:
 
-**Простая временная метка:**
+**Simple timestamp:**
 ```markdown
 `<2024-12-10 Mon 10:00-12:00>`
 ```
 
-**Метки планирования:**
+**Planning markers:**
 ```markdown
 `CREATED: <2024-12-01 Mon>`
 `DEADLINE: <2024-12-15 Sun>`
@@ -402,23 +410,26 @@ markdown-org-extract --agenda day --tz America/New_York
 `CLOSED: <2024-12-01 Mon>`
 ```
 
-**Диапазон дат:**
+**Date range:**
 ```markdown
 `<2024-12-20 Mon>--<2024-12-22 Wed>`
 ```
 
-**Неактивные временные метки (НЕ извлекаются):**
+**Inactive timestamps (NOT extracted):**
 ```markdown
-`[2024-12-10 Mon]` - квадратные скобки означают неактивную метку
+`[2024-12-10 Mon]` — square brackets denote an inactive timestamp
 ```
 
-**Примечание:** Метка `CREATED` извлекается отдельно от других временных меток и сохраняется в поле `created`. Это позволяет отслеживать дату создания задачи независимо от других временных меток (SCHEDULED, DEADLINE, CLOSED).
+**Note:** `CREATED` is extracted separately from the other timestamps and
+stored in the `created` field. This lets consumers track the task
+creation date independently of SCHEDULED, DEADLINE, and CLOSED.
 
-### Учет времени (CLOCK)
+### Time tracking (CLOCK)
 
-Утилита поддерживает метки CLOCK для отслеживания времени, потраченного на задачи, аналогично Emacs Org-mode.
+The utility supports CLOCK entries for tracking time spent on tasks,
+mirroring Emacs Org-mode.
 
-**Формат CLOCK записей (в обратных кавычках, как временные метки):**
+**CLOCK format inside backticks (same as timestamps):**
 ```markdown
 ### TODO Implement feature
 
@@ -427,7 +438,7 @@ markdown-org-extract --agenda day --tz America/New_York
 `CLOCK: <2024-12-09 Mon 14:00>--<2024-12-09 Mon 16:15> => 2:15`
 ```
 
-**Альтернативный формат (в code blocks, как в org-mode):**
+**Alternative format inside code blocks (as in org-mode):**
 ```markdown
 ### TODO Implement feature
 
@@ -439,19 +450,19 @@ CLOCK: [2024-12-09 Mon 14:00]--[2024-12-09 Mon 16:15] =>  2:15
 ```
 ```
 
-**Открытая CLOCK запись (активная работа):**
+**Open CLOCK entry (active work):**
 ```markdown
 `CLOCK: <2024-12-10 Tue 09:00>`
 ```
 
-**Возможности:**
-- Автоматическое извлечение всех CLOCK записей под заголовком
-- Подсчет общего времени (`total_clock_time`) по всем записям
-- Поддержка открытых (активных) CLOCK записей без времени окончания
-- Отображение в JSON, Markdown и HTML форматах
-- Поддержка как квадратных `[...]` (как в org-mode), так и угловых `<...>` скобок
+**Features:**
+- Automatic extraction of every CLOCK entry under a heading
+- Total time (`total_clock_time`) summed across all entries
+- Open (active) CLOCK entries without a close time
+- Rendering in JSON, Markdown, and HTML
+- Both square `[...]` (org-mode style) and angle `<...>` brackets are accepted
 
-**Пример вывода JSON:**
+**Sample JSON output:**
 ```json
 {
   "heading": "Implement feature",
@@ -471,7 +482,7 @@ CLOCK: [2024-12-09 Mon 14:00]--[2024-12-09 Mon 16:15] =>  2:15
 }
 ```
 
-**Пример вывода Markdown:**
+**Sample Markdown output:**
 ```markdown
 ## Implement feature
 **Total Time:** 4:45
@@ -481,18 +492,19 @@ CLOCK: [2024-12-09 Mon 14:00]--[2024-12-09 Mon 16:15] =>  2:15
 - 2024-12-09 Mon 14:00 → 2024-12-09 Mon 16:15 (2:15)
 ```
 
-## Поддержка локалей
+## Locale support
 
-Утилита поддерживает дни недели на разных языках через параметр `--locale`.
+The utility recognises weekday names in different languages via the
+`--locale` option.
 
-### Поддерживаемые локали
+### Supported locales
 
-- `en` - английский (Mon, Tue, Wed, Thu, Fri, Sat, Sun, Monday, Tuesday, ...)
-- `ru` - русский (Пн, Вт, Ср, Чт, Пт, Сб, Вс, Понедельник, Вторник, ...)
+- `en` — English (Mon, Tue, Wed, Thu, Fri, Sat, Sun, Monday, Tuesday, ...)
+- `ru` — Russian (Пн, Вт, Ср, Чт, Пт, Сб, Вс, Понедельник, Вторник, ...)
 
-По умолчанию используются обе локали: `--locale ru,en`
+The default is both locales: `--locale ru,en`.
 
-### Примеры с русскими днями недели
+### Russian-weekday examples
 
 ```markdown
 ### TODO Встреча
@@ -505,33 +517,38 @@ CLOCK: [2024-12-09 Mon 14:00]--[2024-12-09 Mon 16:15] =>  2:15
 `DEADLINE: <2024-12-15 Вс>`
 ```
 
-Все русские дни недели автоматически нормализуются в английский формат при извлечении.
+Russian weekday names are normalised to the English form during extraction.
 
-## Формат вывода
+## Output format
 
-Формат вывода зависит от режима agenda:
+The output format depends on the agenda mode.
 
-### Режим `--tasks` (список задач)
+### `--tasks` mode (task list)
 
 #### JSON
 
-Опциональные поля (`priority`, `created`, `timestamp_time`,
-`timestamp_end_time`, `clocks`, `total_clock_time`, `task_type`) при
-отсутствии значения опускаются в выводе, а не сериализуются как
-`null`. Это совпадает с конвенцией `#[serde(skip_serializing_if =
-"Option::is_none")]` в `src/types.rs`.
+Optional fields (`priority`, `created`, `timestamp_time`,
+`timestamp_end_time`, `clocks`, `total_clock_time`, `task_type`) are
+omitted when absent rather than serialised as `null`. This matches the
+`#[serde(skip_serializing_if = "Option::is_none")]` convention used in
+`src/types.rs`.
+
+Example below is the actual output of
+`--dir examples --glob 'project-tasks.md' --tasks --max-tasks 1
+--current-date 2025-12-05`.
 
 ```json
 [
   {
-    "file": "workdays-test.md",
-    "line": 3,
-    "heading": "Ежедневная задача",
-    "content": "Обычная задача каждый день.",
+    "file": "project-tasks.md",
+    "line": 5,
+    "heading": "Design database schema",
+    "content": "Need to finalize the database structure before implementation.",
     "task_type": "TODO",
-    "timestamp": "SCHEDULED: <2025-12-05 Thu +1d>",
+    "priority": "A",
+    "timestamp": "SCHEDULED: <2024-12-05 Wed>",
     "timestamp_type": "SCHEDULED",
-    "timestamp_date": "2025-12-05"
+    "timestamp_date": "2024-12-05"
   }
 ]
 ```
@@ -541,30 +558,33 @@ CLOCK: [2024-12-09 Mon 14:00]--[2024-12-09 Mon 16:15] =>  2:15
 ```markdown
 # Tasks
 
-## Ежедневная задача
-**File:** `workdays-test.md:3`
+## Design database schema
+**File:** `project-tasks.md:5`
 **Type:** TODO
-**Time:** `SCHEDULED: <2025-12-05 Thu +1d>`
+**Priority:** A
+**Time:** `SCHEDULED: <2024-12-05 Wed>`
 
-Обычная задача каждый день.
+Need to finalize the database structure before implementation.
 ```
 
-### Режимы `--agenda day` и `--agenda week` (дневная agenda)
+### `--agenda day` and `--agenda week` modes (day-grouped agenda)
 
-В этих режимах задачи группируются по дням. Каждый день содержит категории задач (в порядке отображения):
+In these modes tasks are grouped by day. Each day contains task
+categories (in display order):
 
-1. **Overdue** (только для текущей даты) - просроченные задачи, самые старые наверху
-2. **Scheduled (with time)** - задачи дня со временем, отсортированные по времени (ранние наверху)
-3. **Scheduled (no time)** - задачи дня без времени
-4. **Upcoming** - предстоящие задачи относительно этого дня, ближайшие наверху
+1. **Overdue** (only for the current date) — overdue tasks, oldest first
+2. **Scheduled (with time)** — that day's tasks with a time, earliest first
+3. **Scheduled (no time)** — that day's tasks without a time
+4. **Upcoming** — upcoming tasks relative to that day, nearest first
 
-**Важно:** Каждый день показывает upcoming задачи относительно себя, а не относительно общей референсной даты.
+**Important:** Each day shows upcoming tasks relative to that day, not
+relative to a global reference date.
 
 #### JSON
 
-Пути файлов выводятся относительно `--dir` (или абсолютно при
-`--absolute-paths`). Опциональные поля опускаются при отсутствии
-значения, как и в режиме `--tasks`.
+File paths are emitted relative to `--dir` (or absolute when
+`--absolute-paths` is set). Optional fields are omitted when absent, as
+in `--tasks` mode.
 
 ```json
 [
@@ -603,16 +623,16 @@ CLOCK: [2024-12-09 Mon 14:00]--[2024-12-09 Mon 16:15] =>  2:15
 ]
 ```
 
-Поле `days_offset` показывает:
-- Положительное число - количество дней до срока (upcoming)
-- Отрицательное число - количество дней просрочки (overdue)
-- Отсутствует для задач текущего дня (scheduled)
+The `days_offset` field encodes:
+- Positive number — days until the deadline (upcoming)
+- Negative number — days the task is overdue
+- Absent for tasks belonging to the day itself (scheduled)
 
 #### Markdown
 
-Пути файлов и timestamp выводятся в inline-code (`` `...` ``) для
-сохранения форматирования. `Type:` использует `TODO` / `DONE` (а не
-`Todo` / `Done`); `Priority:` выводится буквой без `[#]`-обёртки.
+File paths and timestamps are wrapped in inline code (`` `...` ``) to
+preserve formatting. `Type:` uses `TODO` / `DONE` (not `Todo` / `Done`);
+`Priority:` is shown as a bare letter without the `[#]` wrapper.
 
 ```markdown
 # Agenda
@@ -647,143 +667,147 @@ Daily standup meeting.
 Critical bug fix needs review.
 ```
 
-#### Поля разобранных временных меток
+#### Parsed timestamp fields
 
-Для удобства отрисовки agenda внешними потребителями, временные метки автоматически разбираются на составные части:
+To let downstream consumers render agendas without re-parsing the
+`timestamp` string, the timestamp is split into structured fields:
 
-- `timestamp_type` - тип временной метки: `SCHEDULED`, `DEADLINE`, `CLOSED`, `PLAIN`
-- `timestamp_date` - дата в формате `YYYY-MM-DD`
-- `timestamp_time` - время начала (если указано), например `10:00`
-- `timestamp_end_time` - время окончания (если указан диапазон), например `12:00`
+- `timestamp_type` — `SCHEDULED`, `DEADLINE`, `CLOSED`, or `PLAIN`
+- `timestamp_date` — date as `YYYY-MM-DD`
+- `timestamp_time` — start time, e.g. `10:00` (when present)
+- `timestamp_end_time` — end time, e.g. `12:00` (when a range was given)
 
-Эти поля позволяют внешним системам отображать задачи на временной шкале без повторного парсинга строки `timestamp`.
+## Repeating tasks
 
-## Повторяющиеся задачи
+The utility honours org-mode repeater syntax for automatically scheduling
+follow-up occurrences.
 
-Утилита поддерживает синтаксис повторов org-mode для автоматического планирования задач:
+### Repeater kinds
 
-### Типы повторов
+Every standard org-mode unit is supported:
 
-Поддерживаются все стандартные единицы org-mode:
+- `+Nh` — every N hours
+- `+Nd` — every N days (strict; preserves the original date offset)
+- `+Nw` — every N weeks
+- `+Nm` — every N months
+- `+Ny` — every N years
+- `+Nwd` — **every N working days** (project extension; honours RF
+  holidays and weekends)
 
-- `+Nh` - повтор каждые N часов
-- `+Nd` - повтор каждые N дней (строгий, сохраняет просрочку)
-- `+Nw` - повтор каждые N недель
-- `+Nm` - повтор каждые N месяцев
-- `+Ny` - повтор каждые N лет
-- `+Nwd` - **повтор каждые N рабочих дней** (расширение, с учетом праздников и выходных РФ)
+Repeater modifiers:
+- `+` — strict (cumulative); preserves the date offset
+- `++` — catch-up (smart); preserves the weekday
+- `.+` — restart-from-completion (relative to the close date)
 
-Модификаторы типа повтора:
-- `+` - строгий повтор (cumulative), сохраняет просрочку
-- `++` - умный повтор (catch-up), сохраняет день недели
-- `.+` - повтор от даты завершения (restart)
+### Working days
 
-### Рабочие дни
+Repeaters with the `wd` (workday) suffix take into account:
+- Regular weekends (Saturday, Sunday)
+- Official RF holidays
+- Holiday shifts
 
-Повторы с суффиксом `wd` (workday) учитывают:
-- Обычные выходные (суббота, воскресенье)
-- Официальные праздники РФ
-- Переносы праздничных дней
+Holiday data lives in `holidays_ru.json`. At build time (`build.rs`) the
+data is compiled into static Rust constants — the JSON is parsed once
+during compilation rather than at runtime.
 
-Данные о праздниках хранятся в файле `holidays_ru.json`. При сборке проекта (`build.rs`) данные компилируются в статические константы Rust для максимальной производительности - парсинг JSON происходит один раз на этапе компиляции, а не в runtime.
-
-### Примеры
+### Examples
 
 ```markdown
-### TODO Проверка каждый час
+### TODO Hourly check
 `SCHEDULED: <2025-12-05 Thu 10:00 +1h>`
 
-### TODO Ежедневная задача
+### TODO Daily task
 `SCHEDULED: <2025-12-05 Thu +1d>`
 
-### TODO Еженедельная встреча
+### TODO Weekly meeting
 `SCHEDULED: <2025-12-05 Thu +1w>`
 
-### TODO Ежемесячный отчет
+### TODO Monthly report
 `SCHEDULED: <2025-12-05 Thu +1m>`
 
-### TODO Ежегодная проверка
+### TODO Annual review
 `SCHEDULED: <2025-12-05 Thu +1y>`
 
-### TODO Рабочая задача (только по рабочим дням)
+### TODO Workday-only task
 `SCHEDULED: <2025-12-05 Thu +1wd>`
 
-### TODO Задача каждые 2 рабочих дня
+### TODO Every two working days
 `SCHEDULED: <2025-12-05 Thu +2wd>`
 ```
 
-## Структура проекта
+## Project layout
 
 ```
 markdown-org-extract/
 ├── src/
-│   ├── main.rs             # Точка входа CLI, walker, чтение файлов
-│   ├── cli.rs              # Парсинг аргументов (clap), tracing init
-│   ├── agenda.rs           # Логика agenda (день/неделя/месяц), повторы
-│   ├── parser.rs           # Извлечение задач из markdown AST
-│   ├── render.rs           # Markdown/HTML рендеринг
+│   ├── main.rs             # CLI entry point, file walker, file I/O
+│   ├── cli.rs              # Argument parsing (clap), tracing init
+│   ├── agenda.rs           # Agenda logic (day/week/month), repeaters
+│   ├── parser.rs           # Task extraction from the markdown AST
+│   ├── render.rs           # Markdown/HTML rendering
 │   ├── format.rs           # OutputFormat (clap ValueEnum)
 │   ├── error.rs            # AppError
 │   ├── types.rs            # Task / Priority / DayAgenda / ProcessingStats
-│   ├── clock.rs            # CLOCK: парсинг и сумма времени
-│   ├── holidays.rs         # Календарь рабочих дней РФ (singleton, binary search)
-│   ├── regex_limits.rs     # `compile_bounded`: regex с лимитами на size/DFA
-│   └── timestamp/          # Парсинг org-mode timestamp'ов
+│   ├── clock.rs            # CLOCK parsing and time aggregation
+│   ├── holidays.rs         # RF workday calendar (singleton, binary search)
+│   ├── regex_limits.rs     # `compile_bounded`: regex with size/DFA caps
+│   └── timestamp/          # Org-mode timestamp parsing
 │       ├── parser.rs       #   <2024-12-05 Thu 10:00 +1d> → ParsedTimestamp
-│       ├── extract.rs      #   вытащить timestamp/CREATED из произвольного текста
-│       ├── repeater.rs     #   парсинг и арифметика повторов (+1d, ++2w, .+1wd…)
-│       └── weekdays.rs     #   нормализация русских названий дней недели
+│       ├── extract.rs      #   pull timestamp/CREATED out of arbitrary text
+│       ├── repeater.rs     #   parsing and arithmetic of repeaters (+1d, ++2w, .+1wd…)
+│       └── weekdays.rs     #   normalisation of Russian weekday names
 ├── tests/
-│   └── cli.rs              # Integration-тесты CLI (assert_cmd)
-├── examples/               # Примеры markdown файлов
-├── docs/                   # Дополнительная документация
-├── holidays_ru.json        # Календарь праздников/рабочих дней
-├── build.rs                # Генерация holidays_data.rs во время сборки
-├── rustfmt.toml            # Настройки форматирования (edition 2021, width 100)
+│   └── cli.rs              # CLI integration tests (assert_cmd)
+├── examples/               # Sample markdown files
+├── docs/                   # Supplementary documentation
+├── holidays_ru.json        # RF holiday / workday calendar
+├── build.rs                # Generates holidays_data.rs at build time
+├── rustfmt.toml            # Formatter settings (edition 2021, width 100)
 ├── rust-toolchain.toml     # Pinned channel = stable, components rustfmt+clippy
 ├── .github/workflows/
-│   ├── ci.yml              # PR/push CI: lint + test-matrix (Linux/macOS/Windows) + cargo audit
-│   ├── release.yml         # Публикация на crates.io по тегу v* (+ workflow_dispatch)
-│   └── outdated.yml        # Еженедельный non-blocking `cargo outdated`
+│   ├── ci.yml              # PR/push CI: lint + test matrix (Linux/macOS/Windows) + cargo audit
+│   ├── release.yml         # Publish to crates.io on tag v* (+ workflow_dispatch)
+│   └── outdated.yml        # Weekly non-blocking `cargo outdated`
 ├── Cargo.toml
 ├── CHANGELOG.md
-├── TODO.md                 # Отложенные технические задачи
+├── TODO.md                 # Deferred technical tasks
 ├── LICENSE                 # MIT
 └── README.md
 ```
 
-См. также:
-- [docs/CLOCK_IMPLEMENTATION.md](docs/CLOCK_IMPLEMENTATION.md) — детали реализации CLOCK-меток
-- [docs/org-mode-keywords.md](docs/org-mode-keywords.md) — справка по поддерживаемым ключевым словам
-- [CHANGELOG.md](CHANGELOG.md) — история версий
-- [TODO.md](TODO.md) — отложенные технические задачи
+See also:
+- [docs/CLOCK_IMPLEMENTATION.md](docs/CLOCK_IMPLEMENTATION.md) — CLOCK marker implementation details
+- [docs/org-mode-keywords.md](docs/org-mode-keywords.md) — supported-keyword reference
+- [CHANGELOG.md](CHANGELOG.md) — version history
+- [TODO.md](TODO.md) — deferred technical tasks
 
-## Зависимости
+## Dependencies
 
-- `clap` — парсинг аргументов командной строки
-- `comrak` — парсинг markdown (без onig/syntect: `default-features = false`)
-- `regex` — работа с регулярными выражениями (с лимитами на size/DFA)
-- `serde` / `serde_json` — сериализация данных
-- `chrono` / `chrono-tz` — даты и часовые пояса
-- `grep-regex` / `grep-searcher` — быстрый pre-filter по ключевым словам
-- `ignore` — обход дерева каталогов с учётом `.gitignore`
-- `globset` — компиляция glob-шаблонов для `--glob`
-- `tracing` / `tracing-subscriber` — структурированное логирование диагностики (`--verbose`, `--quiet`, `--no-color`)
+- `clap` — command-line argument parsing
+- `comrak` — markdown parsing (without onig/syntect: `default-features = false`)
+- `regex` — regular expressions (with size/DFA caps)
+- `serde` / `serde_json` — data serialisation
+- `chrono` / `chrono-tz` — dates and timezones
+- `grep-regex` / `grep-searcher` — fast pre-filter over keywords
+- `ignore` — directory tree walk that honours `.gitignore`
+- `globset` — glob compilation for `--glob`
+- `tracing` / `tracing-subscriber` — structured diagnostic logging (`--verbose`, `--quiet`, `--color`, `--no-color`)
 
-Для лениво-инициализируемых `static`-регулярок используется `std::sync::LazyLock` из стандартной библиотеки (Rust 1.80+).
+Lazily initialised `static` regular expressions use `std::sync::LazyLock`
+from the standard library (Rust 1.80+; the project itself requires 1.85).
 
-## Лицензия
+## License
 
-MIT — см. файл [LICENSE](LICENSE).
+MIT — see the [LICENSE](LICENSE) file.
 
-### Происхождение данных `holidays_ru.json`
+### Provenance of `holidays_ru.json`
 
-Календарь праздников и переносов выходных в `holidays_ru.json` составлен
-автором проекта на основе официальных постановлений Правительства РФ о
-переносе выходных дней. Это публичная фактическая информация, не
-подлежащая копирайту. Файл распространяется под той же MIT-лицензией,
-что и остальной код, для удобства упаковки.
+The holiday calendar and weekend-shift table in `holidays_ru.json` was
+compiled by the project author from the official RF government decrees
+on weekend rescheduling. This is public factual information and is not
+subject to copyright. For packaging convenience the file is distributed
+under the same MIT licence as the rest of the code.
 
-Атрибуция и описание схемы продублированы внутри самого файла в поле
-`_meta` (build.rs игнорирует подчёркнутые ключи, поэтому добавление не
-влияет на сборку).
+Attribution and a schema description are duplicated inside the file
+itself under the `_meta` key (`build.rs` ignores underscore-prefixed
+top-level keys, so the block has no effect on the compiled output).

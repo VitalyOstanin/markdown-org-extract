@@ -1,125 +1,130 @@
-# Правила проекта для Claude Code
+# Project rules for Claude Code
 
-## TDD: тесты на все изменения
+## TDD: tests on every change
 
-Для любых изменений в коде ОБЯЗАТЕЛЬНО писать тесты. Не халтурные, а
-проверяющие реальное поведение:
+Every code change MUST be accompanied by tests. Not perfunctory ones —
+tests that exercise actual behaviour:
 
-1. Если для затронутого поведения тестов ещё не было -- добавлять их
-   по TDD (red -> green -> refactor): сначала тест, который падает,
-   затем минимальное изменение кода, делающее его зелёным, затем
-   рефакторинг при необходимости.
-2. Для багфиксов сначала писать тест, который воспроизводит баг
-   (красный), и только потом фикс (зелёный). Тест без фикса
-   доказывает, что баг существовал; фикс без теста не доказывает,
-   что баг не вернётся.
-3. Для CLI-флагов и валидации проверять и golden path, и
-   conflicts/ошибки через `assert_cmd` в `tests/cli.rs`.
-4. Для парсера, агенды, форматирования и прочей логики -- модульные
-   тесты в `#[cfg(test)] mod tests` рядом с кодом, плюс при
-   необходимости snapshot-тесты на байт-точный вывод.
-5. Тесты не должны проверять только компиляцию или существование
-   функции -- проверяется поведение на конкретных входах с
-   конкретными ожидаемыми выходами.
-6. Запуск: `cargo test`. Перед закрытием задачи -- зелёный прогон
-   всего набора, не только новых тестов.
+1. If the affected behaviour had no tests yet, add them under TDD
+   (red → green → refactor): first a failing test, then the smallest
+   code change that makes it pass, then refactoring if needed.
+2. For bug fixes, first write a test that reproduces the bug (red) and
+   only then write the fix (green). A test without a fix proves the
+   bug existed; a fix without a test does not prove the bug will not
+   return.
+3. For CLI flags and validation, cover both the golden path and the
+   conflicts/error cases through `assert_cmd` in `tests/cli.rs`.
+4. For the parser, agenda, formatting, and other logic — unit tests
+   in `#[cfg(test)] mod tests` next to the code, plus snapshot tests
+   on byte-exact output where appropriate.
+5. Tests must exercise behaviour with concrete inputs and concrete
+   expected outputs, not merely check that the code compiles or that
+   a function exists.
+6. How to run: `cargo test`. Before closing a task, run the full
+   suite green, not just the new tests.
 
-Прецедент: задача 021 (cli-ux conflicts для `--holidays` и `--from`/
-`--to`) была сначала закрыта без интеграционных тестов на
-`conflicts_with` -- конфликты могли молча сломаться при следующем
-рефакторинге clap-аргументов. Тесты были добавлены постфактум по
-требованию пользователя.
+Precedent: task 021 (cli-ux conflicts for `--holidays` and `--from` /
+`--to`) was initially closed without integration tests on
+`conflicts_with`. The conflict declarations could have silently broken
+under any later clap-argument refactor. The tests were added after
+the fact at the user's request.
 
-## Документация для сообщества: пока не нужна
+## Community-facing documentation: not needed yet
 
-Проект ещё не набрал внешнее сообщество контрибьюторов, поэтому
-стандартная мета-документация для open-source проектов (например,
-`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, шаблоны
-issue/PR, `ISSUE_TEMPLATE/`, `PULL_REQUEST_TEMPLATE.md`) НЕ нужна и
-НЕ должна создаваться без явной просьбы пользователя:
+The project does not yet have an external contributor community, so
+the standard open-source meta-documentation (such as `CONTRIBUTING.md`,
+`CODE_OF_CONDUCT.md`, `SECURITY.md`, issue/PR templates,
+`ISSUE_TEMPLATE/`, `PULL_REQUEST_TEMPLATE.md`) is neither needed nor
+to be created without an explicit request from the user:
 
-1. Такие файлы быстро устаревают, если в них нет потока внешних
-   контрибьюторов, который заставлял бы их актуализировать. Прецедент:
-   удалённый `CONTRIBUTING.md` описывал релизный процесс неполностью
-   и местами неверно -- workflow ушёл вперёд, документ не догонял.
-2. Конвенции проекта (TDD, стиль кода, релизы) живут в `CLAUDE.md`
-   проекта и в самом workflow (`.github/workflows/`). Это
-   единственный источник правды для агента и текущих разработчиков.
-3. Если в будущем появится внешнее сообщество -- мета-документацию
-   создавать заново на основе актуального workflow, а не
-   восстанавливать удалённую.
+1. Such files go stale quickly without a steady flow of external
+   contributors to force them to stay current. Precedent: the removed
+   `CONTRIBUTING.md` described the release process incompletely and
+   in places incorrectly — the workflow moved on, the document did
+   not.
+2. Project conventions (TDD, code style, releases) live in the
+   project-level `CLAUDE.md` and in the workflow itself
+   (`.github/workflows/`). That is the single source of truth for the
+   agent and for current developers.
+3. If an external community appears in the future, the
+   meta-documentation should be created anew from the actual current
+   workflow, not restored from the deleted version.
 
-Из этого следует: не предлагать добавить `CONTRIBUTING.md` /
-`CODE_OF_CONDUCT.md` / шаблоны issue/PR, не закрывать задачи
-"добавить CONTRIBUTING" без явного запроса от пользователя.
+It follows that we do not propose adding `CONTRIBUTING.md` /
+`CODE_OF_CONDUCT.md` / issue-PR templates, and we do not close tasks
+of the form "add CONTRIBUTING" without an explicit user request.
 
-## Не дублировать защиту, которую обеспечивает реестр
+## Do not duplicate protections already provided by the registry
 
-crates.io делает опубликованные версии иммутабельными: `cargo publish`
-для уже существующей `name@version` отклоняется реестром на стороне
-сервера (шаг 5 из 5 в процессе `cargo publish`). Поэтому НЕ
-добавлять в workflow собственную проверку "версия уже опубликована"
-с пропуском последующих шагов:
+crates.io treats published versions as immutable: `cargo publish` for
+an already-existing `name@version` is rejected by the registry
+server-side (step 5 of 5 in the `cargo publish` flow). Therefore we
+do NOT add a separate "version already published" check with
+skip-following-steps logic to the workflow:
 
-1. Native ошибка `crate version 'X.Y.Z' is already uploaded` понятна
-   и однозначна; самостоятельная проверка только усложняет YAML.
-2. Своя проверка через crates.io API может ложно сработать при 5xx
-   или сетевых сбоях -- блокирует валидный релиз.
-3. Реализация "skip + warning" даёт false-success: зелёный workflow
-   при неудачной попытке релиза. Пользователь думает, что релиз
-   прошёл.
-4. Экономия 5-10 минут CI на ошибочных запусках не оправдывает
-   риски ложно-зелёного релиза.
+1. The native error `crate version 'X.Y.Z' is already uploaded` is
+   clear and unambiguous; a separate check only complicates the YAML.
+2. A custom check against the crates.io API can yield a false
+   positive on 5xx responses or network failures and block a valid
+   release.
+3. A "skip + warning" implementation produces a false success: a
+   green workflow on a failed release attempt. The user believes the
+   release succeeded.
+4. Saving 5–10 minutes of CI on erroneous runs is not worth the risk
+   of a falsely-green release.
 
-Применять то же правило к аналогичным защитам в других реестрах
-(npm, PyPI, Docker Hub) -- если реестр сам не позволяет дубликат,
-не дублировать проверку на стороне CI.
+The same rule applies to analogous protections in other registries
+(npm, PyPI, Docker Hub): if the registry itself rejects duplicates,
+do not duplicate the check on the CI side.
 
-Прецедент: задача 024 предлагала добавить проверку crates.io API
-перед `cargo publish`. После анализа документации Cargo Book и
-поведения `cargo publish` (документ
-<https://doc.rust-lang.org/cargo/reference/publishing.html>) решено
-не добавлять -- crates.io сам отвергает дубликат с понятной ошибкой.
+Precedent: task 024 proposed adding a crates.io API probe before
+`cargo publish`. After reading the Cargo Book and inspecting how
+`cargo publish` itself behaves
+(<https://doc.rust-lang.org/cargo/reference/publishing.html>) we
+decided against it — crates.io rejects duplicates with a clear error
+of its own.
 
-## Цифры тестов в README -- не писать
+## Do not put test counts in the README
 
-Не указывать в README/документации количество тестов в формах "(N
-тестов)", "12 тестов на X" и подобных. Описывать тестовое покрытие
-маркированным списком "что покрыто" без счётчиков:
+Do not state test counts in the README/documentation in forms such as
+"(N tests)", "12 tests covering X", and similar. Describe test
+coverage with a bulleted "what is covered" list and no numeric
+counters:
 
-1. Числа быстро устаревают: каждая новая задача добавляет тесты,
-   и блок в README превращается в долг по обновлению без выгоды для
-   читателя.
-2. В этом проекте README уже разъехался с реальностью: говорил
-   "(9 тестов)" / "(6 тестов)" / "(2 теста)" -- фактически было
-   11 / 24 / 3 на момент задачи 039.
-3. Список "что покрыто" без чисел остаётся правдой при росте набора;
-   читателю и так понятно, как запустить тесты (`cargo test`).
+1. Numbers go stale fast: every new task adds tests, and the block in
+   the README turns into update debt without giving the reader
+   anything in return.
+2. In this project the README has already drifted from reality: it
+   used to say "(9 tests)" / "(6 tests)" / "(2 tests)" while the real
+   counts at the time of task 039 were 11 / 24 / 3.
+3. A "what is covered" list without numbers stays true as the suite
+   grows, and the reader can run `cargo test` to see the current count.
 
-Прецедент: задача 039 (cli-ux/docs) предлагала актуализировать
-устаревшие цифры тестов в README. Пользователь выбрал убрать цифры
-целиком как "детские понты", вместо того чтобы обновлять их при
-каждой следующей задаче.
+Precedent: task 039 (cli-ux/docs) proposed refreshing the outdated
+test counts in the README. The user chose to remove the counts
+entirely as "childish posturing" instead of updating them at every
+subsequent task.
 
-## Локализация дефолтов: автор выбрал РФ-контекст
+## Default-value localisation: the author chose an RF context
 
-Дефолтные значения проекта, привязанные к РФ-контексту, выбраны
-автором осознанно. НЕ предлагать их менять без явной просьбы
-пользователя:
+The project's default values that are tied to the RF context are
+deliberate author choices. Do NOT propose changing them without an
+explicit request from the user:
 
-1. `--tz` по умолчанию `Europe/Moscow` -- это сознательный выбор
-   для основной целевой аудитории. Не предлагать переход на
-   `local`/`UTC`, не считать это багом cli-ux.
-2. Bundled holidays в `holidays_ru.json` -- календарь РФ. Не
-   предлагать локализацию календаря или вынос в отдельный flag без
-   запроса.
-3. `--locale ru,en` по умолчанию -- то же самое: дефолт для
-   ожидаемых пользователей.
+1. `--tz` defaulting to `Europe/Moscow` is a deliberate choice for
+   the primary target audience. Do not propose switching to
+   `local`/`UTC`, do not treat it as a cli-ux bug.
+2. Bundled holidays in `holidays_ru.json` form the RF calendar. Do
+   not propose calendar localisation or moving the calendar behind a
+   separate flag without a request.
+3. `--locale ru,en` by default is the same story: the default for the
+   expected audience.
 
-Из этого следует: задачи review-ров вида "дефолт неочевиден для
-англоязычной аудитории" / "TZ привязан к РФ" автоматически закрывать
-со ссылкой на это правило, не реализовывать.
+It follows that reviewer tasks of the form "default is non-obvious
+for an English-speaking audience" / "TZ is hard-wired to RF" should
+be closed automatically with a reference to this rule, not
+implemented.
 
-Прецедент: задача 050 (cli-ux) предлагала менять дефолт TZ на
-`local` или UTC. Отменена пользователем -- дефолт выбран автором и
-не подлежит изменению.
+Precedent: task 050 (cli-ux) proposed changing the `--tz` default to
+`local` or UTC. The user cancelled it — the default is the author's
+choice and is not subject to change.

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [\[Unreleased\]](#unreleased)
+- [\[0.3.0\] — 2026-05-19](#030--2026-05-19)
 - [\[0.2.2\] — 2026-05-17](#022--2026-05-17)
 - [\[0.2.1\] — 2026-05-17](#021--2026-05-17)
 - [\[0.2.0\] — 2026-05-17](#020--2026-05-17)
@@ -16,21 +17,210 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No user-visible changes yet._
+
+## [0.3.0] — 2026-05-19
+
+### Added
+
+- `--color auto|always|never`: standard Rust-ecosystem control over
+  diagnostic colour, with precedence Always > Never / `--no-color` >
+  `NO_COLOR` > stdout-is-TTY. `--no-color` is now a shortcut for
+  `--color never` and conflicts with `--color`.
+- `--agenda tasks`: new mode mirroring the legacy `--tasks` bool flag.
+  Both produce the flat task list; the bool flag wins when both are
+  set so existing pipelines keep working.
+- `--output -`: the standard unix sigil for stdout. No file named `-`
+  is created; the result is written to stdout instead.
+- `--locale` now warns (`tracing::warn!`) when given a value that is
+  not in the supported set (`ru`, `en`). Silently dropping
+  `--locale es,de` previously left the user with no weekday mappings
+  and no signal.
+- `tracing` spans (`debug_span!("file", path = ...)`) wrap per-file
+  task extraction so every event emitted by the parser, timestamp
+  extractor, and clock extractor inherits `path = ...`. Multi-file
+  runs at `-vv` now produce per-file event groups instead of one
+  undifferentiated stream.
+- `holidays_ru.json` carries a `_meta` block (description, source,
+  licence, schema) so the calendar's attribution survives even if the
+  README is forked away from the data file. `build.rs` ignores
+  underscore-prefixed top-level keys, so the block has no effect on
+  the compiled-in `HOLIDAYS` / `WORKDAYS` arrays.
+- README documents the `holidays_ru.json` provenance in a dedicated
+  section under the licence chapter.
+- A dedicated `msrv` CI job builds with the toolchain pinned to 1.85.
+  `rust-version` in `Cargo.toml` is only a soft check, so a
+  stable-only matrix could otherwise mask a regression that prevented
+  users on the declared MSRV from compiling.
+
 ### Changed
 
-- MSRV (minimum supported Rust version) raised from 1.80 to 1.85.
-  Required by the `comrak` 0.50+ upgrade and locked in CI via a
-  dedicated `msrv` job that builds with `cargo +1.85 build --locked`.
-- `comrak` dependency bumped from 0.48 to 0.52: backward-compatible
+- **Breaking** — MSRV raised from 1.80 to 1.85. Required by the
+  `comrak` 0.50+ upgrade, which moved the crate to the Rust 2024
+  edition. Users on Rust < 1.85 cannot build this version; install
+  the previous release (0.2.2) or upgrade the toolchain.
+- **Breaking** — `validate_date` (which covers `--date`, `--from`,
+  `--to`, and `--current-date`) now rejects years outside
+  1900..=2100, matching the bound long applied by `--holidays`.
+  Without this cap an extreme `--current-date 5000-01-01 +1y` could
+  spin a repeater for thousands of iterations.
+- **Breaking** — every validator message drops the leading
+  `Invalid <kind> '<v>':` prefix and is lowercase. clap already
+  prefixes the value with `error: invalid value '<v>' for '--<arg>':`,
+  and the doubled noun read as stuttering. Scripts that grep the
+  exact prefix `Invalid` need to be updated.
+- `comrak` dependency bumped from 0.48 to 0.52. Backward-compatible
   for our usage of `NodeValue::{Heading, Paragraph, Code, CodeBlock,
   Text, Emph, Strong, Link, Strikethrough}`; no parser code changes
   were needed.
+- Help text rewrites: `--no-color` no longer reads as ambiguous
+  ("honors NO_COLOR as well") and instead says "`NO_COLOR` has the
+  same effect" with a reference to no-color.org. `--format` help
+  mentions the `md` alias for `markdown` explicitly so the alias is
+  discoverable from both `-h` and `--help`.
+- `validate_max_tasks` distinguishes `IntErrorKind::PosOverflow`
+  ("out of range, must be at most 10_000_000") from non-numeric
+  garbage ("must be a positive integer up to 10_000_000"). On 32-bit
+  targets `usize` overflows above the cap and the old message read
+  as "not a number".
+- `validate_timezone` propagates the chrono-tz `Display` verbatim and
+  keeps the IANA hint; it no longer echoes the input value.
+- Agenda mode is threaded through internally as a closed
+  `AgendaScope` enum (`Day`/`Week`/`Month`/`Tasks`) instead of a
+  stringly-typed `&str`. The fall-through `_ => InvalidDate(...)`
+  arm is now impossible by construction.
+- Repeating tasks now surface on occurrence days in week and month
+  agenda, including past occurrences inside the window. Previously
+  the occurrence check rejected anything strictly before "today".
+- `--from > --to` is rejected with `AppError::DateRange` instead of
+  producing an empty agenda.
+- `render_markdown` and `render_html` are collapsed into a single
+  implementation shared by `--tasks` and the agenda day view. The
+  `Type:` field consistently uses `TODO` / `DONE` (the README was
+  out-of-date with `Todo` / `Done` after the 0.2.0 `Display` change),
+  and `Priority:` is a bare letter rather than the `[#A]` wrapper.
+- README examples section refreshed: the bundled-examples list grew
+  from 3 files to all 13 (grouped by intent — general scenarios,
+  org-mode label demos, CLOCK-block demos). JSON example for
+  `--tasks` updated to reflect actual output
+  (`#[serde(skip_serializing_if = "Option::is_none")]` strips
+  `null`-valued optional fields, so they no longer appear).
+
+### Fixed
+
+- TOCTOU window in `scan_files`: `fs::metadata().len()` followed by
+  `fs::read()` was two separate syscalls, leaving a window where a
+  file could grow or be swapped for a symlink between size check and
+  content read. `read_capped()` now opens the file once and uses
+  `Read::take(cap + 1).read_to_end()`; oversized files are detected
+  without re-statting. Defense-in-depth; the local filesystem is
+  still trusted as a security boundary.
+- `validate_output_path` distinguishes `io::ErrorKind::NotFound`
+  (writing to a fresh file, the normal case) from any other
+  `symlink_metadata` error. `PermissionDenied` / `EIO` on the target
+  used to be swallowed and surface later as a confusing `fs::write`
+  failure; they now fail loudly at validation with a precise message.
+- `compile_glob` preserves the `globset::Error` `source()` chain via
+  a small `format_error_chain` helper, so the user sees the
+  underlying brace/range parse failure, not just the top-level
+  `Display`.
+- `parse_repeater` no longer panics on multibyte UTF-8 trailing
+  characters such as `+1й` or `+1🙂`. The unit-character extraction
+  switches from byte slicing to `last().len_utf8()`. Every rejection
+  branch now emits a `tracing::trace!` with a specific reason
+  ("missing prefix", "non-numeric value", "unknown unit", "zero
+  step", and so on).
+- `extract_clocks` no longer panics on hostile input: the `.expect()`
+  is gone, and the regex rejects mismatched bracket pairs (`[…>`,
+  `<…]`) at parse time.
+- `calculate_total_minutes` returns `Some(0)` when at least one entry
+  carries a parseable `duration` (even when the sum is zero) and
+  `None` only when nothing contributed. Previously a legitimate
+  `0:00` CLOCK was indistinguishable from "no duration recorded".
+- Year-repeater walk skips Feb-29 in non-leap years instead of
+  truncating to Feb-28. Month-repeater preserves `base_day` across
+  month-length truncations.
+- `parse_heading` no longer relies on `caps.get(0).unwrap()`. The
+  capture was bounded by the regex, but the explicit `?` is safer
+  against future regex edits.
+- Bare `[#A]` priority is recognised on a heading without a preceding
+  `TODO` / `DONE` keyword. This was the 0.2.2 hotfix, now folded into
+  the parser rewrite cleanly.
+- The 20-entry diagnostic caps for failed/skipped paths and invalid
+  timestamps are unified under `types::MAX_DIAGNOSTIC_ITEMS`; their
+  independence used to be incidental.
 
 ### Removed
 
-- `CONTRIBUTING.md` was removed: the project does not yet have an external
-  contributor community, and the document had drifted from the actual
-  release workflow. Project conventions live in `CLAUDE.md` instead.
+- `CONTRIBUTING.md`. The project does not yet have an external
+  contributor community, and the document had drifted from the
+  actual release workflow. Project conventions now live in
+  `CLAUDE.md` and in the `.github/workflows/` files themselves.
+- Numeric test counts in the README (`(9 tests)`, `(6 tests)`,
+  `(2 tests)`). They were already out of sync with reality, and
+  every new task forced an unrelated README update; bullet "what is
+  covered" lists carry the same information without the maintenance
+  debt.
+- `next_occurrence` (a 125-line dead-code helper) and its
+  `#[allow(dead_code)]` marker.
+
+### Internal
+
+- `closest_date` decomposed from a 188-line monolith into
+  bracket-per-unit helpers (`bracket_year`, `bracket_month`,
+  `bracket_uniform_days`, `bracket_workday`) plus a single
+  `pick(prefer, ...)` for the Past / Future selection.
+- The CLOCK regex body is bounded by a named `CLOCK_BODY_MAX = 128`
+  constant declared in `src/regex_limits.rs`; same idea for
+  `TS_BODY_MAX = 256` used by `src/timestamp/extract.rs`. Boundary
+  tests pin both `len == cap` (must match) and `len == cap + 1`
+  (must not).
+- `RU_WEEKDAY_MAPPINGS` exported from `src/cli.rs` as `pub(crate)`
+  so the parser test that re-runs the production pipeline can import
+  the same table instead of drifting from it.
+- `MAX_DIAGNOSTIC_ITEMS` exported from `src/types.rs`.
+
+### Release process and CI
+
+- The release workflow now smoke-runs the LTO-enabled release binary
+  immediately before publish so optimiser-only regressions (UB,
+  dead-code elimination collapsing a side effect, etc.) surface
+  here instead of by downstream `cargo install` users.
+- The release workflow refuses to publish unless `Cargo.lock`'s
+  resolved version for the crate matches the tag. A stale lock used
+  to surface as a confusing `--locked` failure later in publish.
+- `cargo publish --dry-run` and `cargo publish` are both pinned with
+  `--locked` so the resolved dependency graph at the tagged commit
+  is what ships.
+- Cargo.toml version is now extracted with
+  `cargo pkgid | sed -E 's/.*#//'` instead of an ad-hoc `awk`
+  pattern that could have matched a `version = ...` line inside a
+  `[dependencies.*]` block before `[package]`.
+- A single `Resolve tag and version` step produces
+  `steps.tag.outputs.{tag, version}` as the source of truth for
+  later steps.
+- Publication is gated on `scripts/check-changelog.sh "$VERSION"`,
+  which fails if `## [<version>]` is missing from CHANGELOG.md or
+  if `## [Unreleased]` still carries entries that were not moved
+  to the released version's section.
+  `tests/release_check_changelog.rs` pins the script's behaviour.
+- `actions/checkout` bumped from v4.3.1 to v6.0.2 across all
+  workflows (ci, release, outdated).
+- `Cargo.toml` `exclude` now lists `scripts/` so the publish-time
+  helpers shipped in this release do not end up inside the crate
+  tarball.
+
+### Project documentation
+
+- `README.md`, `CLAUDE.md`, and `TODO.md` translated to English so
+  the public-facing documentation matches the language used in
+  source comments, CLI help, and CHANGELOG. The Russian-weekday
+  examples in `README.md` (under "Locale support") are preserved
+  intentionally, since they demonstrate the project's
+  Russian-weekday recognition.
+- Added project-level `CLAUDE.md` capturing TDD-on-every-change,
+  no-community-meta-docs-yet, no-registry-duplicate-guards,
+  no-test-counts-in-README, and RU-default-intentional rules.
 
 ## [0.2.2] — 2026-05-17
 

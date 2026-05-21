@@ -70,6 +70,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cli::get_weekday_mappings`) gained rustdoc explaining inputs,
   variants, and error conditions, including intra-doc links to
   related types and the ADR that defines the date-window model.
+- `.github/workflows/release.yml` permissions follow least-privilege:
+  the workflow default is now `contents: read`, the `test` / `lint` /
+  `msrv` jobs spell out `contents: read` explicitly, and only the
+  `publish` job declares `contents: write` (required for
+  `gh release create`). Shrinks the blast radius if a compromised
+  action runs in the pre-publish jobs.
 
 ### Fixed
 

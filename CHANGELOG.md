@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Unified the agenda window across `day`, `week`, `month` modes
+  ([ADR-0009](docs/adr/0009-unified-date-window-semantics.md)).
+  `--from`/`--to` are now first-class window controls in every
+  non-tasks mode (day mode previously ignored them silently).
+  A single edge fills the other side from `--current-date`
+  (or today): `--from X` -> `[X..current_date]`, `--to Y` ->
+  `[current_date..Y]`. `--date` selects the window when no
+  `--from`/`--to` is given. In day mode that is a single day; in
+  week / month it is the week / month containing the date.
+  `tasks` mode now rejects all date arguments (`--date`, `--from`,
+  `--to`, `--current-date`) instead of silently ignoring them.
 - Exit codes now reflect the error category instead of a uniform `1`.
   Usage / input-validation errors (invalid `--dir`, `--glob`, `--date`,
   `--tz`, `--output`, `from > to`) exit with code `2`. IO failures

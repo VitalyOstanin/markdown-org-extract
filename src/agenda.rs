@@ -55,21 +55,35 @@ fn parse_date_arg(label: &str, value: &str) -> Result<NaiveDate, AppError> {
         .map_err(|e| AppError::InvalidDate(format!("{label} '{value}': {e}")))
 }
 
-/// Parse an explicit `--from`/`--to` range; both must be present together, and
-/// `from <= to`. Returns `Ok(None)` if either side is missing so the caller can
-/// fall back to a `--date`-derived or current-period range.
+/// Resolve `--from`/`--to` into a `[start, end]` date range, filling a missing
+/// edge from `current_date` (today or `--current-date`).
+///
+/// Returns:
+///
+/// - `Ok(Some((from, to)))` when at least one of `--from` / `--to` was given.
+/// - `Ok(None)` when neither was given, so the caller can fall back to a
+///   `--date`-derived window or the current period.
+/// - `Err(AppError::DateRange)` when the resulting range is inverted
+///   (`from > to`).
+///
+/// See [ADR-0009](../docs/adr/0009-unified-date-window-semantics.md) for the
+/// full model.
 fn parse_range(
     from: Option<&str>,
     to: Option<&str>,
+    current_date: NaiveDate,
 ) -> Result<Option<(NaiveDate, NaiveDate)>, AppError> {
-    let (Some(from_str), Some(to_str)) = (from, to) else {
-        return Ok(None);
+    let from_date = from.map(|s| parse_date_arg("from", s)).transpose()?;
+    let to_date = to.map(|s| parse_date_arg("to", s)).transpose()?;
+    let (start, end) = match (from_date, to_date) {
+        (None, None) => return Ok(None),
+        (Some(f), Some(t)) => (f, t),
+        (Some(f), None) => (f, current_date),
+        (None, Some(t)) => (current_date, t),
     };
-    let start = parse_date_arg("from", from_str)?;
-    let end = parse_date_arg("to", to_str)?;
     if start > end {
         return Err(AppError::DateRange(format!(
-            "Start date {from_str} is after end date {to_str}"
+            "Start date {start} is after end date {end}"
         )));
     }
     Ok(Some((start, end)))
@@ -104,25 +118,45 @@ pub fn filter_agenda(
         "filter_agenda input"
     );
 
+    // Tasks scope is task-based, not date-centric -- reject any date argument
+    // up-front so a stray `--date 2026-01-01 --agenda tasks` is loud, not
+    // silently ignored. See ADR-0009 for the model.
+    if scope == AgendaScope::Tasks
+        && (date.is_some() || from.is_some() || to.is_some() || current_date_override.is_some())
+    {
+        return Err(AppError::DateRange(
+            "tasks mode does not accept date arguments (--date, --from, --to, --current-date)"
+                .to_string(),
+        ));
+    }
+
     match scope {
         AgendaScope::Day => {
-            let target_date = match date {
-                Some(date_str) => parse_date_arg("date", date_str)?,
-                None => today,
-            };
-            Ok(AgendaOutput::Days(vec![build_day_agenda(
-                &tasks,
-                target_date,
-                today,
-            )]))
+            // --from/--to: range of day-agendas. Single edge falls back to
+            // `today` (current_date or --current-date).
+            if let Some((start_date, end_date)) = parse_range(from, to, today)? {
+                Ok(AgendaOutput::Days(build_week_agenda(
+                    &tasks, start_date, end_date, today,
+                )))
+            } else {
+                let target_date = match date {
+                    Some(date_str) => parse_date_arg("date", date_str)?,
+                    None => today,
+                };
+                Ok(AgendaOutput::Days(vec![build_day_agenda(
+                    &tasks,
+                    target_date,
+                    today,
+                )]))
+            }
         }
         AgendaScope::Week => {
-            let (start_date, end_date) = if let Some(range) = parse_range(from, to)? {
+            let (start_date, end_date) = if let Some(range) = parse_range(from, to, today)? {
                 range
             } else if let Some(date_str) = date {
                 get_week_for_date(parse_date_arg("date", date_str)?)
             } else {
-                get_current_week(&tz)
+                get_week_for_date(today)
             };
 
             Ok(AgendaOutput::Days(build_week_agenda(
@@ -130,12 +164,12 @@ pub fn filter_agenda(
             )))
         }
         AgendaScope::Month => {
-            let (start_date, end_date) = if let Some(range) = parse_range(from, to)? {
+            let (start_date, end_date) = if let Some(range) = parse_range(from, to, today)? {
                 range
             } else if let Some(date_str) = date {
                 get_month_for_date(parse_date_arg("date", date_str)?)
             } else {
-                get_current_month(&tz)
+                get_month_for_date(today)
             };
 
             Ok(AgendaOutput::Days(build_week_agenda(
@@ -443,12 +477,6 @@ fn get_week_for_date(date: NaiveDate) -> (NaiveDate, NaiveDate) {
     (monday, sunday)
 }
 
-/// Get current week (Monday to Sunday) in the given timezone
-fn get_current_week(tz: &Tz) -> (NaiveDate, NaiveDate) {
-    let today = chrono::Utc::now().with_timezone(tz).date_naive();
-    get_week_for_date(today)
-}
-
 /// Get month boundaries (first to last day) for a specific date
 fn get_month_for_date(date: NaiveDate) -> (NaiveDate, NaiveDate) {
     // `date` is a valid NaiveDate, so its (year, month) is in range and
@@ -463,12 +491,6 @@ fn get_month_for_date(date: NaiveDate) -> (NaiveDate, NaiveDate) {
             - chrono::Duration::days(1)
     };
     (first_day, last_day)
-}
-
-/// Get current month (first to last day) in the given timezone
-fn get_current_month(tz: &Tz) -> (NaiveDate, NaiveDate) {
-    let today = chrono::Utc::now().with_timezone(tz).date_naive();
-    get_month_for_date(today)
 }
 
 #[cfg(test)]
@@ -1087,27 +1109,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_current_week() {
-        let tz: Tz = "UTC".parse().unwrap();
-        let (monday, sunday) = get_current_week(&tz);
-
-        assert_eq!(monday.weekday(), chrono::Weekday::Mon);
-        assert_eq!(sunday.weekday(), chrono::Weekday::Sun);
-        assert_eq!((sunday - monday).num_days(), 6);
-    }
-
-    #[test]
-    fn test_get_current_month() {
-        let tz: Tz = "UTC".parse().unwrap();
-        let (first, last) = get_current_month(&tz);
-
-        assert_eq!(first.day(), 1);
-        assert_eq!(first.month(), last.month());
-        assert_eq!(first.year(), last.year());
-        assert!(last.day() >= 28 && last.day() <= 31);
-    }
-
-    #[test]
     fn test_get_current_month_december() {
         // Test December specifically (has 31 days)
         let today = NaiveDate::from_ymd_opt(2024, 12, 15).unwrap();
@@ -1313,6 +1314,10 @@ mod tests {
         // Mixed input order so the assertion proves the sort is doing the work.
         let input = vec![t_none.clone(), t_z.clone(), t_a.clone(), t_num0.clone()];
 
+        // Tasks scope does not accept date arguments: --current-date is
+        // about overdue baseline, which tasks mode does not use (see
+        // ADR-0009). The fixed task dates inside the input still make the
+        // test deterministic without it.
         let result = filter_agenda(
             input,
             AgendaScope::Tasks,
@@ -1320,7 +1325,7 @@ mod tests {
             None,
             None,
             "UTC",
-            Some("2024-12-05"),
+            None,
         )
         .expect("filter_agenda");
 

@@ -66,15 +66,22 @@ pub struct Cli {
     #[arg(long)]
     pub tasks: bool,
 
-    /// Target date for `--agenda day/week/month` (YYYY-MM-DD)
+    /// Window anchor for `--agenda day/week/month` (YYYY-MM-DD).
+    /// In day mode the window is exactly this date; in week/month it is the
+    /// week / month containing this date. Overridden by `--from`/`--to` when
+    /// either is given. Not allowed in `--agenda tasks`.
     #[arg(long, value_parser = validate_date)]
     pub date: Option<String>,
 
-    /// Range start for `--agenda week/month` (YYYY-MM-DD)
+    /// Window start for `--agenda day/week/month` (YYYY-MM-DD). Together with
+    /// `--to` forms an explicit range that overrides `--date`. If `--to` is
+    /// omitted, the window ends at `--current-date` (or today).
     #[arg(long, value_parser = validate_date, conflicts_with = "tasks")]
     pub from: Option<String>,
 
-    /// Range end for `--agenda week/month` (YYYY-MM-DD)
+    /// Window end for `--agenda day/week/month` (YYYY-MM-DD). Together with
+    /// `--from` forms an explicit range that overrides `--date`. If `--from`
+    /// is omitted, the window starts at `--current-date` (or today).
     #[arg(long, value_parser = validate_date, conflicts_with = "tasks")]
     pub to: Option<String>,
 
@@ -82,7 +89,9 @@ pub struct Cli {
     #[arg(long, default_value = "Europe/Moscow", value_parser = validate_timezone)]
     pub tz: String,
 
-    /// Override "today" for reproducible runs / tests (YYYY-MM-DD)
+    /// Override "today" (YYYY-MM-DD). Used as the reference point for overdue
+    /// and upcoming markers, and as the default for a missing `--from`/`--to`
+    /// edge. Not allowed in `--agenda tasks`.
     #[arg(long, value_parser = validate_date)]
     pub current_date: Option<String>,
 

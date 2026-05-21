@@ -121,11 +121,11 @@ markdown-org-extract [OPTIONS]
 - `--locale <LOCALE>` — weekday locales, comma-separated (default: `ru,en`)
 - `--agenda <MODE>` — agenda mode: `day`, `week`, `month`, `tasks` (default: `day`)
 - `--tasks` — show all TODO tasks sorted by priority (alias for `--agenda tasks`)
-- `--date <DATE>` — date for `day` mode in `YYYY-MM-DD` (default: today)
-- `--from <DATE>` — start date for `week`/`month` mode in `YYYY-MM-DD` (default: Monday of the current week / first day of the current month)
-- `--to <DATE>` — end date for `week`/`month` mode in `YYYY-MM-DD` (default: Sunday of the current week / last day of the current month)
+- `--date <DATE>` — window anchor for `day`/`week`/`month` mode in `YYYY-MM-DD`. In `day` mode the window is exactly this date; in `week`/`month` it is the week / month containing this date. Overridden by `--from`/`--to`. Not allowed in `tasks` mode. Default: `--current-date` (or today)
+- `--from <DATE>` — window start (`YYYY-MM-DD`) for `day`/`week`/`month` mode. Together with `--to`, an explicit range that overrides `--date`. If `--to` is omitted, the window ends at `--current-date` (or today). Not allowed in `tasks` mode
+- `--to <DATE>` — window end (`YYYY-MM-DD`) for `day`/`week`/`month` mode. Together with `--from`, an explicit range that overrides `--date`. If `--from` is omitted, the window starts at `--current-date` (or today). Not allowed in `tasks` mode
 - `--tz <TIMEZONE>` — IANA timezone for determining the current date (default: `Europe/Moscow`)
-- `--current-date <DATE>` — explicit current date for overdue calculation in `YYYY-MM-DD` (default: today in the configured timezone)
+- `--current-date <DATE>` — override of "today" (`YYYY-MM-DD`). Used as the reference for overdue / upcoming markers and as the default for a missing `--from`/`--to` edge. Not allowed in `tasks` mode. Default: today in `--tz`
 - `--holidays <YEAR>` — print the holiday list for the given year (1900–2100) as JSON
 - `--absolute-paths` — emit absolute file paths instead of paths relative to `--dir`
 - `--max-tasks <N>` — task limit (1..=10_000_000, default 10_000). Applied both as a per-file cap and as a global ceiling

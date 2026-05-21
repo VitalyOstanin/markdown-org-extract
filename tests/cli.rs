@@ -228,6 +228,9 @@ fn rejects_invalid_max_tasks() {
 
 #[test]
 fn max_tasks_one_caps_output() {
+    // Tasks mode does not accept date arguments (see ADR-0009), so no
+    // --current-date here; the cap is over the flat task list and is
+    // deterministic from --max-tasks alone.
     let out = bin()
         .args([
             "--dir",
@@ -237,8 +240,6 @@ fn max_tasks_one_caps_output() {
             "--tasks",
             "--max-tasks",
             "1",
-            "--current-date",
-            "2025-12-05",
         ])
         .output()
         .expect("run");
@@ -333,8 +334,6 @@ fn agenda_tasks_mode_produces_flat_list() {
         .args([
             "--dir",
             "examples",
-            "--current-date",
-            "2025-12-05",
             "--agenda",
             "tasks",
             "--format",
@@ -465,8 +464,6 @@ fn color_flag_accepts_auto_always_never() {
             .args([
                 "--dir",
                 "examples",
-                "--current-date",
-                "2025-12-05",
                 "--color",
                 v,
                 "--max-tasks",
@@ -548,8 +545,6 @@ fn output_dash_writes_to_stdout_and_creates_no_file() {
             "--format",
             "json",
             "--tasks",
-            "--current-date",
-            "2025-12-05",
             "--output",
             "-",
             "--max-tasks",
@@ -750,5 +745,183 @@ fn exit_code_74_for_io_when_output_is_a_directory() {
         "writing to a path that is a directory is an IO error, must exit 74 (got {:?}); stderr: {}",
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+// Unified date-window semantics (ADR-0009). The agenda module accepts
+// --from/--to as an alternative to --date in day/week/month, fills a
+// missing edge from current_date (--current-date or today), and rejects
+// any date argument in tasks mode. The integration tests below pin the
+// CLI surface so a future agenda refactor cannot silently regress.
+
+fn day_count_in_json(stdout: &str) -> usize {
+    let parsed: serde_json::Value =
+        serde_json::from_str(stdout).expect("stdout must be valid JSON");
+    parsed
+        .as_array()
+        .expect("top-level array")
+        .len()
+}
+
+#[test]
+fn agenda_day_with_from_to_emits_multi_day() {
+    // --from/--to in day mode is no longer ignored: each day in [from..to]
+    // produces a DayAgenda. Range 2025-12-01..2025-12-07 -> 7 days.
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--agenda",
+            "day",
+            "--from",
+            "2025-12-01",
+            "--to",
+            "2025-12-07",
+            "--current-date",
+            "2025-12-05",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        day_count_in_json(&stdout),
+        7,
+        "expected 7 day-agendas for [2025-12-01..2025-12-07]; got {stdout:.200}"
+    );
+}
+
+#[test]
+fn agenda_week_from_only_fills_to_from_current_date() {
+    // --from X without --to: end is current_date. Range 2025-12-01..2025-12-05
+    // -> 5 days.
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--agenda",
+            "week",
+            "--from",
+            "2025-12-01",
+            "--current-date",
+            "2025-12-05",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(day_count_in_json(&String::from_utf8_lossy(&out.stdout)), 5);
+}
+
+#[test]
+fn agenda_month_to_only_fills_from_from_current_date() {
+    // --to Y without --from: start is current_date. Range 2025-12-05..2025-12-10
+    // -> 6 days.
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--agenda",
+            "month",
+            "--to",
+            "2025-12-10",
+            "--current-date",
+            "2025-12-05",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(day_count_in_json(&String::from_utf8_lossy(&out.stdout)), 6);
+}
+
+#[test]
+fn agenda_day_from_after_current_date_fails() {
+    // --from X without --to, where X > current_date: the inferred range is
+    // inverted, must surface as DateRange.
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--agenda",
+            "day",
+            "--from",
+            "2026-01-15",
+            "--current-date",
+            "2025-12-05",
+        ])
+        .output()
+        .expect("run");
+    assert!(!out.status.success(), "expected failure");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("after end date"),
+        "expected DateRange diagnostic; got: {stderr}"
+    );
+}
+
+#[test]
+fn agenda_tasks_rejects_date_argument() {
+    // Tasks mode is task-based, not date-centric: ADR-0009 rejects --date,
+    // --from, --to, --current-date in this mode. --from is already blocked at
+    // clap level (conflicts_with = "tasks"); --date must surface from agenda.
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--agenda",
+            "tasks",
+            "--date",
+            "2025-12-05",
+        ])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("tasks mode does not accept date arguments"),
+        "expected ADR-0009 tasks-mode rejection; got: {stderr}"
+    );
+}
+
+#[test]
+fn agenda_tasks_rejects_current_date_argument() {
+    // --current-date in tasks mode is also rejected: tasks mode has no
+    // overdue calculation, so the "today" reference has no effect.
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--agenda",
+            "tasks",
+            "--current-date",
+            "2025-12-05",
+        ])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("tasks mode does not accept date arguments"),
+        "expected ADR-0009 tasks-mode rejection; got: {stderr}"
     );
 }

@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--color never`, `--no-color`) and `NO_COLOR` still win over the
   CLICOLOR variants. The decision logic is now a pure function
   exhaustively unit-tested across the precedence matrix.
+- `--help` groups options under named sections (`Input`, `Output`,
+  `Agenda`, `Limits`, `Diagnostics`, `Actions`) and now opens with
+  an `Examples:` block listing the most useful invocation patterns
+  (today's agenda, week / range agenda, flat tasks, holidays,
+  shell completion install). `-h` keeps the at-a-glance summary
+  without the examples block.
 
 ### Fixed
 

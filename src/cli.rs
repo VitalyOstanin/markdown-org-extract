@@ -31,76 +31,141 @@ pub enum AgendaMode {
     Tasks,
 }
 
+/// `long_about` text for `--help`. Kept as a `const` so the test that pins
+/// example commands has a stable string to grep.
+const CLI_LONG_ABOUT: &str = "\
+Extract Emacs Org-mode tasks (timestamps, SCHEDULED/DEADLINE/CLOSED, CLOCK)
+from markdown files. Output is JSON by default; HTML and Markdown are also
+available via --format. See <https://github.com/VitalyOstanin/markdown-org-extract>.
+
+Examples:
+  Scan the current directory as JSON (default):
+    markdown-org-extract
+
+  Today's agenda for a specific vault:
+    markdown-org-extract --dir ~/notes --agenda day
+
+  Week containing a date, as Markdown:
+    markdown-org-extract --agenda week --date 2026-05-25 --format markdown
+
+  Two-week window, anchored at today:
+    markdown-org-extract --agenda week --from 2026-05-21 --to 2026-06-04
+
+  Flat task list, absolute paths, no progress noise:
+    markdown-org-extract --tasks --absolute-paths --quiet
+
+  Public RF holidays for a year:
+    markdown-org-extract --holidays 2026
+
+  Install bash completion for the current user:
+    markdown-org-extract --completions bash > ~/.local/share/bash-completion/completions/markdown-org-extract
+";
+
 /// Extract org-mode tasks from a directory of markdown files
 #[derive(Parser)]
 #[command(name = "markdown-org-extract")]
-#[command(about = "Extract tasks from markdown files with org-mode timestamps", long_about = None)]
+#[command(about = "Extract tasks from markdown files with org-mode timestamps")]
+#[command(long_about = CLI_LONG_ABOUT)]
 #[command(version)]
 pub struct Cli {
     /// Root directory to scan (recursive). `.gitignore` is respected.
-    #[arg(long, default_value = ".")]
+    #[arg(long, default_value = ".", help_heading = "Input")]
     pub dir: PathBuf,
 
     /// File matching pattern. Supported: `*.ext` and exact file names.
-    #[arg(long, default_value = "*.md")]
+    #[arg(long, default_value = "*.md", help_heading = "Input")]
     pub glob: String,
 
     /// Output format. `md` is accepted as an alias for `markdown`.
-    #[arg(long, default_value = "json", value_enum)]
+    #[arg(long, default_value = "json", value_enum, help_heading = "Output")]
     pub format: OutputFormat,
 
     /// Write output to file instead of stdout. The path must reside in an
     /// existing directory and must not be a symlink. Use `-` for stdout.
-    #[arg(long)]
+    #[arg(long, help_heading = "Output")]
     pub output: Option<PathBuf>,
 
+    /// Emit absolute file paths in output. Default is paths relative to `--dir`.
+    #[arg(long, help_heading = "Output")]
+    pub absolute_paths: bool,
+
     /// Comma-separated locale list for weekday name normalization (e.g. `ru,en`).
-    #[arg(long, default_value = "ru,en")]
+    #[arg(long, default_value = "ru,en", help_heading = "Agenda")]
     pub locale: String,
 
     /// Agenda time scope: day / week / month. Mutually exclusive with `--tasks`.
-    #[arg(long, default_value = "day", value_enum, conflicts_with = "tasks")]
+    #[arg(long, default_value = "day", value_enum, conflicts_with = "tasks", help_heading = "Agenda")]
     pub agenda: AgendaMode,
 
     /// Show flat task list instead of agenda. Mutually exclusive with `--agenda`.
-    #[arg(long)]
+    #[arg(long, help_heading = "Agenda")]
     pub tasks: bool,
 
     /// Window anchor for `--agenda day/week/month` (YYYY-MM-DD).
     /// In day mode the window is exactly this date; in week/month it is the
     /// week / month containing this date. Overridden by `--from`/`--to` when
     /// either is given. Not allowed in `--agenda tasks`.
-    #[arg(long, value_parser = validate_date)]
+    #[arg(long, value_parser = validate_date, help_heading = "Agenda")]
     pub date: Option<String>,
 
     /// Window start for `--agenda day/week/month` (YYYY-MM-DD). Together with
     /// `--to` forms an explicit range that overrides `--date`. If `--to` is
     /// omitted, the window ends at `--current-date` (or today).
-    #[arg(long, value_parser = validate_date, conflicts_with = "tasks")]
+    #[arg(long, value_parser = validate_date, conflicts_with = "tasks", help_heading = "Agenda")]
     pub from: Option<String>,
 
     /// Window end for `--agenda day/week/month` (YYYY-MM-DD). Together with
     /// `--from` forms an explicit range that overrides `--date`. If `--from`
     /// is omitted, the window starts at `--current-date` (or today).
-    #[arg(long, value_parser = validate_date, conflicts_with = "tasks")]
+    #[arg(long, value_parser = validate_date, conflicts_with = "tasks", help_heading = "Agenda")]
     pub to: Option<String>,
 
     /// IANA timezone for "today" determination (e.g. `Europe/Moscow`, `UTC`)
-    #[arg(long, default_value = "Europe/Moscow", value_parser = validate_timezone)]
+    #[arg(long, default_value = "Europe/Moscow", value_parser = validate_timezone, help_heading = "Agenda")]
     pub tz: String,
 
     /// Override "today" (YYYY-MM-DD). Used as the reference point for overdue
     /// and upcoming markers, and as the default for a missing `--from`/`--to`
     /// edge. Not allowed in `--agenda tasks`.
-    #[arg(long, value_parser = validate_date)]
+    #[arg(long, value_parser = validate_date, help_heading = "Agenda")]
     pub current_date: Option<String>,
+
+    /// Maximum number of tasks to extract before stopping (1..=10_000_000).
+    /// Acts as a global cap on extracted tasks; the same value is reused as a
+    /// per-file cap so a single hostile file cannot exhaust the global budget
+    /// on its own. The scan stops as soon as either cap is hit.
+    #[arg(long, default_value_t = crate::types::DEFAULT_MAX_TASKS, value_parser = validate_max_tasks, help_heading = "Limits")]
+    pub max_tasks: usize,
+
+    /// Increase logging verbosity. Repeat for more (-v = info, -vv = debug, -vvv = trace).
+    #[arg(long, short = 'v', action = clap::ArgAction::Count, conflicts_with = "quiet", help_heading = "Diagnostics")]
+    pub verbose: u8,
+
+    /// Suppress all diagnostics (warnings and the per-run processing summary
+    /// of skipped/failed files). Hard errors still go to stderr.
+    #[arg(long, short = 'q', conflicts_with = "verbose", help_heading = "Diagnostics")]
+    pub quiet: bool,
+
+    /// Disable ANSI color codes in diagnostic output. The `NO_COLOR` env var
+    /// has the same effect (see <https://no-color.org>). Shortcut for
+    /// `--color never`; cannot be combined with `--color`.
+    #[arg(long, conflicts_with = "color", help_heading = "Diagnostics")]
+    pub no_color: bool,
+
+    /// Color output mode for diagnostics: `auto` (default), `always`, `never`.
+    /// In `auto` mode color is enabled only when stderr is a TTY. The env vars
+    /// `NO_COLOR`, `CLICOLOR=0`, and `CLICOLOR_FORCE` (non-zero) are also
+    /// honored — see the `--no-color` flag and <https://bixense.com/clicolors/>.
+    #[arg(long, value_enum, default_value = "auto", help_heading = "Diagnostics")]
+    pub color: ColorMode,
 
     /// Print holidays for the given year (1900..=2100) and exit.
     /// Short-circuits scanning; cannot be combined with scan/agenda flags.
     #[arg(
         long,
         value_parser = validate_year,
-        conflicts_with_all = ["dir", "glob", "format", "output", "tasks", "agenda", "date", "from", "to", "absolute_paths", "max_tasks", "completions"]
+        conflicts_with_all = ["dir", "glob", "format", "output", "tasks", "agenda", "date", "from", "to", "absolute_paths", "max_tasks", "completions"],
+        help_heading = "Actions"
     )]
     pub holidays: Option<i32>,
 
@@ -111,42 +176,10 @@ pub struct Cli {
         long,
         value_enum,
         value_name = "SHELL",
-        conflicts_with_all = ["dir", "glob", "format", "output", "tasks", "agenda", "date", "from", "to", "absolute_paths", "max_tasks", "holidays"]
+        conflicts_with_all = ["dir", "glob", "format", "output", "tasks", "agenda", "date", "from", "to", "absolute_paths", "max_tasks", "holidays"],
+        help_heading = "Actions"
     )]
     pub completions: Option<clap_complete::Shell>,
-
-    /// Emit absolute file paths in output. Default is paths relative to `--dir`.
-    #[arg(long)]
-    pub absolute_paths: bool,
-
-    /// Maximum number of tasks to extract before stopping (1..=10_000_000).
-    /// Acts as a global cap on extracted tasks; the same value is reused as a
-    /// per-file cap so a single hostile file cannot exhaust the global budget
-    /// on its own. The scan stops as soon as either cap is hit.
-    #[arg(long, default_value_t = crate::types::DEFAULT_MAX_TASKS, value_parser = validate_max_tasks)]
-    pub max_tasks: usize,
-
-    /// Increase logging verbosity. Repeat for more (-v = info, -vv = debug, -vvv = trace).
-    #[arg(long, short = 'v', action = clap::ArgAction::Count, conflicts_with = "quiet")]
-    pub verbose: u8,
-
-    /// Suppress all diagnostics (warnings and the per-run processing summary
-    /// of skipped/failed files). Hard errors still go to stderr.
-    #[arg(long, short = 'q', conflicts_with = "verbose")]
-    pub quiet: bool,
-
-    /// Disable ANSI color codes in diagnostic output. The `NO_COLOR` env var
-    /// has the same effect (see <https://no-color.org>). Shortcut for
-    /// `--color never`; cannot be combined with `--color`.
-    #[arg(long, conflicts_with = "color")]
-    pub no_color: bool,
-
-    /// Color output mode for diagnostics: `auto` (default), `always`, `never`.
-    /// In `auto` mode color is enabled only when stderr is a TTY. The env vars
-    /// `NO_COLOR`, `CLICOLOR=0`, and `CLICOLOR_FORCE` (non-zero) are also
-    /// honored — see the `--no-color` flag and <https://bixense.com/clicolors/>.
-    #[arg(long, value_enum, default_value = "auto")]
-    pub color: ColorMode,
 }
 
 /// Snapshot of the color-related environment, taken once per invocation so the

@@ -629,6 +629,69 @@ fn help_no_color_mentions_env_var_equivalence() {
 }
 
 #[test]
+fn help_groups_arguments_into_named_sections() {
+    // The flag count has grown to the point where a flat list is hard to
+    // scan. clap's `help_heading` puts related flags under labelled sections
+    // ("Input:", "Output:", ...). Pin the headings so a future edit cannot
+    // silently regress to a flat list and leave users wading through 19
+    // options in arrival order.
+    let out = bin().arg("--help").output().expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for heading in [
+        "Input:",
+        "Output:",
+        "Agenda:",
+        "Limits:",
+        "Diagnostics:",
+        "Actions:",
+    ] {
+        assert!(
+            stdout.contains(heading),
+            "expected `{heading}` section in --help, got: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn help_long_about_includes_runnable_examples() {
+    // `--help` (long form) must include at least one example command so a
+    // first-time reader sees what an invocation looks like. We pin the
+    // ones most likely to be copy-pasted (today's agenda, holidays year,
+    // bash completion install) rather than every example, so harmless
+    // wording tweaks don't fail the test.
+    let out = bin().arg("--help").output().expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Examples:"),
+        "expected `Examples:` block in long --help, got: {stdout}"
+    );
+    for needle in [
+        "markdown-org-extract --dir ~/notes --agenda day",
+        "markdown-org-extract --holidays 2026",
+        "markdown-org-extract --completions bash",
+    ] {
+        assert!(
+            stdout.contains(needle),
+            "expected example `{needle}` in long --help, got: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn short_help_omits_examples_block() {
+    // `-h` is the at-a-glance summary; the multi-line `Examples:` block
+    // belongs only in `--help`. clap normally hides `long_about` from
+    // `-h`, but if a future edit moves the examples into `about` they
+    // would leak into `-h` and clutter the summary. Pin the contract.
+    let out = bin().arg("-h").output().expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("Examples:"),
+        "short `-h` must not include the Examples block, got: {stdout}"
+    );
+}
+
+#[test]
 fn rejects_inverted_from_to_range() {
     // --from > --to should fail loudly with the DateRange variant; silently
     // accepting an empty range would produce a confusingly empty agenda. The

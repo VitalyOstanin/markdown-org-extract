@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--completions <SHELL>` prints a shell completion script on stdout
+  and exits. Supports `bash`, `zsh`, `fish`, `elvish`, `powershell`.
+  See the new "Shell completions" section in the README for the
+  expected install paths.
+
 ### Fixed
 
 - Multi-segment `--glob` patterns (e.g. `notes/*.md`) now match when

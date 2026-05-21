@@ -38,6 +38,30 @@ cargo install markdown-org-extract
 After installation the binary lands in `~/.cargo/bin/markdown-org-extract`
 (this path must be on your `PATH`).
 
+### Shell completions
+
+The binary can emit its own completion script for `bash`, `zsh`, `fish`,
+`elvish`, and `powershell` via `--completions <SHELL>`. The script is
+printed to stdout; redirect it to wherever your shell expects
+completions.
+
+```bash
+# bash (user-local)
+mkdir -p ~/.local/share/bash-completion/completions
+markdown-org-extract --completions bash \
+    > ~/.local/share/bash-completion/completions/markdown-org-extract
+
+# zsh (add a directory to $fpath, e.g. ~/.zfunc)
+markdown-org-extract --completions zsh \
+    > ~/.zfunc/_markdown-org-extract
+
+# fish
+markdown-org-extract --completions fish \
+    > ~/.config/fish/completions/markdown-org-extract.fish
+```
+
+Reload the shell or re-source its config after writing the file.
+
 ### Building the project
 
 Debug build:

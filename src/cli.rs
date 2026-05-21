@@ -100,9 +100,20 @@ pub struct Cli {
     #[arg(
         long,
         value_parser = validate_year,
-        conflicts_with_all = ["dir", "glob", "format", "output", "tasks", "agenda", "date", "from", "to", "absolute_paths", "max_tasks"]
+        conflicts_with_all = ["dir", "glob", "format", "output", "tasks", "agenda", "date", "from", "to", "absolute_paths", "max_tasks", "completions"]
     )]
     pub holidays: Option<i32>,
+
+    /// Print the shell completion script for the given shell and exit.
+    /// Short-circuits scanning; cannot be combined with scan/agenda flags.
+    /// Usage: `markdown-org-extract --completions bash > /etc/bash_completion.d/markdown-org-extract`.
+    #[arg(
+        long,
+        value_enum,
+        value_name = "SHELL",
+        conflicts_with_all = ["dir", "glob", "format", "output", "tasks", "agenda", "date", "from", "to", "absolute_paths", "max_tasks", "holidays"]
+    )]
+    pub completions: Option<clap_complete::Shell>,
 
     /// Emit absolute file paths in output. Default is paths relative to `--dir`.
     #[arg(long)]

@@ -903,6 +903,57 @@ fn agenda_tasks_rejects_date_argument() {
     );
 }
 
+/// Shell completions: `--completions <SHELL>` short-circuits scanning and
+/// emits the completion script for the given shell. The integration test
+/// pins three shells (bash, zsh, fish) and asserts that the output mentions
+/// the binary name; a script that does not at least name the binary cannot
+/// be a valid completion file. The exact dialect of each shell's script is
+/// owned by clap_complete and not re-asserted here.
+#[test]
+fn completions_emit_per_shell_script() {
+    for shell in ["bash", "zsh", "fish"] {
+        let out = bin()
+            .args(["--completions", shell])
+            .output()
+            .expect("run");
+        assert!(
+            out.status.success(),
+            "completions for {shell} must succeed; stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("markdown-org-extract"),
+            "completion script for {shell} must mention the binary name; got: {stdout:.200}"
+        );
+        assert!(
+            stdout.len() > 200,
+            "completion script for {shell} looks empty ({} bytes)",
+            stdout.len()
+        );
+    }
+}
+
+#[test]
+fn completions_conflicts_with_scan_flags() {
+    // --completions is a short-circuit like --holidays; mixing it with scan
+    // flags would produce nonsense, so clap rejects the combination.
+    bin()
+        .args(["--completions", "bash", "--dir", "examples"])
+        .assert()
+        .failure()
+        .stderr(contains("cannot be used"));
+}
+
+#[test]
+fn completions_rejects_unknown_shell() {
+    bin()
+        .args(["--completions", "tcsh"])
+        .assert()
+        .failure()
+        .stderr(contains("invalid value"));
+}
+
 /// Multi-segment glob pattern against a relative `--dir`. WalkBuilder used
 /// to be fed `&cli.dir` (relative), so emitted paths stayed relative and
 /// `strip_prefix(dir_canonical)` failed, dropping callers to a `file_name()`

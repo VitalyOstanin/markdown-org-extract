@@ -39,6 +39,10 @@ fn run() -> Result<(), AppError> {
     let cli = Cli::parse();
     cli.init_tracing();
 
+    if let Some(shell) = cli.completions {
+        return handle_completions(shell);
+    }
+
     if let Some(year) = cli.holidays {
         return handle_holidays(year);
     }
@@ -88,6 +92,16 @@ fn handle_holidays(year: i32) -> Result<(), AppError> {
         .collect();
     let output = serde_json::to_string_pretty(&dates)?;
     io::stdout().write_all(output.as_bytes())?;
+    Ok(())
+}
+
+/// Handle the `--completions <SHELL>` short-circuit: emit the completion
+/// script for `shell` on stdout and exit. Used to register shell completions
+/// at install time (e.g. via the user's shell config).
+fn handle_completions(shell: clap_complete::Shell) -> Result<(), AppError> {
+    let mut cmd = <Cli as clap::CommandFactory>::command();
+    let name = cmd.get_name().to_string();
+    clap_complete::generate(shell, &mut cmd, name, &mut io::stdout());
     Ok(())
 }
 

@@ -1,0 +1,7 @@
+# Tell clippy which Rust version the crate must keep compiling on.
+# Mirrors `rust-version` in Cargo.toml — bump both together. With msrv set,
+# lints that suggest newer APIs (e.g. `manual_strip` -> `str::strip_prefix`,
+# `manual_let_else` -> `let ... else`) only fire when the suggested API is
+# already available on the declared MSRV, so suggestions never produce a
+# diff that would break the MSRV build job.
+msrv = "1.85"

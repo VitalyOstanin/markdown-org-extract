@@ -52,6 +52,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hook unless `--force` is passed. The installed hook re-execs from
   the repo root, so `git commit` from any subdirectory behaves the
   same.
+- `clippy.toml` pins `msrv = "1.85"` so clippy only suggests APIs
+  available on the declared MSRV. Suggestions like
+  `manual_strip` -> `str::strip_prefix` will no longer rewrite code
+  in a way that breaks the `msrv` CI job. Bump both `clippy.toml`
+  and `Cargo.toml` `rust-version` together.
+- CI `lint` job now runs `cargo doc --no-deps --all-features` with
+  `RUSTDOCFLAGS="-D warnings"`. The crate has no library target
+  (docs.rs is not used — see 0.3.1 notes), but `cargo doc` still
+  builds rustdoc for the binary's modules, so this step guards
+  intra-doc links and other rustdoc warnings before release.
+  `scripts/check.sh` mirrors the new step locally between `clippy`
+  and `cargo test`.
 
 ### Fixed
 
@@ -66,6 +78,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `walk_errors` field of the processing summary, the failing entry is
   appended to `failed paths`, and the rest of the tree is scanned as
   usual.
+- `src/clock.rs` `CLOCK_RE` doc comment wrapped the literal
+  `CLOCK: [timestamp]--[timestamp] => duration` in backticks so
+  rustdoc no longer tries to resolve `[timestamp]` as an intra-doc
+  link. Surfaced by the new `cargo doc -D warnings` CI step.
 
 ### Changed
 

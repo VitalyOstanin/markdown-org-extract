@@ -4,7 +4,7 @@ use std::sync::LazyLock;
 use crate::regex_limits::{compile_bounded, CLOCK_BODY_MAX};
 use crate::types::ClockEntry;
 
-/// Regex for CLOCK entries: CLOCK: [timestamp]--[timestamp] => duration
+/// Regex for CLOCK entries: `CLOCK: [timestamp]--[timestamp] => duration`
 ///
 /// Supports both square brackets (org-mode inactive timestamps) and angle
 /// brackets (active timestamps), but the opening and closing bracket of each

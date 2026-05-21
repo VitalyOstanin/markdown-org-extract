@@ -4,9 +4,10 @@
 # Usage: scripts/check.sh
 #
 # Sequence (fail-fast):
-#   1. cargo fmt --all -- --check
+#   1. cargo fmt   --all -- --check
 #   2. cargo clippy --all-targets --all-features -- -D warnings
-#   3. cargo test  --all-features
+#   3. cargo doc   --no-deps --all-features  (RUSTDOCFLAGS="-D warnings")
+#   4. cargo test  --all-features
 #
 # Exits with the failing step's status code, prefixed by a diagnostic on
 # stderr. Intended as the body of a git pre-commit hook (see
@@ -39,6 +40,8 @@ run_step() {
 
 run_step "cargo fmt --check"  cargo fmt  --all -- --check
 run_step "cargo clippy"       cargo clippy --all-targets --all-features -- -D warnings
-run_step "cargo test"         cargo test  --all-features
+RUSTDOCFLAGS="-D warnings" \
+run_step "cargo doc"          cargo doc  --no-deps --all-features
+run_step "cargo test"         cargo test --all-features
 
 step "all checks passed"

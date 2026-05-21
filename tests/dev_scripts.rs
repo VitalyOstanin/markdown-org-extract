@@ -83,15 +83,15 @@ fn run_check(fail_on: Option<&str>) -> (i32, String, String, Vec<String>) {
 }
 
 #[test]
-fn check_runs_fmt_clippy_test_in_order_on_success() {
+fn check_runs_fmt_clippy_doc_test_in_order_on_success() {
     let (code, _stdout, stderr, invocations) = run_check(None);
     assert_eq!(code, 0, "expected success; stderr: {stderr}");
     assert_eq!(
         invocations.len(),
-        3,
-        "expected exactly 3 cargo invocations, got {invocations:?}"
+        4,
+        "expected exactly 4 cargo invocations, got {invocations:?}"
     );
-    // fmt --check, clippy with -D warnings, then test.
+    // fmt --check, clippy with -D warnings, doc with -D warnings, then test.
     assert!(
         invocations[0].starts_with("fmt"),
         "first invocation should be fmt: {:?}",
@@ -113,9 +113,19 @@ fn check_runs_fmt_clippy_test_in_order_on_success() {
         invocations[1]
     );
     assert!(
-        invocations[2].starts_with("test"),
-        "third invocation should be test: {:?}",
+        invocations[2].starts_with("doc"),
+        "third invocation should be doc: {:?}",
         invocations[2]
+    );
+    assert!(
+        invocations[2].contains("--no-deps"),
+        "doc must skip deps to keep the step fast: {:?}",
+        invocations[2]
+    );
+    assert!(
+        invocations[3].starts_with("test"),
+        "fourth invocation should be test: {:?}",
+        invocations[3]
     );
 }
 
@@ -126,7 +136,7 @@ fn check_fails_fast_when_fmt_fails() {
     assert_eq!(
         invocations.len(),
         1,
-        "fail-fast: clippy and test must not run after fmt failure; got {invocations:?}"
+        "fail-fast: clippy/doc/test must not run after fmt failure; got {invocations:?}"
     );
     assert!(
         invocations[0].starts_with("fmt"),
@@ -146,9 +156,21 @@ fn check_fails_fast_when_clippy_fails() {
     assert_eq!(
         invocations.len(),
         2,
-        "fail-fast: test must not run after clippy failure; got {invocations:?}"
+        "fail-fast: doc/test must not run after clippy failure; got {invocations:?}"
     );
     assert!(invocations[1].starts_with("clippy"));
+}
+
+#[test]
+fn check_fails_fast_when_doc_fails() {
+    let (code, _stdout, _stderr, invocations) = run_check(Some("doc"));
+    assert_ne!(code, 0, "expected failure when doc fails");
+    assert_eq!(
+        invocations.len(),
+        3,
+        "fail-fast: test must not run after doc failure; got {invocations:?}"
+    );
+    assert!(invocations[2].starts_with("doc"));
 }
 
 #[test]
@@ -157,10 +179,10 @@ fn check_fails_when_test_fails() {
     assert_ne!(code, 0, "expected failure when test fails");
     assert_eq!(
         invocations.len(),
-        3,
-        "all three steps should run: {invocations:?}"
+        4,
+        "all four steps should run: {invocations:?}"
     );
-    assert!(invocations[2].starts_with("test"));
+    assert!(invocations[3].starts_with("test"));
 }
 
 /// Initialise a minimal git repo in `dir`. We don't need any commits — only

@@ -45,6 +45,12 @@ static TIME_SINGLE_RE: LazyLock<Regex> = LazyLock::new(|| compile_bounded(r"\b(\
 /// the parser pre-normalize so multiple extractors share one scan; tests pass
 /// already-English input.
 pub fn extract_created_normalized(text: &str) -> Option<String> {
+    // Fast path: every match of CREATED_RE begins with optional whitespace
+    // and then literal `CREATED:`. Bail out before paying the regex engine
+    // when the leading non-space byte cannot start that keyword.
+    if !text.trim_start().starts_with("CREATED:") {
+        return None;
+    }
     CREATED_RE
         .captures(text)
         .map(|caps| format!("CREATED: <{}>", &caps[1]))
@@ -52,6 +58,18 @@ pub fn extract_created_normalized(text: &str) -> Option<String> {
 
 /// Extract non-CREATED timestamp from already-weekday-normalized text.
 pub fn extract_timestamp_normalized(text: &str) -> Option<String> {
+    // Fast path: every regex below anchors to one of the keyword prefixes
+    // `SCHEDULED:` / `DEADLINE:` / `CLOSED:` (TIMESTAMP_RE) or to the literal
+    // `<` of a bare timestamp (RANGE_TIMESTAMP_RE / SIMPLE_TIMESTAMP_RE).
+    // A byte check on the first non-whitespace byte short-circuits the
+    // common case where an inline-code line is unrelated free text, sparing
+    // three regex compilations of input we cannot match.
+    let trimmed = text.trim_start();
+    match trimmed.as_bytes().first() {
+        Some(b'S' | b'D' | b'C' | b'<') => {}
+        _ => return None,
+    }
+
     if let Some(caps) = TIMESTAMP_RE.captures(text) {
         return Some(format!("{}<{}>", &caps[1], &caps[2]));
     }
@@ -158,6 +176,28 @@ mod tests {
     }
     fn extract_created(text: &str, mappings: &[(&str, &str)]) -> Option<String> {
         extract_created_normalized(&normalize_weekdays(text, mappings))
+    }
+
+    #[test]
+    fn extract_timestamp_normalized_short_circuits_free_text() {
+        // Free-text inline code that cannot start any of the recognised
+        // prefixes (S/D/C/<) must not even reach the regex engine. The
+        // assertion is observable through return value only; the perf
+        // win lives in the absent regex calls. Pin the contract here so
+        // a refactor that drops the prefix gate does not regress quietly.
+        assert!(extract_timestamp_normalized("just some inline text").is_none());
+        assert!(extract_timestamp_normalized("`code that mentions foo bar`").is_none());
+        // Leading whitespace is allowed before the prefix.
+        assert!(extract_timestamp_normalized("    <2024-12-05 Thu>").is_some());
+    }
+
+    #[test]
+    fn extract_created_normalized_short_circuits_free_text() {
+        // CREATED has its own fast path: any leading-non-whitespace that is
+        // not literal `CREATED:` short-circuits before the regex.
+        assert!(extract_created_normalized("inline code without CREATED").is_none());
+        assert!(extract_created_normalized("SCHEDULED: <2024-12-05>").is_none());
+        assert!(extract_created_normalized("CREATED: <2024-12-05 Thu>").is_some());
     }
 
     #[test]

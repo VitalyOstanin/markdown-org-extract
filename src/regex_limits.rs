@@ -48,4 +48,64 @@ mod tests {
         assert!(re.is_match("2026-05-16"));
         assert!(!re.is_match("not a date"));
     }
+
+    #[test]
+    fn compile_bounded_handles_actual_production_pattern_sizes() {
+        // Smoke check: the largest patterns this crate compiles today
+        // (CLOCK and the range timestamp from src/timestamp/extract.rs)
+        // stay well below SIZE_LIMIT_BYTES even after the TS_BODY_MAX /
+        // CLOCK_BODY_MAX bounded quantifiers are interpolated. If a
+        // future edit raises either constant past the limit, this test
+        // panics on regex build and shouts at the author.
+        let ts_range = format!(
+            r"^\s*<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>--?-?<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>"
+        );
+        let _ = compile_bounded(&ts_range);
+        let clock_full = format!(
+            r"CLOCK:\s*(?:\[([^\]<>]{{1,{CLOCK_BODY_MAX}}})\]|<([^\]<>]{{1,{CLOCK_BODY_MAX}}})>)(?:--(?:\[([^\]<>]{{1,{CLOCK_BODY_MAX}}})\]|<([^\]<>]{{1,{CLOCK_BODY_MAX}}})>))?(?:\s*=>\s*([0-9]{{1,5}}:[0-9]{{1,2}}))?"
+        );
+        let _ = compile_bounded(&clock_full);
+    }
+
+    #[test]
+    fn compile_bounded_rejects_oversized_pattern() {
+        // The whole point of SIZE_LIMIT_BYTES is defense-in-depth: if a
+        // pathological pattern ever sneaks in, regex's compile step must
+        // refuse it instead of allocating arbitrarily. A literal string
+        // of ~1.5 MiB compiles into a program at least that large, which
+        // exceeds the 1 MiB cap and must panic via `compile_bounded`.
+        let huge: String = "a".repeat(1_500_000);
+        let result = std::panic::catch_unwind(|| compile_bounded(&huge));
+        assert!(
+            result.is_err(),
+            "an oversized pattern must panic at build time, not compile silently"
+        );
+    }
+
+    #[test]
+    fn compile_bounded_pathological_input_terminates() {
+        // Long input with no closing `>` must not let the engine wander
+        // off into a quadratic scan. The bounded body quantifier in our
+        // timestamp patterns ([^>]{0,TS_BODY_MAX}) limits the search
+        // window per anchor; with a 1 MiB filler we still finish in
+        // single-digit milliseconds in practice. This test pins the
+        // contract by capping the time budget and failing loudly on
+        // regression rather than asserting an exact runtime.
+        let ts_anchor = format!(
+            r"^\s*<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>"
+        );
+        let re = compile_bounded(&ts_anchor);
+        let mut huge_input = String::from("<2024-12-05");
+        huge_input.push_str(&" ".repeat(1_000_000));
+        // No closing `>`: the match should fail, fast. The deadline is
+        // intentionally loose (5s) to ride out a slow CI runner; the
+        // pathological case used to be a runaway scan.
+        let start = std::time::Instant::now();
+        assert!(re.find(&huge_input).is_none());
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "pathological input took too long: {:?}",
+            start.elapsed()
+        );
+    }
 }

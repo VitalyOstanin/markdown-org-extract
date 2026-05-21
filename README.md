@@ -287,6 +287,23 @@ Enable verbose processing logs on stderr:
 markdown-org-extract --dir ./notes -v
 ```
 
+### Exit codes
+
+The CLI maps error categories to distinct exit codes (sysexits-style) so
+shell pipelines can branch on the cause:
+
+| Code  | Category                                                                 | Examples                                                                                              |
+|-------|--------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| `0`   | success                                                                  | normal run, `--holidays`, `--completions`                                                             |
+| `2`   | usage / input-validation                                                 | invalid `--dir`, `--glob`, `--date`, `--tz`, `--output` parent, `--locale ru,xx`, `from > to`         |
+| `70`  | internal software error (`EX_SOFTWARE`)                                  | a regex we built ourselves did not compile, or our own serializer failed                              |
+| `74`  | IO failure (`EX_IOERR`)                                                  | unreadable input file, walker error, write failure on `--output`                                      |
+
+`AppError::Io` embeds the failing path or stream sentinel (`<stdout>`)
+in its `Display`, so an IO error reads
+`error: io: /tmp/out.json: Permission denied (os error 13)` instead of
+just the bare OS message.
+
 ## Example files
 
 The `examples/` directory contains markdown files with various markers.
@@ -550,6 +567,11 @@ The utility recognises weekday names in different languages via the
 - `ru` — Russian (Пн, Вт, Ср, Чт, Пт, Сб, Вс, Понедельник, Вторник, ...)
 
 The default is both locales: `--locale ru,en`.
+
+An unknown entry (e.g. `--locale ru,fr`) is rejected at CLI parse time
+with exit code `2` — `--quiet` does not mask it. Empty segments are
+tolerated, so `--locale ru,` and `--locale ,en` parse the same as
+`--locale ru` and `--locale en` respectively.
 
 ### Russian-weekday examples
 

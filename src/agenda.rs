@@ -417,16 +417,16 @@ fn handle_repeating_task(
         }
 
         // Upcoming: DEADLINE within warning period.
-        // Source: repeat_date if it's after today, or base_date when no past occurrence exists yet.
+        //
+        // `repeat` here is `closest_date(..., DatePreference::Past, ...)` with
+        // anchor `day_date == current_date`, so when it is `Some(r)` we know
+        // `r <= current_date` — never a future occurrence, never a candidate
+        // for the upcoming bucket. The only way a repeating DEADLINE produces
+        // an upcoming entry is when there is no past occurrence yet and the
+        // base date itself is still ahead of `current_date`.
         if let Some(ref ts_type) = task.timestamp_type {
             if ts_type == "DEADLINE" {
-                let next_due = if let Some(r) = repeat {
-                    if r > current_date {
-                        Some(r)
-                    } else {
-                        None
-                    }
-                } else if current_date < base_date {
+                let next_due = if repeat.is_none() && current_date < base_date {
                     Some(base_date)
                 } else {
                     None
@@ -969,6 +969,31 @@ mod tests {
         assert_eq!(agenda.upcoming.len(), 1);
         assert_eq!(agenda.upcoming[0].task.timestamp_time, None);
         assert_eq!(agenda.upcoming[0].days_offset, Some(5));
+    }
+
+    #[test]
+    fn repeating_deadline_past_occurrence_does_not_become_upcoming() {
+        // Regression for the dead branch removed in agenda::handle_repeating_task:
+        // when `repeat` is `Some(past_occurrence)`, the upcoming bucket must stay
+        // empty regardless of how close the next future occurrence is. The
+        // previous code had a vestigial `if r > current_date` that could never
+        // fire (closest_date(..., Past, ...) returns <= current_date by
+        // contract); this test pins the behaviour as the dead branch is removed.
+        let tasks = vec![create_test_task_with_repeater_deadline(
+            "2024-12-01 Sun",
+            None,
+            "+1d",
+            TaskType::Todo,
+        )];
+
+        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, current_date, current_date);
+
+        assert!(
+            agenda.upcoming.is_empty(),
+            "repeating DEADLINE whose past occurrence is recorded must not surface in upcoming; got {:?}",
+            agenda.upcoming
+        );
     }
 
     #[test]

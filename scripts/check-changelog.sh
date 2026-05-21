@@ -5,9 +5,18 @@
 #
 # Checks performed:
 #   1. The file "$CHANGELOG" (default CHANGELOG.md) exists.
-#   2. A section "## [<VERSION>]" exists. The version is matched literally
-#      (dots escaped) so that "0.2.3" does NOT match "## [0X2X3]".
-#   3. The "## [Unreleased]" section body, taken up to the next "## ["
+#   2. A section "## [<VERSION>] — YYYY-MM-DD" exists. The version is
+#      matched literally (dots escaped) so that "0.2.3" does NOT match
+#      "## [0X2X3]". The separator must be an em-dash (U+2014) and the
+#      date must be in ISO YYYY-MM-DD form — this is the format every
+#      historical entry uses, and the release-notes extractor in
+#      release.yml relies on it.
+#   3. The "## [<VERSION>] — …" section is the FIRST version heading
+#      after "## [Unreleased]". An older or stale section (e.g. an
+#      aborted release that left "[0.3.0]" above the one we are cutting)
+#      between them signals a CHANGELOG that is out of order and would
+#      ship release notes for the wrong version.
+#   4. The "## [Unreleased]" section body, taken up to the next "## ["
 #      heading, contains no entries other than blank lines or the
 #      placeholder line "_No user-visible changes yet._".
 #
@@ -39,9 +48,41 @@ escape_re() {
 }
 VERSION_RE=$(escape_re "$VERSION")
 
-if ! grep -qE "^## \[${VERSION_RE}\](\$| )" "$CHANGELOG"; then
-    echo "error: $CHANGELOG has no section '## [${VERSION}]'" >&2
-    echo "       move entries from '## [Unreleased]' into a new '## [${VERSION}]' section before tagging" >&2
+# The required header line shape: "## [<VERSION>] — YYYY-MM-DD" with an
+# em-dash (U+2014, encoded as the three bytes E2 80 94 in UTF-8) and a
+# strict ISO date. Validated as a single regex so a missing date, a
+# range-style date (`2025-12-06..2025-12-09`), or an ASCII hyphen all
+# fail the same way.
+DATE_RE='[0-9]{4}-[0-9]{2}-[0-9]{2}'
+RELEASE_HEADER_RE="^## \[${VERSION_RE}\] — ${DATE_RE}\$"
+
+if ! grep -qE "$RELEASE_HEADER_RE" "$CHANGELOG"; then
+    echo "error: $CHANGELOG has no '## [${VERSION}] — YYYY-MM-DD' section" >&2
+    echo "       expected exact form: '## [${VERSION}] — 2026-05-19' (em-dash, ISO date)" >&2
+    echo "       hint: ASCII hyphen '-' is rejected; copy the em-dash from an existing entry" >&2
+    exit 1
+fi
+
+# Monotonicity: the first "## [<some-version>]" heading after Unreleased
+# must be the one we are releasing. An older heading wedged between them
+# means the CHANGELOG is out of order. Reported as a separate error so
+# the developer sees which stale section to move.
+first_after_unreleased=$(awk '
+    /^## \[Unreleased\]/ { flag = 1; next }
+    flag && /^## \[/      { print; exit }
+' "$CHANGELOG")
+
+if [ -z "$first_after_unreleased" ]; then
+    echo "error: $CHANGELOG has '## [Unreleased]' but no version section after it" >&2
+    exit 1
+fi
+
+if ! printf '%s\n' "$first_after_unreleased" | grep -qE "$RELEASE_HEADER_RE"; then
+    {
+        echo "error: section right after '## [Unreleased]' is not '## [${VERSION}] — YYYY-MM-DD':"
+        printf '       found: %s\n' "$first_after_unreleased"
+        echo "       the new version section must immediately follow Unreleased so release notes are monotonic"
+    } >&2
     exit 1
 fi
 

@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [\[0.2.1\] — 2026-05-17](#021--2026-05-17)
 - [\[0.2.0\] — 2026-05-17](#020--2026-05-17)
 - [\[0.1.6\] — 2026-05-11](#016--2026-05-11)
-- [\[0.1.5\] — earlier](#015--earlier)
+- [\[0.1.5\] — 2025-12-06..2025-12-09](#015--2025-12-062025-12-09)
 
 ## [Unreleased]
 
@@ -76,6 +76,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `publish` job declares `contents: write` (required for
   `gh release create`). Shrinks the blast radius if a compromised
   action runs in the pre-publish jobs.
+- `scripts/check-changelog.sh` is stricter on the released version's
+  header: it now requires the exact form
+  `## [<version>] — YYYY-MM-DD` (em-dash, ISO date) and also verifies
+  that this section is the FIRST one immediately after
+  `## [Unreleased]`. A stale older heading (e.g. an aborted release)
+  between them is refused, and so are missing-date / ASCII-hyphen
+  variants of the header. Older entries in the file are unchanged;
+  the strict regex applies only to the version being released.
+- `CHANGELOG.md` `[0.1.5]` entry replaced the `— earlier` placeholder
+  with the concrete `2025-12-06..2025-12-09` range covering all
+  pre-0.1.6 work. Documented inline that the range format is a
+  grandfathered exception and not a new pattern other releases may
+  adopt.
 
 ### Fixed
 
@@ -577,6 +590,14 @@ the crate as a dependency are not exposed to the failure.
 
 - Version bump.
 
-## [0.1.5] — earlier
+## [0.1.5] — 2025-12-06..2025-12-09
 
-- See git history.
+- See git history. Aggregates the work from project bootstrap through
+  the v0.1.5 / v0.1.6 tag dates (the v0.1.5 tag landed on
+  2025-12-07; the entry closes at the v0.1.6 cutoff on 2025-12-09).
+  The range date format on this single historical entry is
+  intentionally non-conformant to the strict
+  `## [<version>] — YYYY-MM-DD` pattern required by
+  `scripts/check-changelog.sh` — that script only validates the
+  version currently being released, so the grandfathered range
+  date is allowed to remain.

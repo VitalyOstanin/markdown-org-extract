@@ -152,7 +152,7 @@ markdown-org-extract [OPTIONS]
 - `--current-date <DATE>` — override of "today" (`YYYY-MM-DD`). Used as the reference for overdue / upcoming markers and as the default for a missing `--from`/`--to` edge. Not allowed in `tasks` mode. Default: today in `--tz`
 - `--holidays <YEAR>` — print the holiday list for the given year (1900–2100) as JSON
 - `--absolute-paths` — emit absolute file paths instead of paths relative to `--dir`
-- `--max-tasks <N>` — task limit (1..=10_000_000, default 10_000). Applied both as a per-file cap and as a global ceiling
+- `--max-tasks <N>` — task limit (1..=10_000_000, default 10_000). Acts as a global cap on the number of extracted tasks; the same value is reused as a per-file cap so a single hostile file cannot exhaust the global budget on its own. The scan stops as soon as either cap is hit
 - `-v`, `--verbose` — verbose stderr log (`-v` = info, `-vv` = debug, `-vvv` = trace). Mutually exclusive with `--quiet`
 - `-q`, `--quiet` — suppress all diagnostic messages except critical errors
 - `--color <MODE>` — control ANSI colour in logs: `auto` (default), `always`, `never`

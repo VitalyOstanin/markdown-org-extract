@@ -217,9 +217,11 @@ pub const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
 /// Default value for the `--max-tasks` CLI flag.
 ///
-/// Acts as both a per-file and a global cap during scanning, configurable via
-/// `--max-tasks`. The default is conservative; legitimate workloads stay well
-/// under it, while pathological / hostile inputs hit it quickly.
+/// Acts as a global cap on the total number of extracted tasks; the same
+/// value is reused as a per-file cap so a single hostile file cannot exhaust
+/// the global budget on its own. Configurable via `--max-tasks`. The default
+/// is conservative; legitimate workloads stay well under it, while
+/// pathological / hostile inputs hit it quickly.
 pub const DEFAULT_MAX_TASKS: usize = 10_000;
 
 /// Per-run cap on user-visible diagnostic entries (failed-path list,

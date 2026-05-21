@@ -120,7 +120,9 @@ pub struct Cli {
     pub absolute_paths: bool,
 
     /// Maximum number of tasks to extract before stopping (1..=10_000_000).
-    /// Acts as both a per-file cap and a global cap during scanning.
+    /// Acts as a global cap on extracted tasks; the same value is reused as a
+    /// per-file cap so a single hostile file cannot exhaust the global budget
+    /// on its own. The scan stops as soon as either cap is hit.
     #[arg(long, default_value_t = crate::types::DEFAULT_MAX_TASKS, value_parser = validate_max_tasks)]
     pub max_tasks: usize,
 

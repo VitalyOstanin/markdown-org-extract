@@ -71,6 +71,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   week / month it is the week / month containing the date.
   `tasks` mode now rejects all date arguments (`--date`, `--from`,
   `--to`, `--current-date`) instead of silently ignoring them.
+- An unknown `--locale` entry (e.g. `--locale ru,de`) is now a hard
+  error at CLI parse time (exit code 2) instead of a `tracing::warn!`
+  that `--quiet` could swallow. Empty segments are still tolerated, so
+  `--locale ru,` and `,en` keep working. The previous warn-only
+  behaviour silently dropped translations for unrecognised locales,
+  which was indistinguishable from a successful run.
 - Exit codes now reflect the error category instead of a uniform `1`.
   Usage / input-validation errors (invalid `--dir`, `--glob`, `--date`,
   `--tz`, `--output`, `from > to`) exit with code `2`. IO failures

@@ -368,11 +368,13 @@ fn agenda_tasks_mode_produces_flat_list() {
 }
 
 #[test]
-fn unknown_locale_emits_warning_on_stderr() {
-    // --locale silently dropping an unrecognised entry is a foot-gun: a user
-    // who typed `--locale en,de` got zero weekday mappings for `de` with no
-    // hint that the project ships only `ru,en`. We now warn at the warn level
-    // (default visibility) so the user sees it.
+fn unknown_locale_is_hard_error_even_under_quiet() {
+    // --locale must reject unknown entries at parse time, not at log time:
+    // a tracing::warn! would be swallowed by --quiet and a user typing
+    // `--locale en,de --quiet` would silently get zero `de` mappings.
+    // Validate-at-CLI puts the error on the same tier as `--dir` /
+    // `--tz` / `--date` checks (exit code 2 from AppError::InvalidOutput
+    // equivalents -- here clap's own usage-error path produces 2).
     let out = bin()
         .args([
             "--dir",
@@ -381,22 +383,30 @@ fn unknown_locale_emits_warning_on_stderr() {
             "2025-12-05",
             "--locale",
             "ru,xx",
+            "--quiet",
         ])
         .output()
         .expect("run");
     assert!(
-        out.status.success(),
-        "stderr: {}",
+        !out.status.success(),
+        "expected failure, got success; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "expected exit code 2 for usage error, got: {:?}, stderr: {}",
+        out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("unknown --locale"),
-        "expected warning about unknown locale, got: {stderr}"
+        stderr.contains("unknown locale"),
+        "expected 'unknown locale' wording, got: {stderr}"
     );
     assert!(
         stderr.contains("xx"),
-        "expected offending value, got: {stderr}"
+        "expected offending value 'xx', got: {stderr}"
     );
 }
 

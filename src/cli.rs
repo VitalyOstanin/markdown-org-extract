@@ -90,7 +90,10 @@ pub struct Cli {
     pub absolute_paths: bool,
 
     /// Comma-separated locale list for weekday name normalization (e.g. `ru,en`).
-    #[arg(long, default_value = "ru,en", help_heading = "Agenda")]
+    /// Supported values: `ru`, `en`. Empty segments are tolerated
+    /// (`ru,` and `,en` both parse). An unknown locale is rejected at
+    /// CLI validation time with exit code 2 — `--quiet` does not mask it.
+    #[arg(long, default_value = "ru,en", value_parser = validate_locale, help_heading = "Agenda")]
     pub locale: String,
 
     /// Agenda time scope: day / week / month. Mutually exclusive with `--tasks`.
@@ -398,6 +401,25 @@ fn validate_timezone(s: &str) -> Result<String, String> {
         .map_err(|e| format!("{e}; use IANA timezone names (e.g. 'Europe/Moscow', 'UTC')"))
 }
 
+fn validate_locale(s: &str) -> Result<String, String> {
+    // Reject unknown entries at clap parse time (exit 2) rather than letting
+    // them dissolve into a tracing::warn! that --quiet swallows. The empty
+    // segment is still tolerated so `--locale ru,` (trailing comma) and
+    // `--locale ,en` (leading comma) keep working as before.
+    for seg in s.split(',') {
+        let entry = seg.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        if !SUPPORTED_LOCALES.contains(&entry) {
+            return Err(format!(
+                "unknown locale '{entry}'; supported: {SUPPORTED_LOCALES:?}"
+            ));
+        }
+    }
+    Ok(s.to_string())
+}
+
 /// Russian weekday names mapped to their English equivalents. The same table
 /// drives both `--locale ru` weekday normalization in the CLI and the
 /// integration-style parser test that reproduces the production pipeline,
@@ -425,21 +447,18 @@ pub(crate) const RU_WEEKDAY_MAPPINGS: &[(&str, &str)] = &[
 pub(crate) const SUPPORTED_LOCALES: &[&str] = &["ru", "en"];
 
 pub fn get_weekday_mappings(locale: &str) -> Vec<(&'static str, &'static str)> {
-    let locales: Vec<&str> = locale.split(',').map(|s| s.trim()).collect();
+    // The CLI surface validates locale entries against SUPPORTED_LOCALES via
+    // `validate_locale`, so reaching this function with anything outside
+    // {"ru", "en", ""} means a programmer bypassed the value_parser. Unknown
+    // entries are silently dropped here rather than warned about — the
+    // single source of truth for "unknown locale" is the CLI validator.
     let mut mappings = Vec::new();
-
-    for loc in locales {
-        match loc {
-            "ru" => mappings.extend_from_slice(RU_WEEKDAY_MAPPINGS),
-            "en" => {} // English: no translation table needed, recognised silently.
-            "" => {}   // tolerate `--locale ru,` / leading commas without warning
-            other => {
-                tracing::warn!(
-                    locale = %other,
-                    supported = ?SUPPORTED_LOCALES,
-                    "unknown --locale entry ignored; no weekday mappings will be added for it"
-                );
-            }
+    for loc in locale.split(',') {
+        // "en" / empty / anything else: nothing to translate. The CLI
+        // validator already rejected unrecognised entries, so this
+        // catch-all should only hit "en" or whitespace in practice.
+        if loc.trim() == "ru" {
+            mappings.extend_from_slice(RU_WEEKDAY_MAPPINGS);
         }
     }
     mappings
@@ -693,6 +712,43 @@ mod tests {
             env_with(false, false, false),
             false,
         ));
+    }
+
+    #[test]
+    fn validate_locale_accepts_supported() {
+        assert!(validate_locale("ru").is_ok());
+        assert!(validate_locale("en").is_ok());
+        assert!(validate_locale("ru,en").is_ok());
+    }
+
+    #[test]
+    fn validate_locale_tolerates_empty_segments() {
+        // Trailing / leading / doubled commas must keep working — they were
+        // tolerated by the previous warn-based path and removing that
+        // tolerance would silently break existing scripts.
+        assert!(validate_locale("ru,").is_ok());
+        assert!(validate_locale(",en").is_ok());
+        assert!(validate_locale("ru,,en").is_ok());
+        assert!(validate_locale("").is_ok());
+    }
+
+    #[test]
+    fn validate_locale_rejects_unknown_entry() {
+        // The whole point of the validator: surface unknown locales to the
+        // user instead of dissolving them into a tracing::warn! that
+        // --quiet would swallow.
+        let err = validate_locale("ru,de").unwrap_err();
+        assert!(err.contains("unknown locale 'de'"), "got: {err}");
+        assert!(err.contains("ru"), "expected supported list, got: {err}");
+        assert!(err.contains("en"), "expected supported list, got: {err}");
+    }
+
+    #[test]
+    fn validate_locale_rejects_unknown_with_whitespace_padding() {
+        // Whitespace around entries must not let an unknown locale slip past
+        // the check ("--locale ru, de" should still fail on `de`).
+        let err = validate_locale("ru, de").unwrap_err();
+        assert!(err.contains("unknown locale 'de'"), "got: {err}");
     }
 
     #[test]

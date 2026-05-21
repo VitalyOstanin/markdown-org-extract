@@ -504,6 +504,62 @@ fn color_flag_rejects_unknown_value() {
 }
 
 #[test]
+fn agenda_conflicts_with_tasks_flag() {
+    // `--agenda day` (or week/month) selects a windowed view; `--tasks`
+    // selects a flat list. The two modes are mutually exclusive at the
+    // clap layer via conflicts_with on --agenda. Pin the rejection so a
+    // refactor that drops the conflict cannot quietly let one mode
+    // override the other.
+    bin()
+        .args([
+            "--dir",
+            "examples",
+            "--current-date",
+            "2025-12-05",
+            "--agenda",
+            "week",
+            "--tasks",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("cannot be used"));
+}
+
+#[test]
+fn verbose_conflicts_with_quiet() {
+    // `-v` raises log level above warn; `-q` lowers it to error. Combining
+    // them is meaningless: the user can't both want more and less
+    // diagnostics at the same time. The conflict is on the --quiet arg.
+    bin()
+        .args([
+            "--dir",
+            "examples",
+            "--current-date",
+            "2025-12-05",
+            "--verbose",
+            "--quiet",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("cannot be used"));
+
+    // `-v` short form must trigger the same conflict; the relationship is
+    // on the long names but short aliases share the same arg id.
+    bin()
+        .args([
+            "--dir",
+            "examples",
+            "--current-date",
+            "2025-12-05",
+            "-v",
+            "-q",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("cannot be used"));
+}
+
+#[test]
 fn color_conflicts_with_no_color() {
     // Both flags carry intent; combining them is almost certainly a mistake.
     // Force the user to pick one rather than silently letting --no-color win.

@@ -8,13 +8,14 @@ use super::weekdays::normalize_weekdays;
 use crate::regex_limits::compile_bounded;
 
 static RANGE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    // The dash separator matches Emacs' org-tr-regexp: `-`, `--`, or `---`.
     compile_bounded(concat!(
         r"<(\d{4}-\d{2}-\d{2})",
         r"(?: (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday))?",
         r"(?: (\d{1,2}:\d{2})(?:-(\d{1,2}:\d{2}))?)?",
         r"(?:\s*([.+]+\d+(?:wd|[dwmyh])))?",
         r"(?:\s+-(\d+)d)?>",
-        r"--",
+        r"--?-?",
         r"<(\d{4}-\d{2}-\d{2})",
         r"(?: (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday))?",
         r"(?: (\d{1,2}:\d{2})(?:-(\d{1,2}:\d{2}))?)?>",
@@ -96,5 +97,23 @@ mod tests {
         let parsed = parse_org_timestamp(ts, None).unwrap();
         let repeater = parsed.repeater.unwrap();
         assert_eq!(repeater.unit, super::super::repeater::RepeaterUnit::Day);
+    }
+
+    #[test]
+    fn range_separator_accepts_one_two_three_dashes() {
+        // Emacs' org-tr-regexp uses `--?-?`, i.e. one, two, or three dashes
+        // between the bracketed values. parse_org_timestamp must accept all
+        // three; the start date alone is surfaced (end-date support is a
+        // separate concern, documented in README + ADR-0002).
+        for sep in ["-", "--", "---"] {
+            let ts = format!("<2025-12-05 Thu>{sep}<2025-12-06 Fri>");
+            let parsed = parse_org_timestamp(&ts, None)
+                .unwrap_or_else(|| panic!("must parse range with {sep:?} as separator"));
+            assert_eq!(
+                parsed.date,
+                NaiveDate::from_ymd_opt(2025, 12, 5).unwrap(),
+                "start date must be the first bracket for separator {sep:?}"
+            );
+        }
     }
 }

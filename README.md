@@ -439,6 +439,19 @@ Timestamps must be wrapped in backticks:
 `<2024-12-20 Mon>--<2024-12-22 Wed>`
 ```
 
+The dash separator follows Emacs' `org-tr-regexp` and accepts one,
+two, or three dashes (`-`, `--`, `---`). The canonical form on
+output is two dashes.
+
+**Limitation:** the start date and start / end times of a range are
+surfaced in the output, but the end **date** is not. A range task
+is therefore shown on its start day only, not on every day spanned
+by the range. See
+[ADR-0002](docs/adr/0002-supported-org-mode-subset.md) for the
+documented scope and
+[ADR-0009](docs/adr/0009-unified-date-window-semantics.md) for the
+agenda window model.
+
 **Inactive timestamps (NOT extracted):**
 ```markdown
 `[2024-12-10 Mon]` — square brackets denote an inactive timestamp

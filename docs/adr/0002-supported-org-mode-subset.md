@@ -74,8 +74,12 @@ The following Org-mode features are deliberately **out of scope**:
   hard-coded `TODO` and `DONE` are recognised.
 - Inactive timestamps in square brackets `[...]` outside of CLOCK
   and CLOSED contexts.
-- Date ranges `<...>--<...>` (see #6 in the project task list for
-  the current state of this gap).
+- Multi-day agenda display of date-range timestamps
+  `<...>--?-?<...>`. The dash separator is accepted in all three
+  variants Emacs allows (one, two, or three dashes, matching
+  `org-tr-regexp`), and the start date and start / end times are
+  surfaced; the end **date** is not exposed and the task is shown
+  only on the start day. Multi-day spanning is a separate concern.
 - Warning cookies `-Nd` inside DEADLINE timestamps (see #34).
 - Properties drawers, tag inheritance, agenda categories, habit
   graphs.

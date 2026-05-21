@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Range-timestamp dash separator follows Emacs' `org-tr-regexp` and
+  now accepts one, two, or three dashes (`-`, `--`, `---`). The
+  canonical form on output is two dashes, matching Emacs'
+  `org-time-stamp`. The end **date** of a range is still not
+  surfaced; see ADR-0002 for the documented scope.
 - `--completions <SHELL>` prints a shell completion script on stdout
   and exits. Supports `bash`, `zsh`, `fish`, `elvish`, `powershell`.
   See the new "Shell completions" section in the README for the

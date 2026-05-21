@@ -13,9 +13,12 @@ static TIMESTAMP_RE: LazyLock<Regex> = LazyLock::new(|| {
     ))
 });
 
+// Range-timestamp separator matches Emacs' org-tr-regexp: one, two, or three
+// dashes between the two bracketed values. The output is always canonicalised
+// to the two-dash form, which is the variant produced by Emacs `org-time-stamp`.
 static RANGE_TIMESTAMP_RE: LazyLock<Regex> = LazyLock::new(|| {
     compile_bounded(&format!(
-        r"^\s*<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>--<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>"
+        r"^\s*<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>--?-?<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>"
     ))
 });
 
@@ -119,13 +122,17 @@ fn detect_ts_type(timestamp: &str) -> Option<String> {
 }
 
 fn split_range(s: &str) -> Option<(&str, &str)> {
-    // Find a "<...>--<...>" pattern and return the inner bodies (without angle brackets).
+    // Find a "<...>(--?-?)<...>" pattern and return the inner bodies (without
+    // angle brackets). The dash count matches Emacs' org-tr-regexp: one, two,
+    // or three dashes; the canonical wire form is two.
     let start = s.find('<')?;
     let after_first = &s[start + 1..];
     let end_first_rel = after_first.find('>')?;
     let first_body = &after_first[..end_first_rel];
     let rest = &after_first[end_first_rel + 1..];
-    let rest = rest.strip_prefix("--")?;
+    let rest = rest.strip_prefix('-')?;
+    let rest = rest.strip_prefix('-').unwrap_or(rest);
+    let rest = rest.strip_prefix('-').unwrap_or(rest);
     let rest = rest.strip_prefix('<')?;
     let end_second_rel = rest.find('>')?;
     let second_body = &rest[..end_second_rel];
@@ -163,6 +170,33 @@ mod tests {
     fn extract_timestamp_range() {
         let ts = extract_timestamp("<2024-12-05 Thu 10:00>--<2024-12-06 Fri 14:00>", &[]).unwrap();
         assert_eq!(ts, "<2024-12-05 Thu 10:00>--<2024-12-06 Fri 14:00>");
+    }
+
+    #[test]
+    fn extract_timestamp_range_one_dash() {
+        // Emacs' org-tr-regexp accepts a single dash between the two bracketed
+        // values (`--?-?`). The output is canonicalised back to two dashes,
+        // matching the form produced by Emacs' `org-time-stamp` and the rest of
+        // this project's wire format.
+        let ts = extract_timestamp("<2024-12-05 Thu>-<2024-12-06 Fri>", &[]).unwrap();
+        assert_eq!(ts, "<2024-12-05 Thu>--<2024-12-06 Fri>");
+    }
+
+    #[test]
+    fn extract_timestamp_range_three_dashes() {
+        let ts = extract_timestamp("<2024-12-05 Thu>---<2024-12-06 Fri>", &[]).unwrap();
+        assert_eq!(ts, "<2024-12-05 Thu>--<2024-12-06 Fri>");
+    }
+
+    #[test]
+    fn parse_fields_range_one_dash_recovers_second_time() {
+        // Same regression coverage as the two-dash range, but for the single-
+        // dash variant that Emacs also accepts.
+        let (_, date, time, end_time) =
+            parse_timestamp_fields("<2024-12-05 Thu 10:00>-<2024-12-06 Fri 14:00>", &[]);
+        assert_eq!(date, Some("2024-12-05".to_string()));
+        assert_eq!(time, Some("10:00".to_string()));
+        assert_eq!(end_time, Some("14:00".to_string()));
     }
 
     #[test]

@@ -43,6 +43,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (today's agenda, week / range agenda, flat tasks, holidays,
   shell completion install). `-h` keeps the at-a-glance summary
   without the examples block.
+- `scripts/check.sh` runs the same gates CI runs (`cargo fmt --check`,
+  `cargo clippy -D warnings`, `cargo test --all-features`) in order,
+  fail-fast, with a uniform `==>` banner so failures are easy to spot.
+  Intended as a one-liner before opening a PR.
+- `scripts/install-hooks.sh` installs a `pre-commit` git hook that
+  delegates to `scripts/check.sh`. Refuses to overwrite an existing
+  hook unless `--force` is passed. The installed hook re-execs from
+  the repo root, so `git commit` from any subdirectory behaves the
+  same.
 
 ### Fixed
 

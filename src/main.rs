@@ -91,7 +91,9 @@ fn handle_holidays(year: i32) -> Result<(), AppError> {
         .map(|d| d.format("%Y-%m-%d").to_string())
         .collect();
     let output = serde_json::to_string_pretty(&dates)?;
-    io::stdout().write_all(output.as_bytes())?;
+    io::stdout()
+        .write_all(output.as_bytes())
+        .map_err(|e| AppError::io("<stdout>", e))?;
     Ok(())
 }
 
@@ -283,11 +285,15 @@ fn render_output(cli: &Cli, agenda_output: agenda::AgendaOutput) -> Result<(), A
     };
 
     match cli.output.as_deref() {
-        Some(p) if !is_stdout_sigil(p) => fs::write(p, output)?,
+        Some(p) if !is_stdout_sigil(p) => {
+            fs::write(p, output).map_err(|e| AppError::io(p.display().to_string(), e))?
+        }
         // None or `--output -` both mean stdout. The explicit `-` form is the
         // standard unix sigil for stdout and lets shell pipelines target it
         // unambiguously when stdout is otherwise reserved (e.g. tee chains).
-        _ => io::stdout().write_all(output.as_bytes())?,
+        _ => io::stdout()
+            .write_all(output.as_bytes())
+            .map_err(|e| AppError::io("<stdout>", e))?,
     }
 
     Ok(())

@@ -4,8 +4,19 @@ use std::io;
 /// Application error. Wraps IO and validation failures encountered by the CLI.
 #[derive(Debug)]
 pub enum AppError {
-    /// Underlying IO error (file read, write, etc.)
-    Io(io::Error),
+    /// Underlying IO error (file read, write, etc.) with the path or
+    /// context label that triggered it. Use the `AppError::io` constructor;
+    /// the blanket `From<io::Error>` is intentionally absent because losing
+    /// the path on every `?` is exactly what this variant was reshaped to
+    /// prevent.
+    Io {
+        /// Path or sentinel that identifies *what* failed (e.g.
+        /// `/tmp/out.json`, `<stdout>`). Embedded in `Display`; the
+        /// underlying `io::Error` is exposed through `Error::source()`
+        /// so callers using `anyhow`-style chaining see both layers.
+        context: String,
+        source: io::Error,
+    },
     /// `--dir` does not exist or is not a directory
     InvalidDirectory(String),
     /// `--glob` pattern is malformed or uses an unsupported feature
@@ -33,7 +44,7 @@ impl fmt::Display for AppError {
         // sentence; for opaque variants (Io / Walk / Regex / Serialization /
         // InvalidTimezone) keep a short lowercase tag so output stays grepable.
         match self {
-            AppError::Io(e) => write!(f, "io: {e}"),
+            AppError::Io { context, source } => write!(f, "io: {context}: {source}"),
             AppError::InvalidDirectory(msg) => write!(f, "{msg}"),
             AppError::InvalidGlob(msg) => write!(f, "{msg}"),
             AppError::InvalidDate(msg) => write!(f, "{msg}"),
@@ -64,17 +75,38 @@ impl AppError {
             | AppError::InvalidTimezone(_)
             | AppError::InvalidOutput(_)
             | AppError::DateRange(_) => 2,
-            AppError::Io(_) | AppError::Walk(_) => 74,
+            AppError::Io { .. } | AppError::Walk(_) => 74,
             AppError::Regex(_) | AppError::Serialization(_) => 70,
+        }
+    }
+
+    /// Construct an `AppError::Io` while preserving the underlying source.
+    ///
+    /// The `context` is a free-form label printed by `Display`: prefer the
+    /// real filesystem path when one is available (`p.display()`), fall back
+    /// to the sentinel `<stdout>` / `<stderr>` for the standard streams.
+    /// Use this in place of `?` on `io::Error` — the blanket `From` was
+    /// removed precisely so that no IO failure can sneak through without a
+    /// caller-supplied location.
+    pub fn io(context: impl Into<String>, source: io::Error) -> Self {
+        AppError::Io {
+            context: context.into(),
+            source,
         }
     }
 }
 
-impl std::error::Error for AppError {}
-
-impl From<io::Error> for AppError {
-    fn from(err: io::Error) -> Self {
-        AppError::Io(err)
+impl std::error::Error for AppError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        // Only Io currently carries a wrapped source. Surfacing it lets
+        // downstream tooling (anyhow, log formatters) walk the chain and
+        // print the underlying OS error verbatim — important for diagnosing
+        // EACCES / ENOSPC / EROFS where the raw errno text is the most
+        // useful signal.
+        match self {
+            AppError::Io { source, .. } => Some(source),
+            _ => None,
+        }
     }
 }
 
@@ -132,11 +164,33 @@ mod tests {
     }
 
     #[test]
-    fn from_io_error_wraps() {
-        let io = io::Error::new(ErrorKind::NotFound, "missing");
-        let e: AppError = io.into();
-        assert!(matches!(e, AppError::Io(_)));
-        assert!(e.to_string().starts_with("io: "));
+    fn io_constructor_preserves_context_and_source() {
+        // `AppError::io` is the only path that produces the Io variant now
+        // (the blanket From<io::Error> was removed). Both the context label
+        // and the underlying source must round-trip without loss — context
+        // in Display and source via std::error::Error::source().
+        use std::error::Error as _;
+        let io_err = io::Error::new(ErrorKind::NotFound, "missing");
+        let e = AppError::io("/tmp/out.json", io_err);
+        assert!(matches!(e, AppError::Io { .. }));
+        let msg = e.to_string();
+        assert!(msg.starts_with("io: "), "got: {msg}");
+        assert!(msg.contains("/tmp/out.json"), "got: {msg}");
+        assert!(msg.contains("missing"), "got: {msg}");
+        let src = e.source().expect("source should be set for Io");
+        assert!(src.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn source_returns_none_for_non_io_variants() {
+        // Only Io currently chains a source. Pin the contract so a future
+        // refactor that adds source() for other variants doesn't ship
+        // accidentally — every new chained-source variant deserves a test
+        // here and a CHANGELOG line.
+        use std::error::Error as _;
+        assert!(AppError::InvalidDirectory("x".into()).source().is_none());
+        assert!(AppError::Regex("x".into()).source().is_none());
+        assert!(AppError::Walk("x".into()).source().is_none());
     }
 
     #[test]
@@ -173,7 +227,7 @@ mod tests {
     fn exit_code_io_and_walk_return_74() {
         let io = io::Error::new(ErrorKind::NotFound, "missing");
         assert_eq!(
-            AppError::Io(io).exit_code(),
+            AppError::io("/tmp/x", io).exit_code(),
             74,
             "Io maps to EX_IOERR (74) from sysexits.h"
         );

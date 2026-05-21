@@ -77,6 +77,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--locale ru,` and `,en` keep working. The previous warn-only
   behaviour silently dropped translations for unrecognised locales,
   which was indistinguishable from a successful run.
+- `AppError::Io` now carries the failing path or stream sentinel and
+  exposes the underlying `io::Error` through `std::error::Error::source()`.
+  Previously the variant only wrapped a bare `io::Error`, so a stderr
+  message like `error: io: No such file or directory (os error 2)` did
+  not tell the user *which* file. The Display now reads
+  `error: io: /tmp/out.json: No such file or directory (os error 2)`.
+  Internal: the blanket `From<io::Error>` was removed so every IO
+  failure must go through `AppError::io(context, err)` and supply a
+  caller-side label.
 - Exit codes now reflect the error category instead of a uniform `1`.
   Usage / input-validation errors (invalid `--dir`, `--glob`, `--date`,
   `--tz`, `--output`, `from > to`) exit with code `2`. IO failures

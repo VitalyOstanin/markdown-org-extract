@@ -819,6 +819,15 @@ fn exit_code_74_for_io_when_output_is_a_directory() {
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );
+    // The Io variant now embeds the failing path in Display; pin that so a
+    // refactor that drops the context (e.g. by reinstating a blanket
+    // From<io::Error>) leaves an empty "io: : ..." trail and breaks loudly.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let path_str = out_path.to_string_lossy();
+    assert!(
+        stderr.contains(&*path_str),
+        "expected the failing path '{path_str}' in stderr, got: {stderr}"
+    );
 }
 
 // Unified date-window semantics (ADR-0009). The agenda module accepts

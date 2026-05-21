@@ -47,6 +47,29 @@ impl fmt::Display for AppError {
     }
 }
 
+impl AppError {
+    /// Process exit code that classifies this error category.
+    ///
+    /// - `2`  -- usage / input-validation failures the user can correct by
+    ///   changing CLI arguments (matches clap's own argument-error exit).
+    /// - `74` -- IO failures (`EX_IOERR` from `sysexits.h`): unreadable files,
+    ///   directory traversal errors, write failures.
+    /// - `70` -- internal software errors (`EX_SOFTWARE`): a regex we built
+    ///   ourselves did not compile, or our own serializer failed.
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            AppError::InvalidDirectory(_)
+            | AppError::InvalidGlob(_)
+            | AppError::InvalidDate(_)
+            | AppError::InvalidTimezone(_)
+            | AppError::InvalidOutput(_)
+            | AppError::DateRange(_) => 2,
+            AppError::Io(_) | AppError::Walk(_) => 74,
+            AppError::Regex(_) | AppError::Serialization(_) => 70,
+        }
+    }
+}
+
 impl std::error::Error for AppError {}
 
 impl From<io::Error> for AppError {
@@ -130,5 +153,40 @@ mod tests {
         // we ever spawn worker threads (e.g. for parallel walker).
         fn is_send_sync<T: Send + Sync>() {}
         is_send_sync::<AppError>();
+    }
+
+    #[test]
+    fn exit_code_usage_errors_return_2() {
+        assert_eq!(
+            AppError::InvalidDirectory("x".into()).exit_code(),
+            2,
+            "InvalidDirectory is a usage error and must map to exit 2"
+        );
+        assert_eq!(AppError::InvalidGlob("x".into()).exit_code(), 2);
+        assert_eq!(AppError::InvalidDate("x".into()).exit_code(), 2);
+        assert_eq!(AppError::InvalidTimezone("x".into()).exit_code(), 2);
+        assert_eq!(AppError::InvalidOutput("x".into()).exit_code(), 2);
+        assert_eq!(AppError::DateRange("x".into()).exit_code(), 2);
+    }
+
+    #[test]
+    fn exit_code_io_and_walk_return_74() {
+        let io = io::Error::new(ErrorKind::NotFound, "missing");
+        assert_eq!(
+            AppError::Io(io).exit_code(),
+            74,
+            "Io maps to EX_IOERR (74) from sysexits.h"
+        );
+        assert_eq!(AppError::Walk("x".into()).exit_code(), 74);
+    }
+
+    #[test]
+    fn exit_code_software_errors_return_70() {
+        assert_eq!(
+            AppError::Regex("x".into()).exit_code(),
+            70,
+            "Regex compile failure is an internal software error (EX_SOFTWARE = 70)"
+        );
+        assert_eq!(AppError::Serialization("x".into()).exit_code(), 70);
     }
 }

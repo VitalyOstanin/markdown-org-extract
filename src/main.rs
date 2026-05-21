@@ -31,7 +31,7 @@ fn main() {
         // Use eprintln directly: tracing may not be initialized if argument parsing failed,
         // and a hard error should always reach the user regardless of `--quiet`.
         eprintln!("error: {e}");
-        std::process::exit(1);
+        std::process::exit(e.exit_code());
     }
 }
 

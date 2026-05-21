@@ -679,3 +679,76 @@ fn debug_log_includes_per_file_span_field() {
         "expected `path=` from the file span, got stderr: {stderr}"
     );
 }
+
+// Exit-code routing per AppError category. The values come from `sysexits.h`
+// where applicable (74 = EX_IOERR, 70 = EX_SOFTWARE); usage errors use `2` to
+// match clap's own argument-error exit code so the boundary between
+// clap-level and app-level validation failures is invisible to the caller.
+
+#[test]
+fn exit_code_2_for_invalid_directory() {
+    let out = bin()
+        .args([
+            "--dir",
+            "/this/path/should/never/exist_xyz_exitcode",
+            "--current-date",
+            "2025-12-05",
+        ])
+        .output()
+        .expect("run");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "invalid --dir is a usage error, must exit 2 (got {:?}); stderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn exit_code_2_for_invalid_output_parent() {
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--output",
+            "/this/parent/should/never/exist/out.json",
+            "--current-date",
+            "2025-12-05",
+        ])
+        .output()
+        .expect("run");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "invalid --output (missing parent) is a usage error, must exit 2 (got {:?}); stderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn exit_code_74_for_io_when_output_is_a_directory() {
+    let tmp = tempdir().expect("tmpdir");
+    let out_path = tmp.path().join("collision-dir");
+    fs::create_dir(&out_path).expect("create collision dir");
+
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--output",
+            out_path.to_str().unwrap(),
+            "--current-date",
+            "2025-12-05",
+        ])
+        .output()
+        .expect("run");
+    assert_eq!(
+        out.status.code(),
+        Some(74),
+        "writing to a path that is a directory is an IO error, must exit 74 (got {:?}); stderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

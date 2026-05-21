@@ -18,7 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No user-visible changes yet._
+### Changed
+
+- Exit codes now reflect the error category instead of a uniform `1`.
+  Usage / input-validation errors (invalid `--dir`, `--glob`, `--date`,
+  `--tz`, `--output`, `from > to`) exit with code `2`. IO failures
+  (unreadable files, walker errors, write failures) exit with `74`
+  (`EX_IOERR` from `sysexits.h`). Internal software errors (regex
+  compile, serializer) exit with `70` (`EX_SOFTWARE`). Scripts that
+  shelled out to the binary and only checked for `!= 0` are
+  unaffected; scripts that branched on `== 1` may need to switch to
+  `!= 0` or to the new specific codes.
 
 ## [0.3.1] — 2026-05-19
 

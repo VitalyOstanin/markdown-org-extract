@@ -1110,6 +1110,104 @@ fn multi_segment_glob_matches_with_relative_dir() {
 /// 3. The summary on stderr mentions walk_errors > 0.
 #[cfg(unix)]
 #[test]
+fn output_write_to_readonly_parent_exits_74_with_path_in_stderr() {
+    // EACCES on the write itself (parent dir is r-x, no w) is the most
+    // common --output failure in CI sandboxes and locked-down deploy
+    // directories. The path must be in stderr — without it the user
+    // sees a bare "Permission denied (os error 13)" and has to guess.
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempdir().expect("tmpdir");
+    let ro_dir = tmp.path().join("ro");
+    fs::create_dir(&ro_dir).expect("mkdir ro");
+    let out_path = ro_dir.join("out.json");
+
+    let mut perms = fs::metadata(&ro_dir).expect("metadata").permissions();
+    perms.set_mode(0o555);
+    fs::set_permissions(&ro_dir, perms).expect("chmod 555");
+
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--output",
+            out_path.to_str().unwrap(),
+            "--current-date",
+            "2025-12-05",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+
+    // Restore perms before assertions so tempdir cleanup can remove the dir.
+    let mut perms = fs::metadata(&ro_dir).expect("metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&ro_dir, perms).expect("chmod restore");
+
+    assert_eq!(
+        out.status.code(),
+        Some(74),
+        "write into read-only parent must exit 74 (EX_IOERR); stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let path_str = out_path.to_string_lossy();
+    assert!(
+        stderr.contains(&*path_str),
+        "expected the failing path '{path_str}' in stderr, got: {stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn output_write_to_readonly_file_exits_74_with_path_in_stderr() {
+    // Overwriting an existing file that has no write bit set is the
+    // second failure mode for --output. Same exit code (74), same
+    // path-in-stderr contract — pin both so a refactor that swallows
+    // the path or downgrades the exit code regresses loudly.
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempdir().expect("tmpdir");
+    let out_path = tmp.path().join("locked.json");
+    fs::write(&out_path, b"placeholder").expect("write placeholder");
+    let mut perms = fs::metadata(&out_path).expect("metadata").permissions();
+    perms.set_mode(0o444);
+    fs::set_permissions(&out_path, perms).expect("chmod 444");
+
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--output",
+            out_path.to_str().unwrap(),
+            "--current-date",
+            "2025-12-05",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+
+    // Restore so tempdir can clean up.
+    let mut perms = fs::metadata(&out_path).expect("metadata").permissions();
+    perms.set_mode(0o644);
+    fs::set_permissions(&out_path, perms).expect("chmod restore");
+
+    assert_eq!(
+        out.status.code(),
+        Some(74),
+        "overwrite of read-only file must exit 74 (EX_IOERR); stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let path_str = out_path.to_string_lossy();
+    assert!(
+        stderr.contains(&*path_str),
+        "expected the failing path '{path_str}' in stderr, got: {stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn walker_continues_after_permission_denied_subdir() {
     use std::os::unix::fs::PermissionsExt;
 

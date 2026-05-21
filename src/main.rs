@@ -156,6 +156,12 @@ fn scan_files(
         .same_file_system(true)
         .build();
 
+    // Reuse one Searcher and one read buffer across the entire walk. Both are
+    // designed to be cleared and reused; allocating them per file added a
+    // monotonic cost that scaled with tree size for no gain.
+    let mut searcher = Searcher::new();
+    let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);
+
     for result in walker {
         // A walker error on one entry (permission denied on a subdir, broken
         // metadata, etc.) must not abort the whole scan: the rest of the
@@ -183,13 +189,14 @@ fn scan_files(
             continue;
         }
 
-        // Read once with a hard cap. Avoids the TOCTOU window where a separate
-        // metadata() check might say a file is small but the subsequent read()
-        // pulls in a file that has since grown — `read_capped` probes one byte
-        // past the cap and refuses anything larger.
-        let bytes = match read_capped(path, MAX_FILE_SIZE) {
-            Ok(Some(b)) => b,
-            Ok(None) => {
+        // Read once with a hard cap into the reusable buffer. Avoids the
+        // TOCTOU window where a separate metadata() check might say a file is
+        // small but the subsequent read() pulls in a file that has since
+        // grown — read_capped_into probes one byte past the cap and refuses
+        // anything larger.
+        match read_capped_into(path, MAX_FILE_SIZE, &mut buf) {
+            Ok(true) => {}
+            Ok(false) => {
                 stats.files_skipped_size += 1;
                 continue;
             }
@@ -198,12 +205,11 @@ fn scan_files(
                 stats.record_failed_path(&path.display().to_string());
                 continue;
             }
-        };
+        }
 
         let mut found = false;
-        let mut searcher = Searcher::new();
         if searcher
-            .search_slice(&matcher, &bytes, FoundSink { found: &mut found })
+            .search_slice(&matcher, &buf, FoundSink { found: &mut found })
             .is_err()
         {
             stats.files_failed_search += 1;
@@ -215,7 +221,7 @@ fn scan_files(
             continue;
         }
 
-        let content = match String::from_utf8(bytes) {
+        let content = match std::str::from_utf8(&buf) {
             Ok(s) => s,
             Err(_) => {
                 stats.files_failed_read += 1;
@@ -243,7 +249,7 @@ fn scan_files(
         // without any way to tie a warning back to the file it came from.
         let span = tracing::debug_span!("file", path = %display_path);
         let extracted = span.in_scope(|| {
-            extract_tasks(Path::new(&display_path), &content, mappings, cli.max_tasks)
+            extract_tasks(Path::new(&display_path), content, mappings, cli.max_tasks)
         });
         tasks.extend(extracted);
         stats.files_processed += 1;
@@ -345,15 +351,24 @@ fn validate_output_path(path: &Path) -> Result<(), AppError> {
 /// for a symlink target on a different filesystem) between the metadata read
 /// and the content read. Reading `cap + 1` bytes lets us detect overruns
 /// without first asking the filesystem how large the file claims to be.
-fn read_capped(path: &Path, cap: u64) -> io::Result<Option<Vec<u8>>> {
+/// Read up to `cap` bytes from `path` into `buf`, clearing `buf` first.
+///
+/// Returns:
+///
+/// - `Ok(true)` -- file content fully read (length <= `cap`).
+/// - `Ok(false)` -- file exceeds `cap`; `buf` holds the first `cap + 1` bytes
+///   (caller should treat as over-cap and discard).
+/// - `Err(_)` -- IO error (open / read failure).
+///
+/// Reusing one buffer across the scan loop lets a tight walker avoid one
+/// allocation per file. The buffer's capacity grows monotonically to the
+/// largest file seen, which is bounded by `MAX_FILE_SIZE` plus the probe byte.
+fn read_capped_into(path: &Path, cap: u64, buf: &mut Vec<u8>) -> io::Result<bool> {
+    buf.clear();
     let file = File::open(path)?;
-    let mut buf = Vec::new();
     let probe = cap.saturating_add(1);
-    file.take(probe).read_to_end(&mut buf)?;
-    if buf.len() as u64 > cap {
-        return Ok(None);
-    }
-    Ok(Some(buf))
+    file.take(probe).read_to_end(buf)?;
+    Ok((buf.len() as u64) <= cap)
 }
 
 struct FoundSink<'a> {
@@ -538,43 +553,60 @@ mod tests {
     }
 
     #[test]
-    fn read_capped_returns_some_when_file_within_limit() {
+    fn read_capped_into_returns_true_when_file_within_limit() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("small.md");
         fs::write(&path, b"hello world").unwrap();
-        let result = read_capped(&path, 1024).unwrap();
-        assert_eq!(result.as_deref(), Some(&b"hello world"[..]));
+        let mut buf = Vec::new();
+        assert!(read_capped_into(&path, 1024, &mut buf).unwrap());
+        assert_eq!(buf, b"hello world");
     }
 
     #[test]
-    fn read_capped_returns_some_when_file_at_exact_limit() {
+    fn read_capped_into_returns_true_at_exact_limit() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("exact.md");
         let payload = vec![b'x'; 64];
         fs::write(&path, &payload).unwrap();
-        let result = read_capped(&path, 64).unwrap();
-        assert_eq!(result.as_deref(), Some(payload.as_slice()));
+        let mut buf = Vec::new();
+        assert!(read_capped_into(&path, 64, &mut buf).unwrap());
+        assert_eq!(buf, payload);
     }
 
     #[test]
-    fn read_capped_returns_none_when_file_over_limit() {
+    fn read_capped_into_returns_false_when_file_over_limit() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("big.md");
         let payload = vec![b'x'; 65];
         fs::write(&path, &payload).unwrap();
-        // cap is 64, file is 65 bytes — must be rejected, not truncated.
-        let result = read_capped(&path, 64).unwrap();
-        assert!(
-            result.is_none(),
-            "expected None for file exceeding cap, got {:?}",
-            result.as_ref().map(|v| v.len())
-        );
+        // cap is 64, file is 65 bytes — must be rejected (false), not truncated.
+        let mut buf = Vec::new();
+        let ok = read_capped_into(&path, 64, &mut buf).unwrap();
+        assert!(!ok, "expected false for file exceeding cap (read {} bytes)", buf.len());
     }
 
     #[test]
-    fn read_capped_returns_err_for_missing_file() {
+    fn read_capped_into_returns_err_for_missing_file() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("missing.md");
-        assert!(read_capped(&path, 64).is_err());
+        let mut buf = Vec::new();
+        assert!(read_capped_into(&path, 64, &mut buf).is_err());
+    }
+
+    #[test]
+    fn read_capped_into_clears_previous_contents() {
+        // Buffer reuse contract: any leftover content from a previous read
+        // must not bleed into the next file.
+        let dir = tempdir().unwrap();
+        let path1 = dir.path().join("first.md");
+        let path2 = dir.path().join("second.md");
+        fs::write(&path1, b"longer content here").unwrap();
+        fs::write(&path2, b"short").unwrap();
+
+        let mut buf = Vec::new();
+        read_capped_into(&path1, 1024, &mut buf).unwrap();
+        assert_eq!(buf, b"longer content here");
+        read_capped_into(&path2, 1024, &mut buf).unwrap();
+        assert_eq!(buf, b"short", "buffer must be cleared on each read");
     }
 }

@@ -236,6 +236,10 @@ pub struct ProcessingStats {
     pub files_skipped_size: usize,
     pub files_failed_search: usize,
     pub files_failed_read: usize,
+    /// Walker-level entries the scanner could not even enumerate
+    /// (e.g. `PermissionDenied` on a subdirectory). Counted separately so a
+    /// single unreadable subtree does not silently mask the rest of the scan.
+    pub walk_errors: usize,
     pub max_tasks_reached: bool,
     /// Configured task limit (from `--max-tasks`). Reported in the summary so
     /// users know which limit they hit and can rerun with a higher value.
@@ -249,6 +253,7 @@ impl ProcessingStats {
         self.files_skipped_size > 0
             || self.files_failed_search > 0
             || self.files_failed_read > 0
+            || self.walk_errors > 0
             || self.max_tasks_reached
     }
 
@@ -267,6 +272,7 @@ impl ProcessingStats {
             files_skipped_size = self.files_skipped_size,
             files_failed_search = self.files_failed_search,
             files_failed_read = self.files_failed_read,
+            walk_errors = self.walk_errors,
             max_tasks_reached = self.max_tasks_reached,
             max_tasks_limit = self.max_tasks_limit,
             "processing summary"

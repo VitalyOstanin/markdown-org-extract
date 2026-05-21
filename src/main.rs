@@ -138,7 +138,22 @@ fn scan_files(
         .build();
 
     for result in walker {
-        let entry = result?;
+        // A walker error on one entry (permission denied on a subdir, broken
+        // metadata, etc.) must not abort the whole scan: the rest of the
+        // tree may still contain usable files. Record it in the summary so
+        // the user knows their output is partial. The Display impl of
+        // ignore::Error already includes the failing path, so we forward the
+        // whole message into `failed_paths` for the listing in print_summary.
+        let entry = match result {
+            Ok(entry) => entry,
+            Err(err) => {
+                stats.walk_errors += 1;
+                let msg = err.to_string();
+                stats.record_failed_path(&msg);
+                tracing::warn!(error = %msg, "walker entry failed; skipping");
+                continue;
+            }
+        };
         if !entry.file_type().is_some_and(|ft| ft.is_file()) {
             continue;
         }

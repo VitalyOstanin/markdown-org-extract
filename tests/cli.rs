@@ -903,6 +903,70 @@ fn agenda_tasks_rejects_date_argument() {
     );
 }
 
+/// Test fixture: an unreadable subdirectory should not abort the scan. The
+/// test creates a workspace with one readable file and one mode-0 subtree,
+/// runs the binary against the workspace root, and verifies that
+///
+/// 1. The exit code is 0 (the scan reported usable output).
+/// 2. The readable file's tasks are present in stdout.
+/// 3. The summary on stderr mentions walk_errors > 0.
+#[cfg(unix)]
+#[test]
+fn walker_continues_after_permission_denied_subdir() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempdir().expect("tmp");
+    fs::write(
+        root.path().join("ok.md"),
+        "# Notes\n\n### TODO First\n`SCHEDULED: <2025-12-05 Fri>`\n",
+    )
+    .expect("write ok.md");
+
+    let blocked = root.path().join("blocked");
+    fs::create_dir(&blocked).expect("mkdir blocked");
+    fs::write(
+        blocked.join("hidden.md"),
+        "# Hidden\n### TODO Hidden task\n",
+    )
+    .expect("write hidden.md");
+    let mut perms = fs::metadata(&blocked).expect("metadata").permissions();
+    perms.set_mode(0o000);
+    fs::set_permissions(&blocked, perms).expect("chmod 0");
+
+    let out = bin()
+        .args([
+            "--dir",
+            root.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+            "-v",
+        ])
+        .output()
+        .expect("run");
+
+    // Restore permissions before assertions so the tempdir cleanup can recurse.
+    let mut perms = fs::metadata(&blocked).expect("metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&blocked, perms).expect("chmod restore");
+
+    assert!(
+        out.status.success(),
+        "scan must succeed despite walker error; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("First"),
+        "readable file's task must be in output; stdout: {stdout:.500}"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("walk_errors") || stderr.contains("walker entry failed"),
+        "summary or per-error warning must mention the walker error; stderr: {stderr}"
+    );
+}
+
 #[test]
 fn agenda_tasks_rejects_current_date_argument() {
     // --current-date in tasks mode is also rejected: tasks mode has no

@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A walker error on a single subdirectory (typically `PermissionDenied`)
+  no longer aborts the whole scan. The error is counted in a new
+  `walk_errors` field of the processing summary, the failing entry is
+  appended to `failed paths`, and the rest of the tree is scanned as
+  usual.
+
 ### Changed
 
 - Unified the agenda window across `day`, `week`, `month` modes

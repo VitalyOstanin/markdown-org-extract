@@ -903,6 +903,71 @@ fn agenda_tasks_rejects_date_argument() {
     );
 }
 
+/// Multi-segment glob pattern against a relative `--dir`. WalkBuilder used
+/// to be fed `&cli.dir` (relative), so emitted paths stayed relative and
+/// `strip_prefix(dir_canonical)` failed, dropping callers to a `file_name()`
+/// fallback that could not match a multi-segment pattern like `sub/*.md`.
+/// Feeding WalkBuilder the canonical absolute path fixes this; this test
+/// pins the fix so any later refactor cannot regress it.
+#[test]
+fn multi_segment_glob_matches_with_relative_dir() {
+    let tmp = tempdir().expect("tmp");
+    let workspace = tmp.path().join("ws");
+    let sub = workspace.join("sub");
+    fs::create_dir_all(&sub).expect("mkdir sub");
+    fs::write(sub.join("foo.md"), "### TODO Foo task\n").expect("write foo.md");
+    fs::write(sub.join("bar.md"), "### TODO Bar task\n").expect("write bar.md");
+    fs::write(
+        workspace.join("top.md"),
+        "### TODO Top task should not be matched\n",
+    )
+    .expect("write top.md");
+
+    let out = bin()
+        .current_dir(tmp.path())
+        .args([
+            "--dir",
+            "ws",
+            "--glob",
+            "sub/*.md",
+            "--tasks",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "scan must succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let arr = parsed.as_array().expect("array");
+    assert_eq!(
+        arr.len(),
+        2,
+        "expected exactly 2 matches (foo.md, bar.md); got {arr:?}"
+    );
+    let headings: Vec<&str> = arr
+        .iter()
+        .filter_map(|t| t.get("heading").and_then(|h| h.as_str()))
+        .collect();
+    assert!(
+        headings.iter().any(|h| h.contains("Foo")),
+        "expected Foo task; headings: {headings:?}"
+    );
+    assert!(
+        headings.iter().any(|h| h.contains("Bar")),
+        "expected Bar task; headings: {headings:?}"
+    );
+    assert!(
+        !headings.iter().any(|h| h.contains("Top")),
+        "Top task must not match `sub/*.md`; headings: {headings:?}"
+    );
+}
+
 /// Test fixture: an unreadable subdirectory should not abort the scan. The
 /// test creates a workspace with one readable file and one mode-0 subtree,
 /// runs the binary against the workspace root, and verifies that

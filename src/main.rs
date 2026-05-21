@@ -130,8 +130,13 @@ fn scan_files(
     )
     .map_err(|e| AppError::Regex(e.to_string()))?;
 
-    // Defense-in-depth: refuse to follow symlinks and stay within the chosen filesystem.
-    let walker = WalkBuilder::new(&cli.dir)
+    // Defense-in-depth: refuse to follow symlinks and stay within the chosen
+    // filesystem. Pass `dir_canonical` (absolute) so every emitted path is an
+    // absolute descendant of the root, which lets `strip_prefix(dir_canonical)`
+    // succeed downstream for both glob matching and display-path computation.
+    // Using `&cli.dir` (often relative) would silently break multi-segment
+    // glob patterns like `notes/*.md` against a relative `--dir`.
+    let walker = WalkBuilder::new(dir_canonical)
         .standard_filters(true)
         .follow_links(false)
         .same_file_system(true)
@@ -208,10 +213,11 @@ fn scan_files(
         let display_path = if cli.absolute_paths {
             path.display().to_string()
         } else {
-            match path
-                .strip_prefix(dir_canonical)
-                .or_else(|_| path.strip_prefix(&cli.dir))
-            {
+            // WalkBuilder now traverses `dir_canonical`, so every emitted path
+            // is an absolute descendant of it; strip_prefix cannot fail unless
+            // canonicalize and the walker disagree (a TOCTOU we cannot fix
+            // here). The absolute path is the safest fallback for that case.
+            match path.strip_prefix(dir_canonical) {
                 Ok(rel) => rel.display().to_string(),
                 Err(_) => path.display().to_string(),
             }

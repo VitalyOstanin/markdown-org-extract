@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Multi-segment `--glob` patterns (e.g. `notes/*.md`) now match when
+  combined with a relative `--dir`. `WalkBuilder` is fed the canonical
+  absolute root, so emitted paths stay descendants of it and the
+  `strip_prefix(dir_canonical)` used by glob matching and display-path
+  computation no longer drops to the `file_name()` fallback that
+  could not match path-segmented patterns.
 - A walker error on a single subdirectory (typically `PermissionDenied`)
   no longer aborts the whole scan. The error is counted in a new
   `walk_errors` field of the processing summary, the failing entry is

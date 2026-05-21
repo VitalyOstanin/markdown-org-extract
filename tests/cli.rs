@@ -1341,3 +1341,122 @@ fn agenda_tasks_rejects_current_date_argument() {
         "expected ADR-0009 tasks-mode rejection; got: {stderr}"
     );
 }
+
+// Byte-exact JSON snapshots. The wire contract is documented in ADR-0001
+// (JSON on stdout) and consumed by downstream tooling; a reordering of
+// fields, a change of indentation, or a missing newline would silently
+// break that contract. The tests below pin two output shapes against a
+// hand-written fixture so any structural drift requires updating the
+// snapshot here in the same commit as the source change.
+
+#[test]
+fn json_snapshot_tasks_mode_minimal_fixture() {
+    // A single TODO with SCHEDULED + relative paths is the smallest input
+    // that exercises every Task field (file, line, heading, content,
+    // task_type, timestamp, timestamp_type, timestamp_date). `tasks` mode
+    // forbids --current-date by ADR-0009, so there are no date-dependent
+    // outputs to make the snapshot drift between runs.
+    let tmp = tempdir().expect("tmpdir");
+    fs::write(
+        tmp.path().join("notes.md"),
+        "# Notes\n\n### TODO Pin me\n`SCHEDULED: <2026-05-21 Thu>`\n",
+    )
+    .expect("write notes.md");
+
+    let out = bin()
+        .args([
+            "--dir",
+            tmp.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).expect("stdout is UTF-8");
+    let expected = "\
+[
+  {
+    \"file\": \"notes.md\",
+    \"line\": 3,
+    \"heading\": \"Pin me\",
+    \"content\": \"\",
+    \"task_type\": \"TODO\",
+    \"timestamp\": \"SCHEDULED: <2026-05-21 Thu>\",
+    \"timestamp_type\": \"SCHEDULED\",
+    \"timestamp_date\": \"2026-05-21\"
+  }
+]";
+    assert_eq!(
+        stdout, expected,
+        "JSON tasks snapshot must be byte-exact; got:\n{stdout}"
+    );
+}
+
+#[test]
+fn json_snapshot_agenda_day_minimal_fixture() {
+    // Pin the agenda-day envelope (date, scheduled_timed, scheduled_no_time,
+    // upcoming). Same fixture as the tasks snapshot but with
+    // `--agenda day --current-date 2026-05-21` to materialise the wrapper
+    // fields. Without this snapshot a renamed array key or a flip of
+    // overdue vs scheduled would slip past every existing test.
+    let tmp = tempdir().expect("tmpdir");
+    fs::write(
+        tmp.path().join("notes.md"),
+        "# Notes\n\n### TODO Pin me\n`SCHEDULED: <2026-05-21 Thu>`\n",
+    )
+    .expect("write notes.md");
+
+    let out = bin()
+        .args([
+            "--dir",
+            tmp.path().to_str().unwrap(),
+            "--agenda",
+            "day",
+            "--current-date",
+            "2026-05-21",
+            "--tz",
+            "UTC",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).expect("stdout is UTF-8");
+    let expected = "\
+[
+  {
+    \"date\": \"2026-05-21\",
+    \"scheduled_timed\": [],
+    \"scheduled_no_time\": [
+      {
+        \"file\": \"notes.md\",
+        \"line\": 3,
+        \"heading\": \"Pin me\",
+        \"content\": \"\",
+        \"task_type\": \"TODO\",
+        \"timestamp\": \"SCHEDULED: <2026-05-21 Thu>\",
+        \"timestamp_type\": \"SCHEDULED\",
+        \"timestamp_date\": \"2026-05-21\"
+      }
+    ],
+    \"upcoming\": []
+  }
+]";
+    assert_eq!(
+        stdout, expected,
+        "JSON agenda-day snapshot must be byte-exact; got:\n{stdout}"
+    );
+}

@@ -1,3 +1,12 @@
+#![warn(missing_docs)]
+//! CLI utility for extracting tasks from markdown files with Emacs
+//! Org-mode support. See [`README.md`] at the repository root for the
+//! user-facing description; this binary's entry point lives in
+//! [`main`] and the public surface used by integration tests is the
+//! CLI itself, not a Rust API.
+//!
+//! [`README.md`]: https://github.com/VitalyOstanin/markdown-org-extract
+
 mod agenda;
 mod cli;
 mod clock;

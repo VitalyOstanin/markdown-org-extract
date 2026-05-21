@@ -33,9 +33,22 @@ fn prepare_tasks(tasks: &[Task]) -> Vec<PreparedTask<'_>> {
         .collect()
 }
 
+/// Result of running [`filter_agenda`]. The variant is determined by the
+/// requested [`AgendaScope`]:
+///
+/// - [`AgendaScope::Day`] / [`AgendaScope::Week`] / [`AgendaScope::Month`]
+///   produce [`AgendaOutput::Days`] — one [`DayAgenda`] per day in the
+///   window, each carrying overdue / scheduled / upcoming buckets.
+/// - [`AgendaScope::Tasks`] produces [`AgendaOutput::Tasks`] — a single
+///   flat list filtered to actionable items, with no date bucketing.
+///
+/// The renderer in [`crate::render`] dispatches on this enum to choose
+/// between the per-day agenda layout and the flat list layout.
 #[derive(Debug)]
 pub enum AgendaOutput {
+    /// Per-day agenda for day / week / month scope.
     Days(Vec<DayAgenda>),
+    /// Flat task list for `--agenda tasks` / `--tasks` scope.
     Tasks(Vec<Task>),
 }
 
@@ -89,6 +102,33 @@ fn parse_range(
     Ok(Some((start, end)))
 }
 
+/// Filter and bucket the extracted `tasks` according to the agenda
+/// configuration on the command line.
+///
+/// Inputs:
+/// - `tasks` — all tasks produced by `parser::extract_tasks`, across
+///   every input file.
+/// - `scope` — what shape of output to produce; see [`AgendaScope`] /
+///   [`AgendaOutput`].
+/// - `date` — value of `--date`. Selects the window's pivot day; in
+///   `Day` scope this is the only day, in `Week` / `Month` scope it
+///   picks the containing week / month. Ignored if `from`/`to` is set.
+///   Rejected (with `InvalidDate`) under `Tasks` scope — see ADR-0009.
+/// - `from` / `to` — values of `--from` / `--to`. A single edge is
+///   filled from `current_date_override` (or today). `from > to`
+///   returns `AppError::DateRange`.
+/// - `tz` — IANA time zone name used to compute "today" when
+///   `current_date_override` is `None`.
+/// - `current_date_override` — value of `--current-date`. Overrides the
+///   notion of "today" for deterministic testing and for users who want
+///   to render the agenda as it would look on a different day.
+///
+/// Errors:
+/// - `AppError::InvalidDate` — any of `date`/`from`/`to`/`current-date`
+///   failed `YYYY-MM-DD` parse, or `Tasks` scope was combined with
+///   date arguments.
+/// - `AppError::InvalidTimezone` — `tz` was not recognised by chrono-tz.
+/// - `AppError::DateRange` — `from > to` after edge filling.
 pub fn filter_agenda(
     tasks: Vec<Task>,
     scope: AgendaScope,

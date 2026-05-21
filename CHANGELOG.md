@@ -64,6 +64,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   intra-doc links and other rustdoc warnings before release.
   `scripts/check.sh` mirrors the new step locally between `clippy`
   and `cargo test`.
+- Crate root documented with `#![warn(missing_docs)]` and a module
+  docstring. The three remaining undocumented top-level pub items
+  (`agenda::AgendaOutput`, `agenda::filter_agenda`,
+  `cli::get_weekday_mappings`) gained rustdoc explaining inputs,
+  variants, and error conditions, including intra-doc links to
+  related types and the ADR that defines the date-window model.
 
 ### Fixed
 

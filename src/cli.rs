@@ -446,6 +446,21 @@ pub(crate) const RU_WEEKDAY_MAPPINGS: &[(&str, &str)] = &[
 /// the default `--locale ru,en` works without warnings.
 pub(crate) const SUPPORTED_LOCALES: &[&str] = &["ru", "en"];
 
+/// Return the (foreign, English) weekday-name pairs for the requested
+/// `locale` string. `locale` is the comma-separated value of `--locale`
+/// (e.g. `"ru,en"`); each segment is looked up independently, and
+/// `"en"` / empty / whitespace segments contribute nothing because
+/// English weekday names need no translation.
+///
+/// The returned mappings are fed to the timestamp parser as a Russian-
+/// to-English alias table so org-mode timestamps written with Cyrillic
+/// weekday abbreviations (`<2026-01-12 Пн>`) are parsed identically to
+/// their English equivalents.
+///
+/// Callers are expected to have run the value through `validate_locale`
+/// already, so unknown locales never reach this function — see the
+/// `--locale` CLI validator in this module for the single source of
+/// truth.
 pub fn get_weekday_mappings(locale: &str) -> Vec<(&'static str, &'static str)> {
     // The CLI surface validates locale entries against SUPPORTED_LOCALES via
     // `validate_locale`, so reaching this function with anything outside

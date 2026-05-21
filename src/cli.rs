@@ -142,9 +142,90 @@ pub struct Cli {
     pub no_color: bool,
 
     /// Color output mode for diagnostics: `auto` (default), `always`, `never`.
-    /// `auto` enables color only when stderr is a TTY and `NO_COLOR` is not set.
+    /// In `auto` mode color is enabled only when stderr is a TTY. The env vars
+    /// `NO_COLOR`, `CLICOLOR=0`, and `CLICOLOR_FORCE` (non-zero) are also
+    /// honored — see the `--no-color` flag and <https://bixense.com/clicolors/>.
     #[arg(long, value_enum, default_value = "auto")]
     pub color: ColorMode,
+}
+
+/// Snapshot of the color-related environment, taken once per invocation so the
+/// decision logic stays pure and unit-testable.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ColorEnv {
+    /// `NO_COLOR` is set to any value (including empty).
+    /// Per <https://no-color.org>, the mere presence of the variable is the
+    /// signal; the value is irrelevant.
+    pub no_color: bool,
+    /// `CLICOLOR_FORCE` is set to a value other than `0` or empty.
+    /// Per <https://bixense.com/clicolors/>, a non-zero value forces color
+    /// even when stderr is not a TTY.
+    pub clicolor_force: bool,
+    /// `CLICOLOR` is explicitly `0`. Other values (including unset) leave the
+    /// auto-detection in place — `CLICOLOR=1` is documented as "use color
+    /// when output is a terminal", which is already our default.
+    pub clicolor_zero: bool,
+}
+
+impl ColorEnv {
+    /// Read the color-related env vars from the current process. Called once
+    /// from `Cli::use_color`; tests build a `ColorEnv` literal instead so they
+    /// don't have to manipulate shared process state.
+    fn from_process_env() -> Self {
+        Self {
+            no_color: std::env::var_os("NO_COLOR").is_some(),
+            clicolor_force: clicolor_force_active(std::env::var("CLICOLOR_FORCE").ok().as_deref()),
+            clicolor_zero: matches!(std::env::var("CLICOLOR").ok().as_deref(), Some("0")),
+        }
+    }
+}
+
+/// `CLICOLOR_FORCE` is "active" when set to a value that is neither empty
+/// nor `0`. The spec at <https://bixense.com/clicolors/> says "set to a
+/// value not equal to 0"; we treat the empty string as "no clear value" and
+/// therefore not active, matching how `git` and `ls --color=auto` behave.
+fn clicolor_force_active(value: Option<&str>) -> bool {
+    match value {
+        Some(v) => !v.is_empty() && v != "0",
+        None => false,
+    }
+}
+
+/// Pure decision: given the resolved flags and env snapshot, should color be
+/// emitted? Extracted from `Cli::use_color` so the precedence is exhaustively
+/// covered by unit tests without touching the process environment.
+///
+/// Precedence (highest first):
+/// 1. `--color always` -> on
+/// 2. `--color never` or `--no-color` -> off
+/// 3. `NO_COLOR` env present -> off (per <https://no-color.org>)
+/// 4. `CLICOLOR_FORCE` non-zero -> on (overrides TTY check)
+/// 5. `CLICOLOR=0` -> off
+/// 6. `--color auto` -> follow `is_tty`
+pub(crate) fn decide_use_color(
+    mode: ColorMode,
+    no_color_flag: bool,
+    env: ColorEnv,
+    is_tty: bool,
+) -> bool {
+    match mode {
+        ColorMode::Always => return true,
+        ColorMode::Never => return false,
+        ColorMode::Auto => {}
+    }
+    if no_color_flag {
+        return false;
+    }
+    if env.no_color {
+        return false;
+    }
+    if env.clicolor_force {
+        return true;
+    }
+    if env.clicolor_zero {
+        return false;
+    }
+    is_tty
 }
 
 impl Cli {
@@ -165,27 +246,14 @@ impl Cli {
 
     /// Whether ANSI color should be used in the log output.
     ///
-    /// Precedence (highest first):
-    /// 1. `--color always` -> always on (overrides NO_COLOR and TTY check)
-    /// 2. `--color never` or `--no-color` -> always off
-    /// 3. `NO_COLOR` env var present (per <https://no-color.org>) -> off
-    /// 4. `--color auto` (default) -> on only when stderr is a TTY
+    /// See `decide_use_color` for the full precedence table; this wrapper
+    /// only takes the env snapshot and TTY probe.
     pub fn use_color(&self) -> bool {
-        match self.color {
-            ColorMode::Always => return true,
-            ColorMode::Never => return false,
-            ColorMode::Auto => {}
-        }
-        if self.no_color {
-            return false;
-        }
-        if std::env::var_os("NO_COLOR").is_some() {
-            return false;
-        }
+        use std::io::IsTerminal;
         // Conservative default: assume no TTY unless we can prove otherwise.
         // Keeps tests deterministic (assert_cmd pipes stderr).
-        use std::io::IsTerminal;
-        std::io::stderr().is_terminal()
+        let is_tty = std::io::stderr().is_terminal();
+        decide_use_color(self.color, self.no_color, ColorEnv::from_process_env(), is_tty)
     }
 
     pub fn agenda_scope(&self) -> crate::agenda::AgendaScope {
@@ -476,5 +544,136 @@ mod tests {
             err.contains("10000000"),
             "expected cap in message, got: {err}"
         );
+    }
+
+    // --- decide_use_color: precedence matrix -------------------------------
+
+    fn env_with(no_color: bool, clicolor_force: bool, clicolor_zero: bool) -> ColorEnv {
+        ColorEnv {
+            no_color,
+            clicolor_force,
+            clicolor_zero,
+        }
+    }
+
+    #[test]
+    fn color_always_overrides_everything() {
+        // `--color always` is the strongest override: NO_COLOR / CLICOLOR=0 /
+        // no-TTY must all lose to it. The user explicitly asked for color.
+        assert!(decide_use_color(
+            ColorMode::Always,
+            true,
+            env_with(true, false, true),
+            false,
+        ));
+    }
+
+    #[test]
+    fn color_never_overrides_everything() {
+        // Symmetric to Always: explicit `never` beats CLICOLOR_FORCE and TTY.
+        assert!(!decide_use_color(
+            ColorMode::Never,
+            false,
+            env_with(false, true, false),
+            true,
+        ));
+    }
+
+    #[test]
+    fn no_color_flag_beats_clicolor_force() {
+        // `--no-color` is an explicit user override and must beat the env-only
+        // CLICOLOR_FORCE signal. The flag is on the same precedence tier as
+        // `--color never`.
+        assert!(!decide_use_color(
+            ColorMode::Auto,
+            true,
+            env_with(false, true, false),
+            true,
+        ));
+    }
+
+    #[test]
+    fn no_color_env_beats_clicolor_force() {
+        // Per no-color.org, NO_COLOR is "explicit user opt-out". We give it
+        // priority over CLICOLOR_FORCE because a user setting NO_COLOR has
+        // typed it themselves; CLICOLOR_FORCE is more often inherited from
+        // shell config or tooling and should not silently revive color.
+        assert!(!decide_use_color(
+            ColorMode::Auto,
+            false,
+            env_with(true, true, false),
+            true,
+        ));
+    }
+
+    #[test]
+    fn clicolor_force_overrides_no_tty() {
+        // The point of CLICOLOR_FORCE: emit color even when piped. Without
+        // this branch, piping into `less -R` could not get colored output.
+        assert!(decide_use_color(
+            ColorMode::Auto,
+            false,
+            env_with(false, true, false),
+            false,
+        ));
+    }
+
+    #[test]
+    fn clicolor_force_beats_clicolor_zero() {
+        // The two CLICOLOR vars can be set inconsistently; the spec says
+        // FORCE wins, and we follow it. This protects scripts that set FORCE
+        // explicitly from a globally-exported CLICOLOR=0.
+        assert!(decide_use_color(
+            ColorMode::Auto,
+            false,
+            env_with(false, true, true),
+            false,
+        ));
+    }
+
+    #[test]
+    fn clicolor_zero_disables_in_auto() {
+        // CLICOLOR=0 with no FORCE and no NO_COLOR forces off in auto mode,
+        // even when stderr is a TTY. Distinguishes from "unset" — only the
+        // literal "0" counts.
+        assert!(!decide_use_color(
+            ColorMode::Auto,
+            false,
+            env_with(false, false, true),
+            true,
+        ));
+    }
+
+    #[test]
+    fn auto_with_no_env_follows_tty() {
+        // With no relevant env vars, auto must mirror the TTY probe exactly.
+        // This is the legacy behaviour and the most common case.
+        assert!(decide_use_color(
+            ColorMode::Auto,
+            false,
+            env_with(false, false, false),
+            true,
+        ));
+        assert!(!decide_use_color(
+            ColorMode::Auto,
+            false,
+            env_with(false, false, false),
+            false,
+        ));
+    }
+
+    #[test]
+    fn clicolor_force_active_treats_zero_and_empty_as_inactive() {
+        // The bixense spec says "value not equal to 0" enables force. Empty
+        // string is ambiguous (a `CLICOLOR_FORCE=` line in dotenv is a common
+        // way to "clear" the var) so we treat it as not-active.
+        assert!(!clicolor_force_active(None));
+        assert!(!clicolor_force_active(Some("0")));
+        assert!(!clicolor_force_active(Some("")));
+        assert!(clicolor_force_active(Some("1")));
+        assert!(clicolor_force_active(Some("yes")));
+        // Any non-zero, non-empty value enables, including whitespace — the
+        // user clearly wrote something, so honour it.
+        assert!(clicolor_force_active(Some(" ")));
     }
 }

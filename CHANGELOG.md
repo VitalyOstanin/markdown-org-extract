@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and exits. Supports `bash`, `zsh`, `fish`, `elvish`, `powershell`.
   See the new "Shell completions" section in the README for the
   expected install paths.
+- `CLICOLOR` and `CLICOLOR_FORCE` env vars are now honoured in
+  `--color auto`, joining the existing `NO_COLOR` support. Per the
+  [bixense convention](https://bixense.com/clicolors/), `CLICOLOR=0`
+  disables colour and `CLICOLOR_FORCE` (non-zero, non-empty) forces
+  colour even when stderr is piped. CLI flags (`--color always`,
+  `--color never`, `--no-color`) and `NO_COLOR` still win over the
+  CLICOLOR variants. The decision logic is now a pure function
+  exhaustively unit-tested across the precedence matrix.
 
 ### Fixed
 

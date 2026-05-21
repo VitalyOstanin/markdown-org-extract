@@ -158,6 +158,16 @@ markdown-org-extract [OPTIONS]
 - `--color <MODE>` — control ANSI colour in logs: `auto` (default), `always`, `never`
 - `--no-color` — disable ANSI colour in logs; equivalent to `--color never`. The `NO_COLOR` environment variable has the same effect (see [no-color.org](https://no-color.org))
 
+In `--color auto` mode the following env vars are honoured (precedence from highest to lowest, after CLI flags):
+
+| Variable          | Effect                                                                                                                                |
+|-------------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| `NO_COLOR`        | Any value (incl. empty) disables colour. Wins over `CLICOLOR_FORCE`. See [no-color.org](https://no-color.org).                        |
+| `CLICOLOR_FORCE`  | Non-zero, non-empty value enables colour even when stderr is not a TTY. See [bixense CLI colours](https://bixense.com/clicolors/).    |
+| `CLICOLOR`        | Exactly `0` disables colour. Other values leave the TTY-based default in place.                                                       |
+
+CLI flags `--color always`, `--color never`, and `--no-color` override any of the above.
+
 ### Examples
 
 Extract tasks from the current directory as JSON:

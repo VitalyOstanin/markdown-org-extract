@@ -57,8 +57,18 @@ cp README.md LICENSE "$stage/"
 case "$ARCHIVE_EXT" in
   tar.gz)
     # Reproducible: sorted entries, fixed owner/mtime so a re-run of the
-    # workflow on the same commit produces a byte-identical archive.
-    tar --sort=name --owner=0 --group=0 --numeric-owner --mtime='@0' \
+    # workflow on the same commit produces a byte-identical archive. The
+    # --sort=name / --owner / --group / --numeric-owner / --mtime flags are
+    # GNU-tar specific; BSD tar (macOS' default `tar`) does not accept them.
+    # Prefer `gtar` when present (installed via `brew install gnu-tar` in
+    # CI's macOS runner); fall back to `tar` on Linux/Windows runners where
+    # GNU tar is already the default.
+    if command -v gtar >/dev/null 2>&1; then
+      TAR_BIN=gtar
+    else
+      TAR_BIN=tar
+    fi
+    "$TAR_BIN" --sort=name --owner=0 --group=0 --numeric-owner --mtime='@0' \
       -czf "$output_path" -C "$RUNNER_TEMP" "$stem"
     ;;
   zip)

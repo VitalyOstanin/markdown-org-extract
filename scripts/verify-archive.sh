@@ -79,8 +79,13 @@ esac
 
 # Top-level entries: must be exactly one, a directory named $stem.
 # Use POSIX find + sed instead of GNU-only `-printf` so the script runs on
-# the macos-latest GHA runner (BSD find).
-mapfile -t top_entries < <(
+# the macos-latest GHA runner (BSD find). `mapfile`/`readarray` is bash-4+
+# (Linux runners), but macos-latest ships system bash 3.2, so use a
+# portable while-read loop instead.
+top_entries=()
+while IFS= read -r line; do
+  top_entries+=("$line")
+done < <(
   cd "$extract_dir" && find . -mindepth 1 -maxdepth 1 | sed 's|^\./||' | sort
 )
 if [ "${#top_entries[@]}" -ne 1 ] || [ "${top_entries[0]}" != "$stem" ]; then
@@ -107,7 +112,10 @@ for f in "${required[@]}"; do
   fi
 done
 
-mapfile -t actual < <(
+actual=()
+while IFS= read -r line; do
+  actual+=("$line")
+done < <(
   cd "$root" && find . -mindepth 1 -maxdepth 1 | sed 's|^\./||' | sort
 )
 expected_sorted=$(printf '%s\n' "${required[@]}" | sort)

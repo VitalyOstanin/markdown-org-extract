@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [\[Unreleased\]](#unreleased)
+- [\[0.4.1\] — 2026-05-22](#041--2026-05-22)
 - [\[0.4.0\] — 2026-05-22](#040--2026-05-22)
 - [\[0.3.1\] — 2026-05-19](#031--2026-05-19)
 - [\[0.3.0\] — 2026-05-19](#030--2026-05-19)
@@ -20,6 +21,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 _No user-visible changes yet._
+
+## [0.4.1] — 2026-05-22
+
+### Added
+
+- Release archives are now published for `x86_64-apple-darwin`
+  (Intel Macs) in addition to `aarch64-apple-darwin` (Apple
+  Silicon). The `package-binaries` matrix in
+  `.github/workflows/release.yml` adds a second `macos-latest`
+  row that cross-compiles arm → x86_64 via
+  `rustup target add x86_64-apple-darwin` + `cargo build --target`.
+  Every matrix entry now builds with explicit `--target <triple>`
+  for consistency between native and cross-compiled rows; the
+  `BIN_PATH` env passed to `scripts/package-archive.sh` was
+  updated accordingly. Closes the gap where the
+  `markdown-org-vscode` extension's Intel-Mac users could not
+  receive a working extractor binary inside the VSIX.
+
+### Fixed
+
+- Release scripts are now portable to macOS' default toolchain
+  (`bash` 3.2 + BSD `tar`). The previous 0.4.0 release was blocked
+  by `Test (macOS)` because `scripts/package-archive.sh` used
+  GNU-tar-only flags (`--sort=name`, `--owner=0`, `--group=0`,
+  `--numeric-owner`, `--mtime='@0'`) and `scripts/verify-archive.sh`
+  used `mapfile` (bash 4+). Fixes:
+  - `package-archive.sh` now prefers `gtar` (installed in CI via
+    `brew install gnu-tar`) and falls back to plain `tar` on
+    Linux/Windows where GNU tar is the system `tar`. Archives
+    on all platforms keep the same reproducibility flags.
+  - `verify-archive.sh` replaces both `mapfile -t arr < <(cmd)`
+    invocations with a portable `while IFS= read -r line; do
+    arr+=("$line"); done < <(cmd)` loop that works on bash 3.2.
+  - CI (`ci.yml`) and release (`release.yml`) workflows install
+    `gnu-tar` via Homebrew on `macos-latest` runners before
+    `cargo test` and before `package-archive.sh`. The conditional
+    step is `if: runner.os == 'macOS'`, so Linux/Windows runners
+    are unaffected.
 
 ## [0.4.0] — 2026-05-22
 

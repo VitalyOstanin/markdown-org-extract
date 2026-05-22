@@ -149,6 +149,7 @@ Each release publishes one archive per platform target:
 | Target                       | Archive extension | Binary name                |
 |------------------------------|-------------------|----------------------------|
 | `x86_64-unknown-linux-gnu`   | `.tar.gz`         | `markdown-org-extract`     |
+| `x86_64-apple-darwin`        | `.tar.gz`         | `markdown-org-extract`     |
 | `aarch64-apple-darwin`       | `.tar.gz`         | `markdown-org-extract`     |
 | `x86_64-pc-windows-msvc`     | `.zip`            | `markdown-org-extract.exe` |
 
@@ -158,12 +159,13 @@ The archive filename template is:
 markdown-org-extract-<version>-<target>.<ext>
 ```
 
-Example asset set for tag `v0.3.1`:
+Example asset set for tag `v0.4.1`:
 
 ```
-markdown-org-extract-0.3.1-x86_64-unknown-linux-gnu.tar.gz
-markdown-org-extract-0.3.1-aarch64-apple-darwin.tar.gz
-markdown-org-extract-0.3.1-x86_64-pc-windows-msvc.zip
+markdown-org-extract-0.4.1-x86_64-unknown-linux-gnu.tar.gz
+markdown-org-extract-0.4.1-x86_64-apple-darwin.tar.gz
+markdown-org-extract-0.4.1-aarch64-apple-darwin.tar.gz
+markdown-org-extract-0.4.1-x86_64-pc-windows-msvc.zip
 ```
 
 `<version>` is the tag stripped of its leading `v`, identical to
@@ -200,7 +202,7 @@ markdown-org-extract-<version>-<target>.<ext>.sha256
 Verification with the GNU tool:
 
 ```bash
-sha256sum -c markdown-org-extract-0.3.1-x86_64-unknown-linux-gnu.tar.gz.sha256
+sha256sum -c markdown-org-extract-0.4.1-x86_64-unknown-linux-gnu.tar.gz.sha256
 ```
 
 A `SHA256SUMS` aggregate file is not currently published. If one
@@ -247,10 +249,10 @@ required.
 - Distribution-specific repacks (`.deb`, `.rpm`, AUR, MacPorts,
   Homebrew formula) are not maintained by this project; the
   upstream artefact is the GitHub Release archive.
-- Additional targets (`aarch64-unknown-linux-gnu`,
-  `x86_64-apple-darwin`, musl variants) may be added in a future
-  minor release. Removal of a previously published target
-  requires a major-version bump.
+- Additional targets (`aarch64-unknown-linux-gnu`, musl variants,
+  `aarch64-pc-windows-msvc`) may be added in a future minor
+  release. Removal of a previously published target requires a
+  major-version bump.
 
 ## Usage
 

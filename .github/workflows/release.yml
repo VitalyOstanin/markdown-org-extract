@@ -54,6 +54,15 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable as of 2026-05-16
 
+      - name: Install GNU tar on macOS
+        # tests/release_packaging.rs invokes scripts/package-archive.sh which
+        # uses GNU-tar flags (--sort, --owner, --group, --numeric-owner,
+        # --mtime). macOS' default `tar` is BSD tar and rejects these. The
+        # script prefers `gtar` when present, which is what `gnu-tar`
+        # provides on Homebrew.
+        if: runner.os == 'macOS'
+        run: brew install gnu-tar
+
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
@@ -253,6 +262,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Every entry builds with `--target <triple>` so the layout is
+        # consistent across native and cross-compiled rows. `macos-latest`
+        # is Apple Silicon; `aarch64-apple-darwin` is the native target,
+        # `x86_64-apple-darwin` is a cross-compile that needs no extra
+        # toolchain beyond `rustup target add`.
         include:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
@@ -260,6 +274,10 @@ jobs:
             binary: markdown-org-extract
           - os: macos-latest
             target: aarch64-apple-darwin
+            archive: tar.gz
+            binary: markdown-org-extract
+          - os: macos-latest
+            target: x86_64-apple-darwin
             archive: tar.gz
             binary: markdown-org-extract
           - os: windows-latest
@@ -273,11 +291,22 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable as of 2026-05-16
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install GNU tar on macOS
+        # scripts/package-archive.sh uses GNU-tar flags (--sort, --owner,
+        # --group, --numeric-owner, --mtime) for reproducible archives. The
+        # script falls back to plain `tar` when `gtar` is absent, but BSD
+        # tar rejects those flags. `gnu-tar` provides `gtar` so the script
+        # produces the same byte-for-byte layout on macOS as on Linux.
+        if: runner.os == 'macOS'
+        run: brew install gnu-tar
 
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          # Per-target cache key so the three matrix entries do not stomp
+          # Per-target cache key so the four matrix entries do not stomp
           # each other's target/ directory.
           key: ${{ matrix.target }}
 
@@ -295,7 +324,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build release binary
-        run: cargo build --release --locked
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       # Packaging is delegated to scripts/package-archive.sh so the same
       # logic can be exercised by Rust integration tests
@@ -311,6 +340,7 @@ jobs:
           TARGET: ${{ matrix.target }}
           ARCHIVE_EXT: ${{ matrix.archive }}
           BIN_NAME: ${{ matrix.binary }}
+          BIN_PATH: target/${{ matrix.target }}/release/${{ matrix.binary }}
         run: bash scripts/package-archive.sh >> "$GITHUB_OUTPUT"
 
       # Defends the downstream-packager contract documented in the README:

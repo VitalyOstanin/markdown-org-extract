@@ -37,11 +37,31 @@ use crate::types::{ProcessingStats, MAX_FILE_SIZE};
 
 fn main() {
     if let Err(e) = run() {
+        // A broken pipe is the normal way a downstream consumer (e.g.
+        // `… | head -n 1`) signals it has read enough. Surfacing it as
+        // `error: io: <stdout>: Broken pipe (os error 32)` would train users
+        // to expect spurious failures in well-formed pipelines, and other
+        // Unix tools (cat, grep, jq) all stay quiet in the same situation.
+        // Exit 0 silently — by the time we reach this branch we have already
+        // produced the bytes the consumer kept.
+        if is_broken_pipe(&e) {
+            std::process::exit(0);
+        }
         // Use eprintln directly: tracing may not be initialized if argument parsing failed,
         // and a hard error should always reach the user regardless of `--quiet`.
         eprintln!("error: {e}");
         std::process::exit(e.exit_code());
     }
+}
+
+/// True when `e` is an `AppError::Io` whose underlying `io::Error` is a
+/// `BrokenPipe`. Centralised so the catch can stay precise — every other
+/// IO error is still reported normally.
+fn is_broken_pipe(e: &AppError) -> bool {
+    if let AppError::Io { source, .. } = e {
+        return source.kind() == io::ErrorKind::BrokenPipe;
+    }
+    false
 }
 
 fn run() -> Result<(), AppError> {

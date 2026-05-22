@@ -1574,6 +1574,71 @@ fn output_file_ends_with_newline_for_each_format() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn broken_pipe_exits_silently_without_diagnostic() {
+    // Piping the binary into a consumer that closes the pipe (e.g.
+    // `... | head -n 1`) used to surface `error: io: <stdout>: Broken
+    // pipe (os error 32)` on stderr and a non-zero exit, even though
+    // every Unix tool consuming the same pipeline is expected to terminate
+    // quietly. Build a fixture large enough to exceed the typical 64 KB
+    // pipe buffer so the write that fails is observed by the binary
+    // (small outputs land entirely in the kernel buffer and the writer
+    // never sees EPIPE).
+    use std::path::PathBuf;
+    use std::process::{Command as StdCommand, Stdio};
+
+    let tmp = tempdir().expect("tmpdir");
+    let block = "### TODO Task {{n}}\n`SCHEDULED: <2026-05-21 Thu>`\nContent line.\n\n";
+    // 10 files × 100 tasks ≈ 1k entries ≈ ~200 KB of JSON — comfortably past
+    // the typical 64 KiB pipe buffer so the binary observes EPIPE, without
+    // making the test slow to generate.
+    for i in 0..10 {
+        let mut body = String::from("# Notes\n\n");
+        for j in 0..100 {
+            body.push_str(&block.replace("{{n}}", &format!("{i}_{j}")));
+        }
+        fs::write(tmp.path().join(format!("notes_{i:03}.md")), body)
+            .expect("write fixture file");
+    }
+
+    let bin_path: PathBuf = assert_cmd::cargo::cargo_bin("markdown-org-extract");
+    let mut child = StdCommand::new(bin_path)
+        .args([
+            "--dir",
+            tmp.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn binary");
+
+    // Drop the read end of the stdout pipe immediately. The first write
+    // from the binary that does not fit in the kernel buffer hits EPIPE.
+    drop(child.stdout.take());
+
+    let output = child.wait_with_output().expect("wait");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "binary must exit 0 on broken pipe; got status {:?}, stderr: {}",
+        output.status,
+        stderr
+    );
+    assert!(
+        !stderr.contains("Broken pipe"),
+        "stderr must not surface the broken-pipe error; got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("error:"),
+        "stderr must not carry any 'error:' diagnostic for a broken pipe; got: {stderr}"
+    );
+}
+
 #[test]
 fn holidays_stdout_ends_with_newline() {
     let out = bin()

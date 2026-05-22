@@ -98,6 +98,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`ensure_trailing_newline`) is applied to the rendered string
   before every write so existing renderers can stay newline-agnostic.
   `--holidays` output goes through the same helper.
+- Piping the binary into a consumer that closes the pipe early
+  (`markdown-org-extract … | head -n 1`) no longer surfaces
+  `error: io: <stdout>: Broken pipe (os error 32)` and no longer
+  exits 74. The `BrokenPipe` `io::ErrorKind` is now intercepted at
+  the top-level error handler and the process exits 0 silently,
+  matching the behaviour of `cat`, `grep`, `jq` and other Unix
+  pipeline-friendly tools. Every other IO failure is still
+  reported and still maps to exit 74.
 
 ### Documentation
 

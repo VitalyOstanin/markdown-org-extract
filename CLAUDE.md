@@ -54,6 +54,13 @@ pointers to the full text and rationale.
   the agent's reference memory; intentional divergence from
   upstream is recorded in [ADR-0002](docs/adr/0002-supported-org-mode-subset.md)
   (or a superseding ADR) before shipping.
+- Documentation language is fixed in
+  [ADR-0013](docs/adr/0013-documentation-language.md). User-facing
+  surfaces (`README.md`, `CHANGELOG.md`, `CLAUDE.md`, `TODO.md`,
+  `docs/adr/`) are English; `docs/reviews/` may stay in Russian
+  (research artefacts); Russian-locale examples in `examples/` stay
+  as is. New `docs/*` files are English by default; introducing a
+  new non-English research surface requires updating ADR-0013.
 
 ## Background
 

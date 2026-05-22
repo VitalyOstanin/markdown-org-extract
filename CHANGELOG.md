@@ -170,6 +170,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so `git show v<X.Y.Z>` is a self-contained change description.
   Applies from the next release forward; historical commits and
   tags are not rewritten.
+- [ADR-0013](docs/adr/0013-documentation-language.md) fixes the
+  per-surface language rule that has been emerging implicitly:
+  user-facing docs (`README.md`, `CHANGELOG.md`, `CLAUDE.md`,
+  `TODO.md`, `docs/adr/`) are English; `docs/reviews/` may stay in
+  Russian (research artefacts); Russian-locale examples in
+  `examples/` are kept under ADR-0008. Closes the 2026-05-21 review
+  finding "language of docs/ is mixed" -- the two Russian files it
+  cited had already been deleted in the ADR migration; this ADR
+  prevents the question from being re-raised.
 - [ADR-0012](docs/adr/0012-verify-org-semantics-against-upstream.md)
   captures the rule the project has been following informally:
   before changing parser, agenda, repeater, or TODO-state behaviour,

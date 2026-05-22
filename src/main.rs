@@ -292,9 +292,8 @@ fn scan_files(
         // Without this, multi-file runs at `-vv` produce a soup of messages
         // without any way to tie a warning back to the file it came from.
         let span = tracing::debug_span!("file", path = %display_path);
-        let extracted = span.in_scope(|| {
-            extract_tasks(Path::new(&display_path), content, mappings, cli.max_tasks)
-        });
+        let extracted = span
+            .in_scope(|| extract_tasks(Path::new(&display_path), content, mappings, cli.max_tasks));
         tasks.extend(extracted);
         stats.files_processed += 1;
 
@@ -631,7 +630,11 @@ mod tests {
         // cap is 64, file is 65 bytes — must be rejected (false), not truncated.
         let mut buf = Vec::new();
         let ok = read_capped_into(&path, 64, &mut buf).unwrap();
-        assert!(!ok, "expected false for file exceeding cap (read {} bytes)", buf.len());
+        assert!(
+            !ok,
+            "expected false for file exceeding cap (read {} bytes)",
+            buf.len()
+        );
     }
 
     #[test]

@@ -272,9 +272,7 @@ _No user-visible changes yet._
     let (code, stderr) = run_check(cl, "0.2.3");
     assert_ne!(code, 0, "non-monotonic CHANGELOG must be refused");
     assert!(
-        stderr.contains("monotonic")
-            || stderr.contains("immediately")
-            || stderr.contains("0.2.4"),
+        stderr.contains("monotonic") || stderr.contains("immediately") || stderr.contains("0.2.4"),
         "stderr should name the offending section or the ordering rule: {stderr}"
     );
 }

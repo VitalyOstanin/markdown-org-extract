@@ -1383,16 +1383,8 @@ mod tests {
         // about overdue baseline, which tasks mode does not use (see
         // ADR-0009). The fixed task dates inside the input still make the
         // test deterministic without it.
-        let result = filter_agenda(
-            input,
-            AgendaScope::Tasks,
-            None,
-            None,
-            None,
-            "UTC",
-            None,
-        )
-        .expect("filter_agenda");
+        let result = filter_agenda(input, AgendaScope::Tasks, None, None, None, "UTC", None)
+            .expect("filter_agenda");
 
         let tasks = match result {
             AgendaOutput::Tasks(tasks) => tasks,

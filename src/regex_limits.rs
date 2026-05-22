@@ -91,9 +91,7 @@ mod tests {
         // single-digit milliseconds in practice. This test pins the
         // contract by capping the time budget and failing loudly on
         // regression rather than asserting an exact runtime.
-        let ts_anchor = format!(
-            r"^\s*<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>"
-        );
+        let ts_anchor = format!(r"^\s*<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>");
         let re = compile_bounded(&ts_anchor);
         let mut huge_input = String::from("<2024-12-05");
         huge_input.push_str(&" ".repeat(1_000_000));

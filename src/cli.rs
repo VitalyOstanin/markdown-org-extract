@@ -97,7 +97,13 @@ pub struct Cli {
     pub locale: String,
 
     /// Agenda time scope: day / week / month. Mutually exclusive with `--tasks`.
-    #[arg(long, default_value = "day", value_enum, conflicts_with = "tasks", help_heading = "Agenda")]
+    #[arg(
+        long,
+        default_value = "day",
+        value_enum,
+        conflicts_with = "tasks",
+        help_heading = "Agenda"
+    )]
     pub agenda: AgendaMode,
 
     /// Show flat task list instead of agenda. Mutually exclusive with `--agenda`.
@@ -146,7 +152,12 @@ pub struct Cli {
 
     /// Suppress all diagnostics (warnings and the per-run processing summary
     /// of skipped/failed files). Hard errors still go to stderr.
-    #[arg(long, short = 'q', conflicts_with = "verbose", help_heading = "Diagnostics")]
+    #[arg(
+        long,
+        short = 'q',
+        conflicts_with = "verbose",
+        help_heading = "Diagnostics"
+    )]
     pub quiet: bool,
 
     /// Disable ANSI color codes in diagnostic output. The `NO_COLOR` env var
@@ -289,7 +300,12 @@ impl Cli {
         // Conservative default: assume no TTY unless we can prove otherwise.
         // Keeps tests deterministic (assert_cmd pipes stderr).
         let is_tty = std::io::stderr().is_terminal();
-        decide_use_color(self.color, self.no_color, ColorEnv::from_process_env(), is_tty)
+        decide_use_color(
+            self.color,
+            self.no_color,
+            ColorEnv::from_process_env(),
+            is_tty,
+        )
     }
 
     pub fn agenda_scope(&self) -> crate::agenda::AgendaScope {

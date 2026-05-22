@@ -895,10 +895,7 @@ fn exit_code_74_for_io_when_output_is_a_directory() {
 fn day_count_in_json(stdout: &str) -> usize {
     let parsed: serde_json::Value =
         serde_json::from_str(stdout).expect("stdout must be valid JSON");
-    parsed
-        .as_array()
-        .expect("top-level array")
-        .len()
+    parsed.as_array().expect("top-level array").len()
 }
 
 #[test]
@@ -1050,10 +1047,7 @@ fn agenda_tasks_rejects_date_argument() {
 #[test]
 fn completions_emit_per_shell_script() {
     for shell in ["bash", "zsh", "fish"] {
-        let out = bin()
-            .args(["--completions", shell])
-            .output()
-            .expect("run");
+        let out = bin().args(["--completions", shell]).output().expect("run");
         assert!(
             out.status.success(),
             "completions for {shell} must succeed; stderr: {}",
@@ -1115,14 +1109,7 @@ fn multi_segment_glob_matches_with_relative_dir() {
     let out = bin()
         .current_dir(tmp.path())
         .args([
-            "--dir",
-            "ws",
-            "--glob",
-            "sub/*.md",
-            "--tasks",
-            "--format",
-            "json",
-            "--quiet",
+            "--dir", "ws", "--glob", "sub/*.md", "--tasks", "--format", "json", "--quiet",
         ])
         .output()
         .expect("run");
@@ -1598,8 +1585,7 @@ fn broken_pipe_exits_silently_without_diagnostic() {
         for j in 0..100 {
             body.push_str(&block.replace("{{n}}", &format!("{i}_{j}")));
         }
-        fs::write(tmp.path().join(format!("notes_{i:03}.md")), body)
-            .expect("write fixture file");
+        fs::write(tmp.path().join(format!("notes_{i:03}.md")), body).expect("write fixture file");
     }
 
     let bin_path: PathBuf = assert_cmd::cargo::cargo_bin("markdown-org-extract");

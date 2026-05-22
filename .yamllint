@@ -1,0 +1,28 @@
+# yamllint config tuned for this repo.
+#
+# Background: yamllint's `default` profile is designed for hand-written YAML
+# and flags several patterns that are idiomatic in GitHub Actions workflows:
+#
+#   * `truthy`: workflows use the literal key `on:`, which yamllint reads as
+#     the YAML 1.1 truthy value. Disabling key-checking lets `on:` through
+#     without flagging legitimate string values in step bodies.
+#   * `document-start`: GitHub Actions workflows are conventionally written
+#     without the leading `---` document marker.
+#   * `line-length`: action pins of the form
+#         uses: org/repo@<40-char-SHA>  # vX.Y.Z
+#     and the bash commands embedded in `run:` blocks cannot fit into 80
+#     columns. Loosened to 200 and dropped to warning so it never breaks CI.
+#   * `comments.min-spaces-from-content`: the `# vX.Y.Z` marker after a SHA
+#     pin uses a single space, which is the de facto convention.
+
+extends: default
+
+rules:
+  document-start: disable
+  line-length:
+    max: 200
+    level: warning
+  truthy:
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1

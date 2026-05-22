@@ -50,15 +50,42 @@ exit 0
     fs::set_permissions(&bin, perms).unwrap();
 }
 
-/// Run `scripts/check.sh` with PATH pinned to `bin_dir` (where the fake cargo
-/// lives) followed by the real PATH. Returns (exit code, stdout, stderr,
-/// invocation log lines).
+/// Write a fake `yamllint` to `bin_dir`. It tags every invocation in `log`
+/// with a `yamllint ` prefix so the unified log can still be parsed by the
+/// existing cargo-only assertions (which expect bare `<subcommand>` lines).
+fn write_fake_yamllint(bin_dir: &Path, log: &Path, should_fail: bool) {
+    let exit_code = if should_fail { 1 } else { 0 };
+    let script = format!(
+        r#"#!/usr/bin/env bash
+echo "yamllint $@" >> "{log}"
+exit {exit_code}
+"#,
+        log = log.display(),
+        exit_code = exit_code,
+    );
+    let bin = bin_dir.join("yamllint");
+    fs::write(&bin, script).unwrap();
+    let mut perms = fs::metadata(&bin).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&bin, perms).unwrap();
+}
+
+/// Run `scripts/check.sh` with PATH pinned to `bin_dir` (where the fake
+/// `cargo` and `yamllint` live) followed by the real PATH. `fail_on`
+/// triggers exit-1 in the matching step: cargo subcommands (`fmt`, `clippy`,
+/// `doc`, `test`) and the literal `yamllint`. Returns (exit code, stdout,
+/// stderr, invocation log lines).
 fn run_check(fail_on: Option<&str>) -> (i32, String, String, Vec<String>) {
     let dir = tempdir().unwrap();
     let bin_dir = dir.path().join("bin");
     fs::create_dir(&bin_dir).unwrap();
-    let log = dir.path().join("cargo-invocations.log");
-    write_fake_cargo(&bin_dir, &log, fail_on);
+    let log = dir.path().join("invocations.log");
+    let cargo_fail = match fail_on {
+        Some(s) if matches!(s, "fmt" | "clippy" | "doc" | "test") => Some(s),
+        _ => None,
+    };
+    write_fake_cargo(&bin_dir, &log, cargo_fail);
+    write_fake_yamllint(&bin_dir, &log, matches!(fail_on, Some("yamllint")));
 
     let path = std::env::var("PATH").unwrap_or_default();
     let new_path = format!("{}:{}", bin_dir.display(), path);
@@ -83,18 +110,19 @@ fn run_check(fail_on: Option<&str>) -> (i32, String, String, Vec<String>) {
 }
 
 #[test]
-fn check_runs_fmt_clippy_doc_test_in_order_on_success() {
+fn check_runs_fmt_yamllint_clippy_doc_test_in_order_on_success() {
     let (code, _stdout, stderr, invocations) = run_check(None);
     assert_eq!(code, 0, "expected success; stderr: {stderr}");
     assert_eq!(
         invocations.len(),
-        4,
-        "expected exactly 4 cargo invocations, got {invocations:?}"
+        5,
+        "expected exactly 5 invocations (fmt, yamllint, clippy, doc, test), got {invocations:?}"
     );
-    // fmt --check, clippy with -D warnings, doc with -D warnings, then test.
+    // fmt --check, yamllint .github/workflows/, clippy -D warnings,
+    // doc -D warnings, then test.
     assert!(
         invocations[0].starts_with("fmt"),
-        "first invocation should be fmt: {:?}",
+        "first invocation should be cargo fmt: {:?}",
         invocations[0]
     );
     assert!(
@@ -103,29 +131,39 @@ fn check_runs_fmt_clippy_doc_test_in_order_on_success() {
         invocations[0]
     );
     assert!(
-        invocations[1].starts_with("clippy"),
-        "second invocation should be clippy: {:?}",
+        invocations[1].starts_with("yamllint"),
+        "second invocation should be yamllint: {:?}",
         invocations[1]
     );
     assert!(
-        invocations[1].contains("-D warnings"),
+        invocations[1].contains(".github/workflows"),
+        "yamllint must target the workflow directory: {:?}",
+        invocations[1]
+    );
+    assert!(
+        invocations[2].starts_with("clippy"),
+        "third invocation should be cargo clippy: {:?}",
+        invocations[2]
+    );
+    assert!(
+        invocations[2].contains("-D warnings"),
         "clippy must deny warnings: {:?}",
-        invocations[1]
-    );
-    assert!(
-        invocations[2].starts_with("doc"),
-        "third invocation should be doc: {:?}",
         invocations[2]
     );
     assert!(
-        invocations[2].contains("--no-deps"),
-        "doc must skip deps to keep the step fast: {:?}",
-        invocations[2]
-    );
-    assert!(
-        invocations[3].starts_with("test"),
-        "fourth invocation should be test: {:?}",
+        invocations[3].starts_with("doc"),
+        "fourth invocation should be cargo doc: {:?}",
         invocations[3]
+    );
+    assert!(
+        invocations[3].contains("--no-deps"),
+        "doc must skip deps to keep the step fast: {:?}",
+        invocations[3]
+    );
+    assert!(
+        invocations[4].starts_with("test"),
+        "fifth invocation should be cargo test: {:?}",
+        invocations[4]
     );
 }
 
@@ -136,7 +174,7 @@ fn check_fails_fast_when_fmt_fails() {
     assert_eq!(
         invocations.len(),
         1,
-        "fail-fast: clippy/doc/test must not run after fmt failure; got {invocations:?}"
+        "fail-fast: yamllint/clippy/doc/test must not run after fmt failure; got {invocations:?}"
     );
     assert!(
         invocations[0].starts_with("fmt"),
@@ -150,15 +188,36 @@ fn check_fails_fast_when_fmt_fails() {
 }
 
 #[test]
+fn check_fails_fast_when_yamllint_fails() {
+    let (code, _stdout, stderr, invocations) = run_check(Some("yamllint"));
+    assert_ne!(code, 0, "expected failure when yamllint fails");
+    assert_eq!(
+        invocations.len(),
+        2,
+        "fail-fast: clippy/doc/test must not run after yamllint failure; got {invocations:?}"
+    );
+    assert!(invocations[0].starts_with("fmt"));
+    assert!(
+        invocations[1].starts_with("yamllint"),
+        "the failed invocation must be yamllint: {:?}",
+        invocations[1]
+    );
+    assert!(
+        stderr.contains("yamllint"),
+        "stderr should mention which step failed: {stderr}"
+    );
+}
+
+#[test]
 fn check_fails_fast_when_clippy_fails() {
     let (code, _stdout, _stderr, invocations) = run_check(Some("clippy"));
     assert_ne!(code, 0, "expected failure when clippy fails");
     assert_eq!(
         invocations.len(),
-        2,
+        3,
         "fail-fast: doc/test must not run after clippy failure; got {invocations:?}"
     );
-    assert!(invocations[1].starts_with("clippy"));
+    assert!(invocations[2].starts_with("clippy"));
 }
 
 #[test]
@@ -167,10 +226,10 @@ fn check_fails_fast_when_doc_fails() {
     assert_ne!(code, 0, "expected failure when doc fails");
     assert_eq!(
         invocations.len(),
-        3,
+        4,
         "fail-fast: test must not run after doc failure; got {invocations:?}"
     );
-    assert!(invocations[2].starts_with("doc"));
+    assert!(invocations[3].starts_with("doc"));
 }
 
 #[test]
@@ -179,10 +238,10 @@ fn check_fails_when_test_fails() {
     assert_ne!(code, 0, "expected failure when test fails");
     assert_eq!(
         invocations.len(),
-        4,
-        "all four steps should run: {invocations:?}"
+        5,
+        "all five steps should run: {invocations:?}"
     );
-    assert!(invocations[3].starts_with("test"));
+    assert!(invocations[4].starts_with("test"));
 }
 
 /// Initialise a minimal git repo in `dir`. We don't need any commits — only

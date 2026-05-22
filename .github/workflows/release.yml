@@ -55,7 +55,7 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable as of 2026-05-16
 
       - name: Cache cargo registry and target
-        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: cargo build
         run: cargo build --verbose
@@ -80,7 +80,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Cache cargo registry and target
-        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
@@ -105,7 +105,7 @@ jobs:
           toolchain: "1.85"
 
       - name: Cache cargo registry and target
-        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: cargo build --locked
         run: cargo build --locked --verbose
@@ -128,7 +128,7 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable as of 2026-05-16
 
       - name: Cache cargo registry and target
-        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Resolve tag and version
         # Single source of truth for "what are we releasing". Both push and
@@ -275,7 +275,7 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable as of 2026-05-16
 
       - name: Cache cargo registry and target
-        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           # Per-target cache key so the three matrix entries do not stomp
           # each other's target/ directory.

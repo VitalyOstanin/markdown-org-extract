@@ -42,6 +42,7 @@ was decided, and the trade-offs that came with it.
 | 0009 | [Unified date-window semantics for agenda](0009-unified-date-window-semantics.md)      | Accepted |
 | 0010 | [Rollback policy for published releases](0010-rollback-policy.md)                      | Accepted |
 | 0011 | [Release commit and tag format](0011-release-commit-and-tag-format.md)                 | Accepted |
+| 0012 | [Verify Org-mode semantics against upstream Elisp](0012-verify-org-semantics-against-upstream.md) | Accepted |
 
 ## Adding a new ADR
 

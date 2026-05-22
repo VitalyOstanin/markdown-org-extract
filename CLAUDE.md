@@ -46,6 +46,14 @@ pointers to the full text and rationale.
   `git show v<X.Y.Z>` is a self-contained change description.
   Applies from the next release forward; historical commits and
   tags are not rewritten.
+- Org-mode semantics are verified against upstream Emacs Org-mode
+  Elisp before code or tests are written, not by recall or by
+  analogy. See [ADR-0012](docs/adr/0012-verify-org-semantics-against-upstream.md).
+  Applies to parser, agenda, repeater, TODO-state, and timestamp
+  changes. The exact local path to the upstream checkout lives in
+  the agent's reference memory; intentional divergence from
+  upstream is recorded in [ADR-0002](docs/adr/0002-supported-org-mode-subset.md)
+  (or a superseding ADR) before shipping.
 
 ## Background
 

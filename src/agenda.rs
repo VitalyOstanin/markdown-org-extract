@@ -438,7 +438,16 @@ fn handle_repeating_task(
         push_scheduled_occurrence(task, repeater, day_date, agenda);
     }
 
-    if is_today {
+    // DONE tasks and CLOSED-typed timestamps never appear in overdue or
+    // upcoming (mirrors upstream Org-mode org-agenda.el lines 6424-6428 for
+    // DONE, and the :closed/:deadline entry-type split at line 5571 for
+    // CLOSED). Occurrence-day scheduling above is unaffected; that matches
+    // the default of `org-agenda-skip-deadline-if-done` (nil), which still
+    // shows the DONE task on its actual deadline date.
+    let is_done = matches!(task.task_type, Some(TaskType::Done));
+    let is_closed_ts = matches!(task.timestamp_type.as_deref(), Some("CLOSED"));
+
+    if is_today && !is_done && !is_closed_ts {
         // Overdue: requires a past occurrence
         if let Some(deadline_date) = deadline {
             if deadline_date < current_date {
@@ -1634,5 +1643,165 @@ mod tests {
             .as_ref()
             .unwrap()
             .contains("2025-12-05"));
+    }
+
+    /// Build a repeating task with explicit `timestamp_type` so tests can
+    /// cover CLOSED-typed timestamps without piggybacking on the
+    /// SCHEDULED / DEADLINE helpers.
+    fn create_test_task_with_repeater_and_ts_type(
+        date_str: &str,
+        repeater: &str,
+        task_type: TaskType,
+        ts_type: &str,
+    ) -> Task {
+        let timestamp = format!("{ts_type}: <{date_str} {repeater}>");
+        Task {
+            file: "test.md".to_string(),
+            line: 1,
+            heading: "Test task".to_string(),
+            content: String::new(),
+            task_type: Some(task_type),
+            priority: None,
+            created: None,
+            timestamp: Some(timestamp),
+            timestamp_type: Some(ts_type.to_string()),
+            timestamp_date: Some(date_str.split_whitespace().next().unwrap().to_string()),
+            timestamp_time: None,
+            timestamp_end_time: None,
+            clocks: None,
+            total_clock_time: None,
+        }
+    }
+
+    // Upstream Org-mode (org-agenda.el lines 6424-6428) unconditionally
+    // suppresses past-due warnings and deadline prewarnings for DONE tasks:
+    //
+    //     ;; Possibly skip done tasks.
+    //     (when (and done?
+    //                (or org-agenda-skip-deadline-if-done
+    //                    (/= deadline current)))
+    //       (throw :skip nil))
+    //
+    // Only the actual deadline date is left subject to the user's opt-in
+    // `org-agenda-skip-deadline-if-done` flag; everything else is silent
+    // when the task is DONE. The repeating-task path needs the same guard,
+    // which `handle_non_repeating_task` already has for the overdue bucket
+    // (`days_diff < 0 && is_today && !is_done`) but not for upcoming.
+
+    #[test]
+    fn test_done_repeating_deadline_not_in_overdue() {
+        let tasks = vec![create_test_task_with_repeater_deadline(
+            "2024-12-01 Sun",
+            None,
+            "+1w",
+            TaskType::Done,
+        )];
+
+        let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+
+        assert_eq!(
+            agenda.overdue.len(),
+            0,
+            "DONE repeating DEADLINE must not surface as overdue (matches upstream org-agenda.el L6424-6428)"
+        );
+    }
+
+    #[test]
+    fn test_done_repeating_deadline_not_in_upcoming() {
+        // base 5 days in the future, within the 14-day warning period.
+        let tasks = vec![create_test_task_with_repeater_deadline(
+            "2025-12-11 Thu",
+            None,
+            "+1y",
+            TaskType::Done,
+        )];
+
+        let day_date = NaiveDate::from_ymd_opt(2025, 12, 6).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2025, 12, 6).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+
+        assert_eq!(
+            agenda.upcoming.len(),
+            0,
+            "DONE repeating DEADLINE must not surface as prewarning (matches upstream org-agenda.el L6424-6428)"
+        );
+    }
+
+    #[test]
+    fn test_done_repeating_still_shows_on_occurrence_day() {
+        // Upstream default: `org-agenda-skip-deadline-if-done` is nil, so a
+        // DONE task IS still shown on its actual occurrence date. The fix
+        // for overdue/upcoming must not regress this.
+        let tasks = vec![create_test_task_with_repeater(
+            "2024-12-01 Sun",
+            None,
+            "+1w",
+            TaskType::Done,
+        )];
+
+        let day_date = NaiveDate::from_ymd_opt(2024, 12, 8).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2024, 12, 8).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+
+        assert_eq!(
+            agenda.scheduled_no_time.len(),
+            1,
+            "DONE repeating task must still appear on its occurrence day"
+        );
+        assert_eq!(agenda.overdue.len(), 0);
+        assert_eq!(agenda.upcoming.len(), 0);
+    }
+
+    // Upstream Org-mode (org-agenda.el L5571) routes CLOSED-typed
+    // timestamps to `org-agenda-get-progress`, never to
+    // `org-agenda-get-deadlines` or `org-agenda-get-scheduled`. The
+    // project does not implement a progress view, but the daily agenda
+    // must not mistake a CLOSED timestamp for a deadline candidate. In
+    // practice, real-world Org files never emit `CLOSED: <...+1w>`, so
+    // this is a defensive guard rather than a bug fix for a common case.
+
+    #[test]
+    fn test_closed_repeating_not_in_overdue() {
+        let tasks = vec![create_test_task_with_repeater_and_ts_type(
+            "2024-12-01 Sun",
+            "+1w",
+            TaskType::Todo,
+            "CLOSED",
+        )];
+
+        let day_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+
+        assert_eq!(
+            agenda.overdue.len(),
+            0,
+            "CLOSED-typed timestamps must not surface as overdue"
+        );
+    }
+
+    #[test]
+    fn test_closed_repeating_not_in_upcoming() {
+        // CLOSED can never enter the existing upcoming branch because that
+        // branch already gates on `ts_type == \"DEADLINE\"`; this test pins
+        // that gate so a future refactor cannot quietly relax it.
+        let tasks = vec![create_test_task_with_repeater_and_ts_type(
+            "2025-12-11 Thu",
+            "+1y",
+            TaskType::Todo,
+            "CLOSED",
+        )];
+
+        let day_date = NaiveDate::from_ymd_opt(2025, 12, 6).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2025, 12, 6).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+
+        assert_eq!(
+            agenda.upcoming.len(),
+            0,
+            "CLOSED-typed timestamps must never enter the upcoming bucket"
+        );
     }
 }

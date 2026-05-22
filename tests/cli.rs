@@ -1392,7 +1392,8 @@ fn json_snapshot_tasks_mode_minimal_fixture() {
     \"timestamp_type\": \"SCHEDULED\",
     \"timestamp_date\": \"2026-05-21\"
   }
-]";
+]
+";
     assert_eq!(
         stdout, expected,
         "JSON tasks snapshot must be byte-exact; got:\n{stdout}"
@@ -1454,9 +1455,140 @@ fn json_snapshot_agenda_day_minimal_fixture() {
     ],
     \"upcoming\": []
   }
-]";
+]
+";
     assert_eq!(
         stdout, expected,
         "JSON agenda-day snapshot must be byte-exact; got:\n{stdout}"
+    );
+}
+
+// Output ends with a trailing newline regardless of format and destination.
+// Rationale: POSIX defines a "text file" as ending in `\n`; without it the
+// shell prompt is rendered on the same line as the last JSON `]`/HTML
+// closing tag, and `diff` / line-counting tools mis-count the last line.
+// Covers JSON / Markdown / HTML for both stdout and file outputs; the
+// holiday short-circuit (`--holidays`) is exercised separately because it
+// goes through a different write site (`handle_holidays`).
+
+fn fixture_with_one_task() -> tempfile::TempDir {
+    let tmp = tempdir().expect("tmpdir");
+    fs::write(
+        tmp.path().join("notes.md"),
+        "# Notes\n\n### TODO Pin me\n`SCHEDULED: <2026-05-21 Thu>`\n",
+    )
+    .expect("write notes.md");
+    tmp
+}
+
+fn run_with_format(tmp: &std::path::Path, format: &str) -> Vec<u8> {
+    let out = bin()
+        .args([
+            "--dir",
+            tmp.to_str().unwrap(),
+            "--tasks",
+            "--format",
+            format,
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out.stdout
+}
+
+#[test]
+fn stdout_json_ends_with_newline() {
+    let tmp = fixture_with_one_task();
+    let bytes = run_with_format(tmp.path(), "json");
+    assert_eq!(
+        bytes.last().copied(),
+        Some(b'\n'),
+        "JSON stdout must end with a trailing newline; got tail: {:?}",
+        String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(8)..])
+    );
+}
+
+#[test]
+fn stdout_markdown_ends_with_newline() {
+    let tmp = fixture_with_one_task();
+    let bytes = run_with_format(tmp.path(), "markdown");
+    assert_eq!(
+        bytes.last().copied(),
+        Some(b'\n'),
+        "Markdown stdout must end with a trailing newline; got tail: {:?}",
+        String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(8)..])
+    );
+}
+
+#[test]
+fn stdout_html_ends_with_newline() {
+    let tmp = fixture_with_one_task();
+    let bytes = run_with_format(tmp.path(), "html");
+    assert_eq!(
+        bytes.last().copied(),
+        Some(b'\n'),
+        "HTML stdout must end with a trailing newline; got tail: {:?}",
+        String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(8)..])
+    );
+}
+
+#[test]
+fn output_file_ends_with_newline_for_each_format() {
+    // The file-write path is `fs::write(p, output)`. Test all three formats
+    // against the file path so a regression in only one format-stream pair
+    // surfaces a precise failure rather than a generic "tail differs".
+    let tmp = fixture_with_one_task();
+    for format in ["json", "markdown", "html"] {
+        let out_path = tmp.path().join(format!("out.{format}"));
+        let result = bin()
+            .args([
+                "--dir",
+                tmp.path().to_str().unwrap(),
+                "--tasks",
+                "--format",
+                format,
+                "--output",
+                out_path.to_str().unwrap(),
+                "--quiet",
+            ])
+            .output()
+            .expect("run");
+        assert!(
+            result.status.success(),
+            "format {format} failed to write: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let body = fs::read(&out_path).expect("read written file");
+        assert_eq!(
+            body.last().copied(),
+            Some(b'\n'),
+            "{} file output must end with a trailing newline; got tail: {:?}",
+            format,
+            String::from_utf8_lossy(&body[body.len().saturating_sub(8)..])
+        );
+    }
+}
+
+#[test]
+fn holidays_stdout_ends_with_newline() {
+    let out = bin()
+        .args(["--holidays", "2026", "--quiet"])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.stdout.last().copied(),
+        Some(b'\n'),
+        "--holidays JSON must end with a trailing newline; got tail: {:?}",
+        String::from_utf8_lossy(&out.stdout[out.stdout.len().saturating_sub(8)..])
     );
 }

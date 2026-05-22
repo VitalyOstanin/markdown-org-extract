@@ -89,6 +89,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pre-0.1.6 work. Documented inline that the range format is a
   grandfathered exception and not a new pattern other releases may
   adopt.
+- JSON / Markdown / HTML output now always ends with exactly one
+  trailing `\n`, regardless of format and destination (stdout or
+  `--output <file>`). The Markdown renderer already produced a
+  trailing newline; the JSON serializer and the HTML formatter did
+  not, leaving the terminal prompt on the same line as the closing
+  `]` / `</html>` and breaking POSIX "text file" tools. A helper
+  (`ensure_trailing_newline`) is applied to the rendered string
+  before every write so existing renderers can stay newline-agnostic.
+  `--holidays` output goes through the same helper.
 
 ### Fixed
 

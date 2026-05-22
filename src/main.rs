@@ -99,11 +99,24 @@ fn handle_holidays(year: i32) -> Result<(), AppError> {
         .iter()
         .map(|d| d.format("%Y-%m-%d").to_string())
         .collect();
-    let output = serde_json::to_string_pretty(&dates)?;
+    let mut output = serde_json::to_string_pretty(&dates)?;
+    ensure_trailing_newline(&mut output);
     io::stdout()
         .write_all(output.as_bytes())
         .map_err(|e| AppError::io("<stdout>", e))?;
     Ok(())
+}
+
+/// Ensure `s` ends with exactly one `\n`. Renderers vary: `serde_json` and
+/// the HTML/JSON-array formatters return a string with no trailing newline,
+/// while the Markdown formatter already adds one. Calling this before every
+/// write keeps the contract uniform (POSIX text file shape, prompt on the
+/// next line) without producing `\n\n` for formatters that already emitted
+/// the newline.
+fn ensure_trailing_newline(s: &mut String) {
+    if !s.ends_with('\n') {
+        s.push('\n');
+    }
 }
 
 /// Handle the `--completions <SHELL>` short-circuit: emit the completion
@@ -278,7 +291,7 @@ fn scan_files(
 /// Serialize the agenda result into the requested format and either write it
 /// to `--output` or to stdout.
 fn render_output(cli: &Cli, agenda_output: agenda::AgendaOutput) -> Result<(), AppError> {
-    let output = match cli.format {
+    let mut output = match cli.format {
         OutputFormat::Json => match agenda_output {
             agenda::AgendaOutput::Days(days) => serde_json::to_string_pretty(&days)?,
             agenda::AgendaOutput::Tasks(tasks) => serde_json::to_string_pretty(&tasks)?,
@@ -292,6 +305,7 @@ fn render_output(cli: &Cli, agenda_output: agenda::AgendaOutput) -> Result<(), A
             agenda::AgendaOutput::Tasks(tasks) => render_html(&tasks),
         },
     };
+    ensure_trailing_newline(&mut output);
 
     match cli.output.as_deref() {
         Some(p) if !is_stdout_sigil(p) => {

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [\[Unreleased\]](#unreleased)
+- [\[0.4.2\] — 2026-05-22](#042--2026-05-22)
 - [\[0.4.1\] — 2026-05-22](#041--2026-05-22)
 - [\[0.4.0\] — 2026-05-22](#040--2026-05-22)
 - [\[0.3.1\] — 2026-05-19](#031--2026-05-19)
@@ -21,6 +22,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 _No user-visible changes yet._
+
+## [0.4.2] — 2026-05-22
+
+### Fixed
+
+- `tests/release_packaging.rs` no longer fails the `Test (macOS)`
+  job. The 0.4.1 release fixed `scripts/package-archive.sh` to
+  prefer `gtar` when available, but the test helper
+  `make_tar_gz_top_level` invoked `Command::new("tar")` directly
+  with GNU-tar reproducibility flags (`--sort=name`, `--owner=0`,
+  `--group=0`, `--numeric-owner`, `--mtime=@0`), bypassing the
+  script's fallback chain. macOS' BSD tar rejected those flags
+  and four tests panicked at the assertion. The helper now goes
+  through a new `gnu_tar()` function that mirrors the script's
+  `if command -v gtar` chain: `gtar` when present (installed in
+  CI via Homebrew), plain `tar` otherwise. The four remaining
+  `Command::new("tar")` calls in the file use only BSD-compatible
+  flags (`-czf`) and are kept unchanged.
 
 ## [0.4.1] — 2026-05-22
 

@@ -51,6 +51,19 @@ fn has_tool(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Returns a `Command` that runs GNU `tar`. Prefers `gtar` (Homebrew's
+/// `gnu-tar` on macOS) so reproducibility flags (`--sort`, `--owner`,
+/// `--group`, `--numeric-owner`, `--mtime`) are accepted; falls back to
+/// plain `tar` on Linux where the system `tar` is already GNU tar. Mirrors
+/// the same fallback chain used by `scripts/package-archive.sh`.
+fn gnu_tar() -> Command {
+    if has_tool("gtar") {
+        Command::new("gtar")
+    } else {
+        Command::new("tar")
+    }
+}
+
 fn sha256_for(dir: &Path, asset_name: &str) -> PathBuf {
     let out = Command::new("sha256sum")
         .arg(asset_name)
@@ -74,7 +87,7 @@ fn make_tar_gz_top_level(dir: &Path, stem: &str, bin_name: &str) -> PathBuf {
     let stage = dir.join(stem);
     write_staged_files(&stage, bin_name);
     let asset_name = format!("{stem}.tar.gz");
-    let status = Command::new("tar")
+    let status = gnu_tar()
         .arg("--sort=name")
         .arg("--owner=0")
         .arg("--group=0")

@@ -106,6 +106,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   matching the behaviour of `cat`, `grep`, `jq` and other Unix
   pipeline-friendly tools. Every other IO failure is still
   reported and still maps to exit 74.
+- GitHub Releases now ship prebuilt binaries for three tier-1
+  targets: `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`,
+  and `x86_64-pc-windows-msvc`. Each release attaches a `.tar.gz`
+  / `.zip` archive containing the binary plus `README.md` and
+  `LICENSE`, with a matching `.sha256` companion. Archives are
+  reproducible (sorted, fixed mtime / owner) so a re-run of the
+  workflow on the same commit produces byte-identical assets.
+  Adding `aarch64-unknown-linux-gnu` or `x86_64-apple-darwin` is
+  one matrix entry's worth of YAML.
 
 ### Documentation
 

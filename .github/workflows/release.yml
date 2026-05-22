@@ -235,3 +235,129 @@ jobs:
             --title "$TAG" \
             --notes-file release-notes.md \
             --verify-tag
+
+  # Cross-platform prebuilt assets. Runs after `publish` so the GitHub
+  # Release already exists and `gh release upload` can attach to it.
+  # The matrix picks one tier-1 target per OS; expanding to e.g.
+  # `x86_64-apple-darwin` or `aarch64-unknown-linux-gnu` is a copy-paste
+  # of one matrix entry.
+  package-binaries:
+    name: Package (${{ matrix.target }})
+    needs: [publish]
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    # `gh release upload` writes to the repo; only this job needs it.
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+            binary: markdown-org-extract
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+            binary: markdown-org-extract
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+            binary: markdown-org-extract.exe
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable as of 2026-05-16
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          # Per-target cache key so the three matrix entries do not stomp
+          # each other's target/ directory.
+          key: ${{ matrix.target }}
+
+      - name: Resolve tag and version
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      # Single packaging step driven by the matrix `archive` field. Uses
+      # bash on all three runners (git-bash on Windows ships with the
+      # GitHub-hosted image) so the script stays one piece. `tar` is
+      # available everywhere; `7z` is preinstalled on windows-latest and
+      # is the most stable cross-shell way to produce a .zip without
+      # PowerShell's CRLF / encoding gotchas.
+      - name: Package archive and SHA-256
+        id: pack
+        shell: bash
+        env:
+          VER: ${{ steps.tag.outputs.version }}
+          TARGET: ${{ matrix.target }}
+          ARCHIVE_EXT: ${{ matrix.archive }}
+          BIN_NAME: ${{ matrix.binary }}
+        run: |
+          set -euo pipefail
+          stem="markdown-org-extract-${VER}-${TARGET}"
+          asset="${stem}.${ARCHIVE_EXT}"
+
+          # Stage the payload in a clean directory so the archive root is
+          # a single ${stem}/ folder containing binary + docs. Matches
+          # the cargo-dist / GoReleaser layout users expect.
+          stage="${RUNNER_TEMP}/${stem}"
+          mkdir -p "$stage"
+          cp "target/release/${BIN_NAME}" "$stage/"
+          cp README.md LICENSE "$stage/"
+
+          case "$ARCHIVE_EXT" in
+            tar.gz)
+              # Reproducible: sorted, fixed owner/mtime so a re-run of the
+              # workflow on the same commit produces a byte-identical
+              # archive.
+              tar --sort=name --owner=0 --group=0 --numeric-owner --mtime='@0' \
+                -czf "$asset" -C "${RUNNER_TEMP}" "${stem}"
+              sha256sum "$asset" > "${asset}.sha256"
+              ;;
+            zip)
+              # Windows runner: 7z's `-mtc=off` strips per-file timestamps,
+              # giving a reproducible archive without depending on PS.
+              7z a -tzip -mtc=off "$asset" "${stage}/*" >/dev/null
+              # GitHub runners include sha256sum via git-bash on Windows.
+              sha256sum "$asset" > "${asset}.sha256"
+              ;;
+            *)
+              echo "::error::Unknown archive extension: $ARCHIVE_EXT"
+              exit 1
+              ;;
+          esac
+
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          ASSET: ${{ steps.pack.outputs.asset }}
+        shell: bash
+        run: |
+          # `--clobber` makes the upload idempotent: a re-run after a
+          # transient network failure overwrites the partial blob instead
+          # of erroring with "asset already exists".
+          gh release upload "$TAG" "$ASSET" "${ASSET}.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber

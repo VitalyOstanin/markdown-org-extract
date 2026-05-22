@@ -45,6 +45,13 @@ The scanner recognises the following subset of Emacs Org-mode syntax:
 - Repeaters: `+1d`, `+2w`, `+1m`, `+1y`, `+1h`,
   `++Nu` (catch-up), `.+Nu` (restart-on-DONE),
   `+1wd` (next weekday).
+- Warning-period cookies on DEADLINE timestamps:
+  `-N<unit>` with unit one of `h/d/w/m/y`. The cookie overrides the
+  global 14-day default warning window for that one task and is
+  converted to whole days using upstream `org-get-wdays`'s factors
+  (`d=1`, `w=7`, `m=30.4`, `y=365.25`, `h=1/24`, floored). The cookie
+  may appear in either order relative to the repeater
+  (`<... +1y -3d>` and `<... -3d +1y>` are both recognised).
 - Weekday names accept English (Mon..Sun) and Russian short and full
   forms; they are normalised to English before storage.
 
@@ -80,7 +87,6 @@ The following Org-mode features are deliberately **out of scope**:
   `org-tr-regexp`), and the start date and start / end times are
   surfaced; the end **date** is not exposed and the task is shown
   only on the start day. Multi-day spanning is a separate concern.
-- Warning cookies `-Nd` inside DEADLINE timestamps (see #34).
 - Properties drawers, tag inheritance, agenda categories, habit
   graphs.
 
@@ -117,5 +123,7 @@ Harder:
 - Repeater parsing and occurrence math: [`src/timestamp/repeater.rs`](../../src/timestamp/repeater.rs)
 - Weekday normalisation: [`src/timestamp/weekdays.rs`](../../src/timestamp/weekdays.rs)
 - Heading parsing: [`src/parser.rs`](../../src/parser.rs)
-- Local upstream reference: `/home/vyt/devel/org-mode` (Elisp source)
-- Public Org-mode reference: [orgmode.org/worg/dev/org-syntax.html](https://orgmode.org/worg/dev/org-syntax.html)
+- Upstream Elisp source: [emacs/org-mode on Savannah](https://git.savannah.gnu.org/cgit/emacs/org-mode.git)
+  (see also [ADR-0012](0012-verify-org-semantics-against-upstream.md)
+  for the policy on consulting it before changing semantics).
+- Public Org-mode syntax reference: [orgmode.org/worg/dev/org-syntax.html](https://orgmode.org/worg/dev/org-syntax.html)

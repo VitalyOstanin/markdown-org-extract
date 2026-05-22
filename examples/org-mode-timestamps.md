@@ -8,7 +8,10 @@ Repeats every day for testing.
 ### TODO [#A] Deadline with warning
 `DEADLINE: <2025-12-10 Wed -3d>`
 
-Task that should appear 3 days before deadline.
+The `-3d` cookie overrides the global 14-day warning window: this
+task appears in the upcoming bucket only from three days before the
+deadline. Units `h/d/w/m/y` are accepted; see `parse_org_timestamp`
+and ADR-0002 for the full list.
 
 ### TODO [#B] Weekly repeating task
 `SCHEDULED: <2025-12-01 Mon +1w>`

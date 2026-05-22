@@ -7,30 +7,41 @@ use super::repeater::{parse_repeater, Repeater};
 use super::weekdays::normalize_weekdays;
 use crate::regex_limits::compile_bounded;
 
-static RANGE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    // The dash separator matches Emacs' org-tr-regexp: `-`, `--`, or `---`.
-    compile_bounded(concat!(
-        r"<(\d{4}-\d{2}-\d{2})",
-        r"(?: (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday))?",
-        r"(?: (\d{1,2}:\d{2})(?:-(\d{1,2}:\d{2}))?)?",
-        r"(?:\s*([.+]+\d+(?:wd|[dwmyh])))?",
-        r"(?:\s+-(\d+)d)?>",
-        r"--?-?",
-        r"<(\d{4}-\d{2}-\d{2})",
-        r"(?: (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday))?",
-        r"(?: (\d{1,2}:\d{2})(?:-(\d{1,2}:\d{2}))?)?>",
-    ))
+// Main bracket regex: anchor the `<YYYY-MM-DD ...>` form and capture only
+// the date. Body content (weekday, time, repeater, warning cookie) is left
+// flexible and scanned separately so that order of repeater vs warning
+// follows upstream Org-mode semantics (`org-get-wdays` in lisp/org.el
+// just searches the whole timestamp string for `-N[hdwmy]`, irrespective
+// of where the repeater sits). Date is mandatory; everything else is
+// optional and order-independent.
+//
+// Range timestamps like `<...>--<...>` fall through this regex naturally:
+// SINGLE_RE matches the first bracket and captures the start date,
+// which is what `parse_org_timestamp` returns for ranges anyway. The
+// `--?-?` separator and the trailing bracket are not consumed here;
+// other code paths (e.g., the end-time extraction in `extract.rs`)
+// handle ranges with their own regexes.
+static SINGLE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    // `[^<>]{0,80}` bounds the body so a stray `<` or pathological input
+    // cannot blow up the regex engine. 80 chars accommodates the longest
+    // realistic timestamp body (full weekday name + HH:MM-HH:MM range +
+    // repeater + warning cookie).
+    compile_bounded(r"<(\d{4}-\d{2}-\d{2})[^<>]{0,80}>")
 });
 
-static SINGLE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    compile_bounded(concat!(
-        r"<(\d{4}-\d{2}-\d{2})",
-        r"(?: (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday))?",
-        r"(?: (\d{1,2}:\d{2})(?:-(\d{1,2}:\d{2}))?)?",
-        r"(?:\s*([.+]+\d+(?:wd|[dwmyh])))?",
-        r"(?:\s+-(\d+)d)?>",
-    ))
-});
+// Scan the bracket body for a repeater token. Matches upstream Org-mode
+// `org-repeater-regexp-base` shape: a `+`, `++`, or `.+` prefix, followed
+// by a positive integer, followed by a unit (d/w/m/y/h or `wd` for the
+// project's workday extension).
+static REPEATER_BODY_RE: LazyLock<Regex> =
+    LazyLock::new(|| compile_bounded(r"([.+]+\d+(?:wd|[dwmyh]))"));
+
+// Scan the bracket body for a warning-period cookie `-N[hdwmy]`. The
+// trailing context `[\s>]|$` mirrors upstream `org-get-wdays`'s
+// `\\(\\'\\|>\\| \\)` so a substring like `-3day` (not a cookie) is not
+// matched as `-3d`.
+static WARNING_BODY_RE: LazyLock<Regex> =
+    LazyLock::new(|| compile_bounded(r"\s-(\d+)([hdwmy])(?:[\s>]|$)"));
 
 /// Result of parsing a single org-mode timestamp string.
 #[derive(Debug, Clone)]
@@ -39,10 +50,36 @@ pub struct ParsedTimestamp {
     pub date: NaiveDate,
     /// Optional repeater (`+1d`, `.+2w`, ...).
     pub repeater: Option<Repeater>,
+    /// Optional per-task warning lead time (`-Nd`, `-Nw`, `-Nm`, `-Ny`,
+    /// `-Nh`) converted to whole days using upstream Org-mode's factors
+    /// (see `org-get-wdays` in `lisp/org.el`). When set, it overrides the
+    /// global `DEADLINE_WARNING_DAYS` for the corresponding DEADLINE.
+    pub warning_days: Option<i64>,
+}
+
+/// Convert a warning cookie's value/unit pair into whole days, mirroring
+/// upstream `org-get-wdays`: `floor(N * factor)` with day-equivalents
+/// `d=1`, `w=7`, `m=30.4`, `y=365.25`, `h=1/24`. Returns `None` for any
+/// unrecognised unit, which keeps the parser fail-closed.
+fn warning_cookie_to_days(value: i64, unit: &str) -> Option<i64> {
+    let factor = match unit {
+        "d" => 1.0,
+        "w" => 7.0,
+        "m" => 30.4,
+        "y" => 365.25,
+        "h" => 1.0 / 24.0,
+        _ => return None,
+    };
+    Some((value as f64 * factor).floor() as i64)
 }
 
 /// Parse a single org-mode timestamp like `<2024-12-05 Thu 10:00 +1d>` or
 /// `<2024-12-05>--<2024-12-06>`, optionally normalizing localized weekday names.
+///
+/// Repeater and warning-period cookies are extracted by independent passes
+/// on the bracket body, so they may appear in either order
+/// (`<... +1y -3d>` or `<... -3d +1y>`), matching upstream Org-mode's
+/// position-agnostic handling in `org-get-wdays`.
 pub fn parse_org_timestamp(ts: &str, mappings: Option<&[(&str, &str)]>) -> Option<ParsedTimestamp> {
     let ts = if let Some(m) = mappings {
         normalize_weekdays(ts, m)
@@ -50,21 +87,24 @@ pub fn parse_org_timestamp(ts: &str, mappings: Option<&[(&str, &str)]>) -> Optio
         Cow::Borrowed(ts)
     };
 
-    if let Some(caps) = RANGE_RE.captures(&ts) {
-        let date = NaiveDate::parse_from_str(&caps[1], "%Y-%m-%d").ok()?;
-        let repeater = caps.get(4).and_then(|m| parse_repeater(m.as_str()));
+    let caps = SINGLE_RE.captures(&ts)?;
+    let date = NaiveDate::parse_from_str(&caps[1], "%Y-%m-%d").ok()?;
+    let bracket = caps.get(0).map(|m| m.as_str()).unwrap_or("");
 
-        return Some(ParsedTimestamp { date, repeater });
-    }
+    let repeater = REPEATER_BODY_RE
+        .captures(bracket)
+        .and_then(|c| parse_repeater(c.get(1)?.as_str()));
 
-    if let Some(caps) = SINGLE_RE.captures(&ts) {
-        let date = NaiveDate::parse_from_str(&caps[1], "%Y-%m-%d").ok()?;
-        let repeater = caps.get(4).and_then(|m| parse_repeater(m.as_str()));
+    let warning_days = WARNING_BODY_RE.captures(bracket).and_then(|c| {
+        let value: i64 = c.get(1)?.as_str().parse().ok()?;
+        warning_cookie_to_days(value, c.get(2)?.as_str())
+    });
 
-        return Some(ParsedTimestamp { date, repeater });
-    }
-
-    None
+    Some(ParsedTimestamp {
+        date,
+        repeater,
+        warning_days,
+    })
 }
 
 #[cfg(test)]
@@ -115,5 +155,68 @@ mod tests {
                 "start date must be the first bracket for separator {sep:?}"
             );
         }
+    }
+
+    // Warning-period cookie semantics mirror upstream Emacs Org-mode's
+    // `org-get-wdays` (lisp/org.el L14937-14943): `-N<unit>` where unit is
+    // one of h/d/w/m/y, converted to days as floor(N * factor) with
+    // factors d=1, w=7, m=30.4, y=365.25, h=1/24. The presence of the
+    // cookie on a DEADLINE overrides the global `DEADLINE_WARNING_DAYS`
+    // for that one task.
+
+    #[test]
+    fn parse_without_warning_period_yields_none() {
+        let parsed = parse_org_timestamp("<2025-12-10 Wed>", None).unwrap();
+        assert_eq!(parsed.warning_days, None);
+    }
+
+    #[test]
+    fn parse_warning_period_days() {
+        let parsed = parse_org_timestamp("<2025-12-10 Wed -3d>", None).unwrap();
+        assert_eq!(parsed.warning_days, Some(3));
+    }
+
+    #[test]
+    fn parse_warning_period_weeks() {
+        // 1w = 7d (floor(1 * 7))
+        let parsed = parse_org_timestamp("<2025-12-10 Wed -2w>", None).unwrap();
+        assert_eq!(parsed.warning_days, Some(14));
+    }
+
+    #[test]
+    fn parse_warning_period_months_floored() {
+        // 1m = floor(30.4) = 30
+        let parsed = parse_org_timestamp("<2025-12-10 Wed -1m>", None).unwrap();
+        assert_eq!(parsed.warning_days, Some(30));
+    }
+
+    #[test]
+    fn parse_warning_period_years_floored() {
+        // 1y = floor(365.25) = 365
+        let parsed = parse_org_timestamp("<2025-12-10 Wed -1y>", None).unwrap();
+        assert_eq!(parsed.warning_days, Some(365));
+    }
+
+    #[test]
+    fn parse_warning_period_hours_floored_to_zero_for_small_n() {
+        // 1h = floor(1/24) = 0. Edge case, but matches upstream's
+        // floor-semantics so the agenda code can treat 0 as "show only
+        // on the day itself".
+        let parsed = parse_org_timestamp("<2025-12-10 Wed -1h>", None).unwrap();
+        assert_eq!(parsed.warning_days, Some(0));
+    }
+
+    #[test]
+    fn parse_warning_period_with_repeater_in_either_order() {
+        // Both orderings must be recognised: upstream `org-get-wdays`
+        // scans the full bracket body without caring whether the repeater
+        // sits before or after the warning cookie.
+        let with_repeater_first = parse_org_timestamp("<2025-12-10 Wed +1d -3d>", None).unwrap();
+        assert_eq!(with_repeater_first.warning_days, Some(3));
+        assert!(with_repeater_first.repeater.is_some());
+
+        let with_warning_first = parse_org_timestamp("<2025-12-10 Wed -3d +1d>", None).unwrap();
+        assert_eq!(with_warning_first.warning_days, Some(3));
+        assert!(with_warning_first.repeater.is_some());
     }
 }

@@ -1625,6 +1625,82 @@ fn broken_pipe_exits_silently_without_diagnostic() {
     );
 }
 
+/// End-to-end pin for the `-N<unit>` warning-period cookie on a DEADLINE.
+/// At day 5 (outside the 3-day window) the task must not show as
+/// upcoming, even though the default 14-day window would include it.
+/// At day 2 (inside the 3-day window) the same task must show.
+#[test]
+fn deadline_warning_cookie_overrides_default_window() {
+    let tmp = tempdir().expect("tmpdir");
+    fs::write(
+        tmp.path().join("notes.md"),
+        "### TODO [#A] Cookie task\n`DEADLINE: <2025-12-10 Wed -3d>`\n",
+    )
+    .expect("write fixture");
+
+    // Day 5 — outside the cookie's 3-day window. The default 14-day
+    // window would have included this task, so a non-empty `upcoming`
+    // here would mean the cookie is being ignored.
+    let out = bin()
+        .args([
+            "--dir",
+            tmp.path().to_str().unwrap(),
+            "--current-date",
+            "2025-12-05",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "scan must succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("valid JSON");
+    let upcoming_at_5 = parsed
+        .as_array()
+        .and_then(|days| days.first())
+        .and_then(|d| d.get("upcoming"))
+        .and_then(|u| u.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    assert_eq!(
+        upcoming_at_5, 0,
+        "DEADLINE with -3d must be silent 5 days out; full output: {parsed}"
+    );
+
+    // Day 8 — inside the 3-day window. Task must surface in upcoming.
+    let out = bin()
+        .args([
+            "--dir",
+            tmp.path().to_str().unwrap(),
+            "--current-date",
+            "2025-12-08",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let parsed: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("valid JSON");
+    let upcoming_at_8 = parsed
+        .as_array()
+        .and_then(|days| days.first())
+        .and_then(|d| d.get("upcoming"))
+        .and_then(|u| u.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    assert_eq!(
+        upcoming_at_8, 1,
+        "DEADLINE with -3d must surface in upcoming 2 days out; full output: {parsed}"
+    );
+}
+
 #[test]
 fn holidays_stdout_ends_with_newline() {
     let out = bin()

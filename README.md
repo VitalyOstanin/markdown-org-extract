@@ -488,6 +488,23 @@ agenda window model.
 stored in the `created` field. This lets consumers track the task
 creation date independently of SCHEDULED, DEADLINE, and CLOSED.
 
+**Warning-period cookie on DEADLINE:**
+
+A DEADLINE can carry a `-N<unit>` cookie that overrides the global
+14-day upcoming-window for that one task. Units `h/d/w/m/y` are
+recognised; values are converted to whole days using upstream
+`org-get-wdays`'s factors (`d=1`, `w=7`, `m=30.4`, `y=365.25`,
+`h=1/24`, floored).
+
+```markdown
+`DEADLINE: <2025-12-10 Wed -3d>`   — show only 3 days before
+`DEADLINE: <2025-12-20 Sat -30d>`  — start warning 30 days out
+`DEADLINE: <2025-12-10 Wed +1y -3d>` — repeater + cookie together
+`DEADLINE: <2025-12-10 Wed -3d +1y>` — order does not matter
+```
+
+Without a cookie the task uses the default 14-day window.
+
 ### Time tracking (CLOCK)
 
 The utility supports CLOCK entries for tracking time spent on tasks,

@@ -115,6 +115,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workflow on the same commit produces byte-identical assets.
   Adding `aarch64-unknown-linux-gnu` or `x86_64-apple-darwin` is
   one matrix entry's worth of YAML.
+- Warning-period cookie on DEADLINE timestamps is now honoured.
+  `DEADLINE: <2025-12-10 Wed -3d>` shrinks the upcoming window to
+  three days; `DEADLINE: <2025-12-20 Sat -30d>` expands it to thirty.
+  Units `h/d/w/m/y` are accepted and converted to whole days using
+  upstream `org-get-wdays`'s factors (`d=1`, `w=7`, `m=30.4`,
+  `y=365.25`, `h=1/24`, floored). The cookie may appear in either
+  order relative to the repeater (`<... +1y -3d>` and
+  `<... -3d +1y>` both work) -- the parser scans for repeater and
+  warning independently, matching upstream's position-agnostic
+  handling. Without a cookie the global 14-day window stays in
+  effect.
+- `.yamllint` config and a new `yamllint .github/workflows/` step in
+  `scripts/check.sh` and the CI `lint` job catch structural workflow
+  issues before they reach a release. The config is tuned for
+  GitHub-Actions idioms (long action-pin lines, `on:` keyword,
+  `# vX.Y.Z` single-space comment, no `---` document marker) and
+  loosens or disables the corresponding default rules so they do
+  not produce noise.
 
 ### Documentation
 
@@ -132,6 +150,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so `git show v<X.Y.Z>` is a self-contained change description.
   Applies from the next release forward; historical commits and
   tags are not rewritten.
+- [ADR-0012](docs/adr/0012-verify-org-semantics-against-upstream.md)
+  captures the rule the project has been following informally:
+  before changing parser, agenda, repeater, or TODO-state behaviour,
+  read the upstream Emacs Org-mode Elisp source rather than rely
+  on general knowledge. Records the failure mode (the
+  warning-period regex that captured `-Nd` but had no
+  implementation behind it) and the key entry points.
+  Intentional divergences from upstream must be recorded in
+  ADR-0002 or a superseding ADR before shipping.
+- ADR-0002 ("Supported subset of org-mode keywords") moved the
+  warning-period cookie out of the "out of scope" list and into
+  the supported-timestamp section now that the implementation
+  exists, and replaced the absolute local path to the upstream
+  Elisp checkout with the canonical Savannah URL.
 
 ### Fixed
 
@@ -150,6 +182,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CLOCK: [timestamp]--[timestamp] => duration` in backticks so
   rustdoc no longer tries to resolve `[timestamp]` as an intra-doc
   link. Surfaced by the new `cargo doc -D warnings` CI step.
+- DONE tasks with a repeater no longer surface as overdue or
+  upcoming. Mirrors upstream `org-agenda.el` (lines 6424-6428):
+  past-due warnings and the deadline prewarning are unconditionally
+  suppressed for DONE entries; only the occurrence-day scheduled
+  bucket is preserved (matches upstream's default
+  `org-agenda-skip-deadline-if-done` = nil). CLOSED-typed
+  timestamps are also guarded against accidentally driving overdue
+  / upcoming placement -- upstream routes them through
+  `org-agenda-get-progress`, not the deadline pipeline.
+- `examples/org-mode-timestamps.md` line 9 used to claim the `-3d`
+  cookie made the task appear three days before its deadline, but
+  the parser silently dropped the cookie and the agenda ignored
+  it. The example's comment now matches the actual (now-correct)
+  behaviour.
 
 ### Changed
 

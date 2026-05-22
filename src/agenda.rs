@@ -299,9 +299,12 @@ fn handle_non_repeating_task(
             .overdue
             .push(create_task_without_time(task, days_offset));
     } else if days_diff > 0 && is_today {
-        // Upcoming only in today agenda, only for DEADLINE within warning period
+        // Upcoming only in today agenda, only for DEADLINE within warning
+        // period. A `-N<unit>` cookie on the timestamp overrides the global
+        // default (see upstream `org-get-wdays` in lisp/org.el L14937-14943).
         if let Some(ref ts_type) = task.timestamp_type {
-            if ts_type == "DEADLINE" && days_diff <= DEADLINE_WARNING_DAYS {
+            let window = parsed.warning_days.unwrap_or(DEADLINE_WARNING_DAYS);
+            if ts_type == "DEADLINE" && days_diff <= window {
                 agenda
                     .upcoming
                     .push(create_task_without_time(task, days_offset));
@@ -482,7 +485,8 @@ fn handle_repeating_task(
                 };
                 if let Some(next_date) = next_due {
                     let days_diff = (next_date - current_date).num_days();
-                    if days_diff > 0 && days_diff <= DEADLINE_WARNING_DAYS {
+                    let window = parsed.warning_days.unwrap_or(DEADLINE_WARNING_DAYS);
+                    if days_diff > 0 && days_diff <= window {
                         let mut task_copy = task.clone();
                         task_copy.timestamp_time = None;
                         task_copy.timestamp_end_time = None;
@@ -1780,6 +1784,116 @@ mod tests {
             0,
             "CLOSED-typed timestamps must not surface as overdue"
         );
+    }
+
+    // Warning-period cookie `-N<unit>` overrides the default
+    // `DEADLINE_WARNING_DAYS` (14) for one specific DEADLINE, matching
+    // upstream `org-get-wdays` (lisp/org.el L14937-L14943). Smaller values
+    // shrink the window (silent until N days before), larger values
+    // expand it (start warning earlier).
+
+    #[test]
+    fn test_deadline_with_minus_3d_not_in_upcoming_at_day_5() {
+        // -3d means "warn me 3 days before"; today is 5 days out, so the
+        // task must NOT yet appear in upcoming (with the default 14d it
+        // would).
+        let tasks = vec![create_test_task_with_type(
+            "2025-12-10 Wed -3d",
+            None,
+            TaskType::Todo,
+            "DEADLINE",
+        )];
+
+        let day_date = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+
+        assert_eq!(
+            agenda.upcoming.len(),
+            0,
+            "DEADLINE with -3d cookie must not appear in upcoming at day 5"
+        );
+    }
+
+    #[test]
+    fn test_deadline_with_minus_3d_in_upcoming_at_day_2() {
+        // Same task, but today is 2 days out — inside the 3-day window.
+        let tasks = vec![create_test_task_with_type(
+            "2025-12-10 Wed -3d",
+            None,
+            TaskType::Todo,
+            "DEADLINE",
+        )];
+
+        let day_date = NaiveDate::from_ymd_opt(2025, 12, 8).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2025, 12, 8).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+
+        assert_eq!(agenda.upcoming.len(), 1);
+        assert_eq!(agenda.upcoming[0].days_offset, Some(2));
+    }
+
+    #[test]
+    fn test_deadline_with_minus_30d_in_upcoming_beyond_default_14() {
+        // -30d expands the window beyond the 14-day default; today is 20
+        // days out, so the task must appear in upcoming (default would
+        // skip).
+        let tasks = vec![create_test_task_with_type(
+            "2025-12-25 Thu -30d",
+            None,
+            TaskType::Todo,
+            "DEADLINE",
+        )];
+
+        let day_date = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+
+        assert_eq!(
+            agenda.upcoming.len(),
+            1,
+            "DEADLINE with -30d must appear in upcoming at day 20 (default 14 would skip)"
+        );
+        assert_eq!(agenda.upcoming[0].days_offset, Some(20));
+    }
+
+    #[test]
+    fn test_repeating_deadline_with_minus_3d_not_in_upcoming_at_day_5() {
+        // Same semantics for the repeating-task path: cookie overrides
+        // the global default.
+        let tasks = vec![create_test_task_with_repeater_deadline(
+            "2025-12-10 Wed -3d",
+            None,
+            "+1y",
+            TaskType::Todo,
+        )];
+
+        let day_date = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2025, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+
+        assert_eq!(
+            agenda.upcoming.len(),
+            0,
+            "repeating DEADLINE with -3d cookie must not appear in upcoming at day 5"
+        );
+    }
+
+    #[test]
+    fn test_repeating_deadline_with_minus_3d_in_upcoming_at_day_2() {
+        let tasks = vec![create_test_task_with_repeater_deadline(
+            "2025-12-10 Wed -3d",
+            None,
+            "+1y",
+            TaskType::Todo,
+        )];
+
+        let day_date = NaiveDate::from_ymd_opt(2025, 12, 8).unwrap();
+        let current_date = NaiveDate::from_ymd_opt(2025, 12, 8).unwrap();
+        let agenda = build_day_agenda(&tasks, day_date, current_date);
+
+        assert_eq!(agenda.upcoming.len(), 1);
+        assert_eq!(agenda.upcoming[0].days_offset, Some(2));
     }
 
     #[test]

@@ -297,12 +297,12 @@ jobs:
       - name: Build release binary
         run: cargo build --release --locked
 
-      # Single packaging step driven by the matrix `archive` field. Uses
-      # bash on all three runners (git-bash on Windows ships with the
-      # GitHub-hosted image) so the script stays one piece. `tar` is
-      # available everywhere; `7z` is preinstalled on windows-latest and
-      # is the most stable cross-shell way to produce a .zip without
-      # PowerShell's CRLF / encoding gotchas.
+      # Packaging is delegated to scripts/package-archive.sh so the same
+      # logic can be exercised by Rust integration tests
+      # (tests/release_packaging.rs) instead of living only inside YAML.
+      # `tar` is available on every runner; `7z` is preinstalled on
+      # windows-latest and is the most stable cross-shell way to produce
+      # a .zip without PowerShell's CRLF / encoding gotchas.
       - name: Package archive and SHA-256
         id: pack
         shell: bash
@@ -311,42 +311,20 @@ jobs:
           TARGET: ${{ matrix.target }}
           ARCHIVE_EXT: ${{ matrix.archive }}
           BIN_NAME: ${{ matrix.binary }}
-        run: |
-          set -euo pipefail
-          stem="markdown-org-extract-${VER}-${TARGET}"
-          asset="${stem}.${ARCHIVE_EXT}"
+        run: bash scripts/package-archive.sh >> "$GITHUB_OUTPUT"
 
-          # Stage the payload in a clean directory so the archive root is
-          # a single ${stem}/ folder containing binary + docs. Matches
-          # the cargo-dist / GoReleaser layout users expect.
-          stage="${RUNNER_TEMP}/${stem}"
-          mkdir -p "$stage"
-          cp "target/release/${BIN_NAME}" "$stage/"
-          cp README.md LICENSE "$stage/"
-
-          case "$ARCHIVE_EXT" in
-            tar.gz)
-              # Reproducible: sorted, fixed owner/mtime so a re-run of the
-              # workflow on the same commit produces a byte-identical
-              # archive.
-              tar --sort=name --owner=0 --group=0 --numeric-owner --mtime='@0' \
-                -czf "$asset" -C "${RUNNER_TEMP}" "${stem}"
-              sha256sum "$asset" > "${asset}.sha256"
-              ;;
-            zip)
-              # Windows runner: 7z's `-mtc=off` strips per-file timestamps,
-              # giving a reproducible archive without depending on PS.
-              7z a -tzip -mtc=off "$asset" "${stage}/*" >/dev/null
-              # GitHub runners include sha256sum via git-bash on Windows.
-              sha256sum "$asset" > "${asset}.sha256"
-              ;;
-            *)
-              echo "::error::Unknown archive extension: $ARCHIVE_EXT"
-              exit 1
-              ;;
-          esac
-
-          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+      # Defends the downstream-packager contract documented in the README:
+      # filename matches the template, sibling .sha256 verifies cleanly,
+      # archive expands to a single top-level directory matching the
+      # stem, that directory contains exactly the binary + README +
+      # LICENSE. Catches regressions like the original Windows-zip layout
+      # bug (flat-rooted archive) before the asset reaches the release.
+      - name: Verify archive against downstream contract
+        shell: bash
+        env:
+          ASSET: ${{ steps.pack.outputs.asset }}
+          BIN_NAME: ${{ matrix.binary }}
+        run: bash scripts/verify-archive.sh "$ASSET" "$BIN_NAME"
 
       - name: Upload to GitHub Release
         env:

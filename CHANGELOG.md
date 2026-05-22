@@ -115,6 +115,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workflow on the same commit produces byte-identical assets.
   Adding `aarch64-unknown-linux-gnu` or `x86_64-apple-darwin` is
   one matrix entry's worth of YAML.
+- Release-archive packaging is now driven by `scripts/package-archive.sh`
+  and verified by `scripts/verify-archive.sh`; the `package-binaries`
+  matrix in `release.yml` calls both. Verification enforces the
+  downstream-packager contract documented in the README (filename
+  template, sibling `.sha256` that passes `sha256sum -c`, single
+  top-level directory matching the archive stem, exact file set inside
+  binary + README + LICENSE). Both scripts are exercised by Rust
+  integration tests in `tests/release_packaging.rs` so contract
+  regressions surface in `cargo test` rather than waiting for a tag
+  push -- this is how the original Windows-zip flat-layout bug was
+  caught.
 - Warning-period cookie on DEADLINE timestamps is now honoured.
   `DEADLINE: <2025-12-10 Wed -3d>` shrinks the upcoming window to
   three days; `DEADLINE: <2025-12-20 Sat -30d>` expands it to thirty.
@@ -180,6 +191,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Windows-zip release asset previously stored its files flat at the
+  archive root because the packaging step used `7z a "$asset"
+  "${stage}/*"` — 7z stripped the absolute-path prefix and the
+  documented single-top-level-directory layout was lost. Replaced
+  with `(cd "$RUNNER_TEMP" && 7z a "$asset" "$stem")` so the zip now
+  contains `markdown-org-extract-<version>-<target>/` as the single
+  root entry, matching the Linux/macOS `tar.gz` archives and the
+  README "For downstream packagers" contract. Caught by the new
+  `verify_rejects_flat_zip` integration test before the next
+  release.
 - Multi-segment `--glob` patterns (e.g. `notes/*.md`) now match when
   combined with a relative `--dir`. `WalkBuilder` is fed the canonical
   absolute root, so emitted paths stay descendants of it and the

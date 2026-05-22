@@ -10,6 +10,7 @@ Thumbs.db
 # IDEs
 .idea/
 .vscode/
+.claude-dir-settings.yaml
 
 # Local logs and tmp
 *.log

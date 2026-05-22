@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- SIGINT and SIGTERM (the latter Unix-only) are now caught mid-scan.
+  The walker polls a shared atomic flag between files; on signal the
+  walk stops, the partial `processing summary` (with
+  `interrupted = true`) is logged on stderr, `--output` is not
+  written, and the process exits with `130` (`128 + SIGINT`). Sending
+  the signal after the walker has completed is a no-op because the
+  poll-point has already been passed. New exit-code `130` row in the
+  README "Exit codes" table; new `interrupted: bool` field on
+  `ProcessingStats`.
 - Range-timestamp dash separator follows Emacs' `org-tr-regexp` and
   now accepts one, two, or three dashes (`-`, `--`, `---`). The
   canonical form on output is two dashes, matching Emacs'

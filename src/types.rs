@@ -248,6 +248,10 @@ pub struct ProcessingStats {
     pub max_tasks_limit: usize,
     /// Paths of files that could not be read or searched. Capped to avoid unbounded growth.
     pub failed_paths: Vec<String>,
+    /// Scan was aborted by SIGINT/SIGTERM before all entries were visited.
+    /// Surfaced in the summary so the user knows the output reflects only the
+    /// portion processed up to the signal.
+    pub interrupted: bool,
 }
 
 impl ProcessingStats {
@@ -257,6 +261,7 @@ impl ProcessingStats {
             || self.files_failed_read > 0
             || self.walk_errors > 0
             || self.max_tasks_reached
+            || self.interrupted
     }
 
     pub fn record_failed_path(&mut self, path: &str) {
@@ -277,6 +282,7 @@ impl ProcessingStats {
             walk_errors = self.walk_errors,
             max_tasks_reached = self.max_tasks_reached,
             max_tasks_limit = self.max_tasks_limit,
+            interrupted = self.interrupted,
             "processing summary"
         );
         if !self.failed_paths.is_empty() {
@@ -333,6 +339,21 @@ mod tests {
         assert_eq!(TaskType::from_keyword("TODO"), Some(TaskType::Todo));
         assert_eq!(TaskType::from_keyword("DONE"), Some(TaskType::Done));
         assert_eq!(TaskType::from_keyword("MAYBE"), None);
+    }
+
+    #[test]
+    fn interrupted_flag_makes_summary_visible() {
+        // A run interrupted by Ctrl-C (SIGINT/SIGTERM) must surface a summary
+        // even when no per-file failures accumulated — otherwise a user who
+        // aborts a long scan would see no acknowledgement that processing was
+        // partial. The `interrupted` flag is therefore part of `has_warnings`.
+        let mut stats = ProcessingStats::default();
+        assert!(!stats.has_warnings(), "default stats must be quiet");
+        stats.interrupted = true;
+        assert!(
+            stats.has_warnings(),
+            "interrupted runs must always show a summary"
+        );
     }
 
     #[test]

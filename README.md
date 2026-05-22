@@ -411,17 +411,25 @@ markdown-org-extract --dir ./notes -v
 The CLI maps error categories to distinct exit codes (sysexits-style) so
 shell pipelines can branch on the cause:
 
-| Code  | Category                                                                 | Examples                                                                                              |
-|-------|--------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
-| `0`   | success                                                                  | normal run, `--holidays`, `--completions`                                                             |
-| `2`   | usage / input-validation                                                 | invalid `--dir`, `--glob`, `--date`, `--tz`, `--output` parent, `--locale ru,xx`, `from > to`         |
-| `70`  | internal software error (`EX_SOFTWARE`)                                  | a regex we built ourselves did not compile, or our own serializer failed                              |
-| `74`  | IO failure (`EX_IOERR`)                                                  | unreadable input file, walker error, write failure on `--output`                                      |
+| Code  | Category                                                                 | Examples                                                                                                  |
+|-------|--------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|
+| `0`   | success                                                                  | normal run, `--holidays`, `--completions`                                                                 |
+| `2`   | usage / input-validation                                                 | invalid `--dir`, `--glob`, `--date`, `--tz`, `--output` parent, `--locale ru,xx`, `from > to`             |
+| `70`  | internal software error (`EX_SOFTWARE`)                                  | a regex we built ourselves did not compile, or our own serializer failed                                  |
+| `74`  | IO failure (`EX_IOERR`)                                                  | unreadable input file, walker error, write failure on `--output`                                          |
+| `130` | scan aborted by signal (`128 + SIGINT`)                                  | Ctrl-C during a long scan; SIGTERM on Unix. A partial `processing summary` is logged on stderr at warn.   |
 
 `AppError::Io` embeds the failing path or stream sentinel (`<stdout>`)
 in its `Display`, so an IO error reads
 `error: io: /tmp/out.json: Permission denied (os error 13)` instead of
 just the bare OS message.
+
+A SIGINT or SIGTERM during the directory walk flips an internal flag
+that the scan loop polls between files. On the next iteration the walk
+stops, the partial `processing summary` is emitted on stderr (with
+`interrupted = true`), `--output` is not written, and the process exits
+with code `130`. Sending the signal a second time after the scan has
+already finished has no effect; the process is past the polling point.
 
 ## Example files
 

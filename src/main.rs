@@ -26,6 +26,8 @@ use ignore::WalkBuilder;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::agenda::filter_agenda;
 use crate::cli::{get_weekday_mappings, Cli};
@@ -35,8 +37,21 @@ use crate::parser::extract_tasks;
 use crate::render::{render_html, render_markdown};
 use crate::types::{ProcessingStats, MAX_FILE_SIZE};
 
+/// Exit code for a scan aborted by SIGINT/SIGTERM. Follows the shell
+/// convention `128 + signum` so `$?` after Ctrl-C is the familiar `130`.
+const EXIT_INTERRUPTED: i32 = 130;
+
 fn main() {
-    if let Err(e) = run() {
+    // Install signal handlers before anything heavy happens so a Ctrl-C
+    // during startup still triggers a clean exit. The flag is shared with
+    // `scan_files`, which polls it between walker iterations.
+    let interrupt = Arc::new(AtomicBool::new(false));
+    if let Err(e) = install_signal_handlers(&interrupt) {
+        eprintln!("error: failed to install signal handlers: {e}");
+        std::process::exit(74);
+    }
+
+    if let Err(e) = run(&interrupt) {
         // A broken pipe is the normal way a downstream consumer (e.g.
         // `… | head -n 1`) signals it has read enough. Surfacing it as
         // `error: io: <stdout>: Broken pipe (os error 32)` would train users
@@ -54,6 +69,18 @@ fn main() {
     }
 }
 
+/// Register a handler that flips `interrupt` to `true` on SIGINT (and SIGTERM
+/// on Unix). The flag is polled by `scan_files` so a long scan can stop
+/// between files and still print the per-run summary. SIGTERM is Unix-only:
+/// Windows does not deliver it through the C runtime, and signal-hook would
+/// reject the registration.
+fn install_signal_handlers(interrupt: &Arc<AtomicBool>) -> io::Result<()> {
+    signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(interrupt))?;
+    #[cfg(unix)]
+    signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(interrupt))?;
+    Ok(())
+}
+
 /// True when `e` is an `AppError::Io` whose underlying `io::Error` is a
 /// `BrokenPipe`. Centralised so the catch can stay precise — every other
 /// IO error is still reported normally.
@@ -64,7 +91,7 @@ fn is_broken_pipe(e: &AppError) -> bool {
     false
 }
 
-fn run() -> Result<(), AppError> {
+fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
     let cli = Cli::parse();
     cli.init_tracing();
 
@@ -85,13 +112,25 @@ fn run() -> Result<(), AppError> {
     let dir_canonical = validate_dir(&cli.dir)?;
     let mappings = get_weekday_mappings(&cli.locale);
 
-    let (tasks, stats) = scan_files(&cli, &dir_canonical, &mappings)?;
+    let (tasks, stats) = scan_files(&cli, &dir_canonical, &mappings, interrupt)?;
 
     tracing::info!(
         files = stats.files_processed,
         tasks = tasks.len(),
+        interrupted = stats.interrupted,
         "scan finished"
     );
+
+    // A SIGINT/SIGTERM during the walk short-circuits the rest of the
+    // pipeline: emit the partial summary so the user sees what was
+    // processed, then exit with the conventional `128 + SIGINT` code so
+    // shell pipelines can distinguish "aborted" from "ok" and from real
+    // errors. Skipping `render_output` is intentional — a half-formed
+    // agenda is worse than no agenda.
+    if stats.interrupted {
+        stats.print_summary();
+        std::process::exit(EXIT_INTERRUPTED);
+    }
 
     if stats.has_warnings() {
         stats.print_summary();
@@ -175,6 +214,7 @@ fn scan_files(
     cli: &Cli,
     dir_canonical: &Path,
     mappings: &[(&'static str, &'static str)],
+    interrupt: &AtomicBool,
 ) -> Result<(Vec<types::Task>, ProcessingStats), AppError> {
     let glob_matcher = compile_glob(&cli.glob)?;
 
@@ -207,6 +247,15 @@ fn scan_files(
     let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);
 
     for result in walker {
+        // A SIGINT/SIGTERM trips the flag; bail out *before* opening the next
+        // file so the partial summary is consistent with what was actually
+        // processed. `Relaxed` is sufficient — the only writer is the signal
+        // handler, and we re-check on every iteration, so there is no need
+        // for ordering with respect to other reads/writes here.
+        if interrupt.load(Ordering::Relaxed) {
+            stats.interrupted = true;
+            break;
+        }
         // A walker error on one entry (permission denied on a subdir, broken
         // metadata, etc.) must not abort the whole scan: the rest of the
         // tree may still contain usable files. Record it in the summary so

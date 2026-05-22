@@ -349,6 +349,15 @@ fn is_stdout_sigil(path: &Path) -> bool {
 /// Validate that the `--output` target is safe to write:
 /// - the parent directory exists and is a directory;
 /// - the target itself is not an existing symlink (refuse symlink overwrite).
+///
+/// There is a TOCTOU window between this check and the subsequent
+/// `fs::write` in `run`: an attacker who already controls the parent
+/// directory could replace the target with a symlink between the two
+/// calls. For a non-setuid CLI run by an ordinary user this is
+/// acceptable — the attacker already has full access to the same
+/// directory. Closing the window completely needs `O_NOFOLLOW` on the
+/// open path (Unix-only) and is left for a future change if the threat
+/// model shifts.
 fn validate_output_path(path: &Path) -> Result<(), AppError> {
     let parent = path
         .parent()

@@ -270,9 +270,9 @@ markdown-org-extract [OPTIONS]
 - `--tz <TIMEZONE>` — IANA timezone for determining the current date (default: `Europe/Moscow`)
 - `--current-date <DATE>` — override of "today" (`YYYY-MM-DD`). Used as the reference for overdue / upcoming markers and as the default for a missing `--from`/`--to` edge. Not allowed in `tasks` mode. Default: today in `--tz`
 - `--holidays <YEAR>` — print the holiday list for the given year (1900–2100) as JSON
-- `--absolute-paths` — emit absolute file paths instead of paths relative to `--dir`
-- `--max-tasks <N>` — task limit (1..=10_000_000, default 10_000). Acts as a global cap on the number of extracted tasks; the same value is reused as a per-file cap so a single hostile file cannot exhaust the global budget on its own. The scan stops as soon as either cap is hit
-- `-v`, `--verbose` — verbose stderr log (`-v` = info, `-vv` = debug, `-vvv` = trace). Mutually exclusive with `--quiet`
+- `--absolute-paths` — emit absolute file paths instead of paths relative to `--dir`. With `-v`/`-vv`/`-vvv`, diagnostic stderr also logs file paths and timestamp content; under `--absolute-paths` these stderr entries carry absolute paths too. Combine with `--quiet` when sharing logs externally.
+- `--max-tasks <N>` — task limit (1..=10_000_000, default 10_000). Acts as a global cap on the number of extracted tasks; the same value is reused as a per-file cap so a single hostile file cannot exhaust the global budget on its own. The scan stops as soon as either cap is hit. A separate hard limit of **10 MiB per file** is built in; oversized files are skipped and counted under `files_skipped_size` in the processing summary
+- `-v`, `--verbose` — verbose stderr log (`-v` = info, `-vv` = debug, `-vvv` = trace). Mutually exclusive with `--quiet`. The `RUST_LOG` environment variable takes precedence: when set, it overrides `--verbose`/`--quiet` entirely (e.g. `RUST_LOG=error` mutes `-vv`)
 - `-q`, `--quiet` — suppress all diagnostic messages except critical errors
 - `--color <MODE>` — control ANSI colour in logs: `auto` (default), `always`, `never`
 - `--no-color` — disable ANSI colour in logs; equivalent to `--color never`. The `NO_COLOR` environment variable has the same effect (see [no-color.org](https://no-color.org))
@@ -979,6 +979,13 @@ markdown-org-extract/
 ├── LICENSE                 # MIT
 └── README.md
 ```
+
+The `Cargo.toml` `exclude` list omits `docs/`, `.github/`, `scripts/`,
+`TODO.md`, and `CHANGELOG.md` from the published crate tarball on
+crates.io — these files matter for repository contributors but not for
+downstream `cargo install` users. The GitHub Release archives keep
+the binary, README, and LICENSE only (see "For downstream packagers"
+above).
 
 See also:
 - [docs/CLOCK_IMPLEMENTATION.md](docs/CLOCK_IMPLEMENTATION.md) — CLOCK marker implementation details

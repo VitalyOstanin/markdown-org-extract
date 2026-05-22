@@ -175,6 +175,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the supported-timestamp section now that the implementation
   exists, and replaced the absolute local path to the upstream
   Elisp checkout with the canonical Savannah URL.
+- README and `--help` now disclose four implicit limits / overrides
+  that previously lived only in code:
+  - `--max-tasks` docstring and the README Options table note the
+    built-in 10 MiB per-file size limit and the `files_skipped_size`
+    counter that surfaces oversized files.
+  - `--verbose` docstring and the README note that the `RUST_LOG`
+    env var overrides `-v` / `-q` entirely (e.g. `RUST_LOG=error`
+    mutes `-vv`).
+  - `--absolute-paths` docstring and the README warn that with
+    `-v`/`-vv`/`-vvv` the diagnostic stderr also logs file paths and
+    timestamp content, so under `--absolute-paths` those entries
+    carry absolute paths too.
+  - The README "Project layout" section now describes the
+    `Cargo.toml` `exclude` list (`docs/`, `.github/`, `scripts/`,
+    `TODO.md`, `CHANGELOG.md`) so downstream consumers know what
+    the published crate tarball does and does not ship.
+- `validate_output_path` rustdoc now spells out the documented
+  TOCTOU between the symlink check and `fs::write`: acceptable
+  for a non-setuid CLI under an ordinary user, would need
+  `O_NOFOLLOW` to close completely.
+- `TODO.md` gained a new "Open info-level review notes" section
+  recording info-severity items from the 2026-05-21 audit that
+  were deliberately deferred (rationale included for each: tasks
+  filter, `print_summary` level, `thiserror`, `O_NOFOLLOW`,
+  `read_capped` file-type re-check, optional `cargo build
+  --release` in CI, `TS_WARNINGS_EMITTED` reset, `file` span
+  pre-filter coverage, hardcoded crate name in `release.yml`).
 - README gained a "For downstream packagers" section that pins
   the contract the GitHub Release artefacts keep within a major
   version: asset naming (`markdown-org-extract-<version>-<target>.<ext>`),

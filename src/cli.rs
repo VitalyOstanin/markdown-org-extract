@@ -86,6 +86,9 @@ pub struct Cli {
     pub output: Option<PathBuf>,
 
     /// Emit absolute file paths in output. Default is paths relative to `--dir`.
+    /// Note: with `-v`/`-vv`/`-vvv`, diagnostic stderr also logs file paths and
+    /// timestamp content; under `--absolute-paths` these stderr entries carry
+    /// absolute paths too. Pipe with `--quiet` when sharing logs externally.
     #[arg(long, help_heading = "Output")]
     pub absolute_paths: bool,
 
@@ -142,11 +145,15 @@ pub struct Cli {
     /// Maximum number of tasks to extract before stopping (1..=10_000_000).
     /// Acts as a global cap on extracted tasks; the same value is reused as a
     /// per-file cap so a single hostile file cannot exhaust the global budget
-    /// on its own. The scan stops as soon as either cap is hit.
+    /// on its own. The scan stops as soon as either cap is hit. A separate
+    /// hard limit of 10 MiB per file is built in; oversized files are counted
+    /// under `files_skipped_size` in the processing summary.
     #[arg(long, default_value_t = crate::types::DEFAULT_MAX_TASKS, value_parser = validate_max_tasks, help_heading = "Limits")]
     pub max_tasks: usize,
 
     /// Increase logging verbosity. Repeat for more (-v = info, -vv = debug, -vvv = trace).
+    /// Overridden by the `RUST_LOG` environment variable when set, regardless
+    /// of `--verbose` / `--quiet` (e.g. `RUST_LOG=error` mutes `-vv`).
     #[arg(long, short = 'v', action = clap::ArgAction::Count, conflicts_with = "quiet", help_heading = "Diagnostics")]
     pub verbose: u8,
 

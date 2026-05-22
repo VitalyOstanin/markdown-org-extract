@@ -10,6 +10,7 @@ package.
 - [Property-based and fuzz tests](#property-based-and-fuzz-tests)
 - [Localising CLI messages](#localising-cli-messages)
 - [Benchmarks (criterion)](#benchmarks-criterion)
+- [Open info-level review notes](#open-info-level-review-notes)
 
 ## Switch to edition 2024
 
@@ -75,3 +76,61 @@ Areas:
 - `closest_date` across different `unit` values.
 
 Directory `benches/`, with `criterion` as a dev-dependency.
+
+## Open info-level review notes
+
+Items from `docs/reviews/2026-05-21-1811-review.md` that were
+deliberately deferred at the close of the audit round. Each is
+non-blocking, info-severity, and recorded here so the rationale
+does not get lost.
+
+- **`tasks` mode filters only `TaskType::Todo` (logic i2)** — the
+  README explicitly says "tasks whose state is TODO", so the
+  filtering is documented behaviour, not a defect. Revisit if a
+  request appears for a "show DONE in the flat list" mode (could
+  be added as `--tasks-include-done`).
+- **`print_summary` direction (logic i1)** — the per-run summary
+  uses `tracing::warn!`. This is gated behind
+  `stats.has_warnings()` so the warn level is honest. If the CLI
+  ever grows an always-on summary (like `rg`/`fd` print on `-v`),
+  flip the summary to `info!` and keep `warn!` for the per-file
+  failure lines.
+- **Switch to `thiserror` (error-handling I01)** — `AppError`'s
+  hand-rolled `Display` / `From` impls are fine for the current 5
+  variants. Reconsider when a sixth variant or a structured
+  context field (e.g. failing path on more variants) appears: the
+  derive saves real code at that point.
+- **`O_NOFOLLOW` on `--output` open (error-handling I02)** — the
+  TOCTOU window between `validate_output_path` and `fs::write` is
+  documented in the function comment. Closing it needs an
+  `OpenOptions` path with `O_NOFOLLOW` (Unix-only) and a fallback
+  on Windows. Defer until the CLI runs in a context where the
+  attacker does not already own the target directory.
+- **`read_capped` file-type re-check (error-handling I03)** — the
+  walker filters by `is_file()` and `read_capped_into` caps the
+  read at `MAX_FILE_SIZE + 1`, so a FIFO/named pipe replacement
+  between walk and open would still terminate; but `read_to_end`
+  may stall up to that cap. A `metadata().file_type().is_file()`
+  check after `File::open` would close the stall window cheaply.
+- **`cargo build --release` in CI (infra-ci-tests info-2)** — only
+  the release-tag workflow exercises the LTO + codegen-units=1
+  profile. Adding a non-blocking release build to `ci.yml` (Linux
+  only) would catch optimizer-only regressions earlier. Worth
+  doing when the next "optimised-only" bug surfaces, not before.
+- **`TS_WARNINGS_EMITTED` global counter (observability INFO-4)** —
+  the static `AtomicUsize` is shared process-wide. Fine for a
+  one-shot CLI; matters if the parser is ever lifted into a
+  `[lib]` target. Replace with a counter threaded through
+  `extract_tasks` at that point.
+- **`file` span pre-filtering coverage (observability INFO-6)** —
+  `tracing::debug_span!("file", ...)` wraps `extract_tasks` only.
+  If per-file debug events ever land in the pre-filter phase
+  (e.g. "skipped by glob"), pull span creation out to the walker
+  iteration instead of inside the processing call.
+- **Crate name pinned in `release.yml` awk (config Info-3)** —
+  `release.yml`'s `Cargo.lock` parser hard-codes
+  `name = "markdown-org-extract"`. A rename would make the awk
+  silently produce an empty version and fail later with a
+  confusing message. Not a real risk for an already-published
+  crates.io name, but worth a follow-up grep if a rename ever
+  happens.

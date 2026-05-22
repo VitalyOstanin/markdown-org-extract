@@ -30,6 +30,14 @@ pointers to the full text and rationale.
   month. See [ADR-0009](docs/adr/0009-unified-date-window-semantics.md)
   for the role of `--date`, `--from`, `--to`, `--current-date` and
   for the priorities between them.
+- Rollback policy for published releases is fixed in
+  [ADR-0010](docs/adr/0010-rollback-policy.md). Yank only when the
+  published artefact itself is broken (regression, security,
+  accidental breaking change, wrong artefact); fix forward with a
+  patch release when only the release pipeline or peripheral CI
+  was red — the 0.3.0 → 0.3.1 precedent. The ADR carries the
+  decision table, the CHANGELOG `### Yanked` convention, and the
+  GitHub-Release pre-release marker procedure.
 
 ## Background
 

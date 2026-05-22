@@ -40,6 +40,7 @@ was decided, and the trade-offs that came with it.
 | 0007 | [No test counts in README](0007-no-test-counts-in-readme.md)                           | Accepted |
 | 0008 | [Russian-locale defaults: tz, holidays, locale list](0008-rf-defaults.md)              | Accepted |
 | 0009 | [Unified date-window semantics for agenda](0009-unified-date-window-semantics.md)      | Accepted |
+| 0010 | [Rollback policy for published releases](0010-rollback-policy.md)                      | Accepted |
 
 ## Adding a new ADR
 

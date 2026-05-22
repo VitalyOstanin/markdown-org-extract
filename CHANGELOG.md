@@ -99,6 +99,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before every write so existing renderers can stay newline-agnostic.
   `--holidays` output goes through the same helper.
 
+### Documentation
+
+- [ADR-0010](docs/adr/0010-rollback-policy.md) documents the
+  rollback policy for published releases: when to `cargo yank`
+  (regression, security, accidental breaking change, wrong
+  artefact), when not to (release-pipeline-only failures, the
+  0.3.0 → 0.3.1 precedent), how to mark the CHANGELOG (Keep a
+  Changelog `### Yanked`), and the GitHub-Release pre-release
+  marker. CLAUDE.md and the ADR index were updated with the
+  decision pointer.
+
 ### Fixed
 
 - Multi-segment `--glob` patterns (e.g. `notes/*.md`) now match when

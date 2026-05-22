@@ -9,6 +9,7 @@ CLI utility for extracting tasks from markdown files with support for Emacs Org-
 ## Table of contents
 
 - [Installation and build](#installation-and-build)
+- [For downstream packagers](#for-downstream-packagers)
 - [Usage](#usage)
 - [Example files](#example-files)
 - [Agenda modes](#agenda-modes)
@@ -129,6 +130,124 @@ cargo clippy
 
 `timestamp::parser` module:
 - Parsing timestamps that carry `+1wd` and `+2wd`
+
+## For downstream packagers
+
+This section documents the contract that the GitHub Release
+artefacts keep for downstream packagers (distro maintainers,
+Nix derivations, private mirrors, automated bootstrappers).
+Within a major version the layout below will not change without
+a CHANGELOG entry and a CHANGELOG-referenced ADR.
+
+### Asset naming
+
+Each release publishes one archive per platform target:
+
+| Target                       | Archive extension | Binary name                |
+|------------------------------|-------------------|----------------------------|
+| `x86_64-unknown-linux-gnu`   | `.tar.gz`         | `markdown-org-extract`     |
+| `aarch64-apple-darwin`       | `.tar.gz`         | `markdown-org-extract`     |
+| `x86_64-pc-windows-msvc`     | `.zip`            | `markdown-org-extract.exe` |
+
+The archive filename template is:
+
+```
+markdown-org-extract-<version>-<target>.<ext>
+```
+
+Example asset set for tag `v0.3.1`:
+
+```
+markdown-org-extract-0.3.1-x86_64-unknown-linux-gnu.tar.gz
+markdown-org-extract-0.3.1-aarch64-apple-darwin.tar.gz
+markdown-org-extract-0.3.1-x86_64-pc-windows-msvc.zip
+```
+
+`<version>` is the tag stripped of its leading `v`, identical to
+the `[package].version` field in `Cargo.toml` for that commit
+(the `publish` job in `.github/workflows/release.yml` fails the
+release if the two diverge).
+
+### Archive layout
+
+Each archive extracts to a single top-level directory whose name
+matches the archive stem:
+
+```
+markdown-org-extract-<version>-<target>/
+├── markdown-org-extract       # markdown-org-extract.exe on Windows
+├── README.md
+└── LICENSE
+```
+
+No nested target subdirectories, no separate debug symbols, no
+manpages. Adding a file to the staged directory is a contract
+change (CHANGELOG entry + ADR).
+
+### Checksums
+
+Every archive ships with a sibling `.sha256` file in the standard
+`sha256sum` format (`<hex>  <filename>`):
+
+```
+markdown-org-extract-<version>-<target>.<ext>
+markdown-org-extract-<version>-<target>.<ext>.sha256
+```
+
+Verification with the GNU tool:
+
+```bash
+sha256sum -c markdown-org-extract-0.3.1-x86_64-unknown-linux-gnu.tar.gz.sha256
+```
+
+A `SHA256SUMS` aggregate file is not currently published. If one
+is added later, the per-archive `.sha256` companions will remain
+in place for at least one major-version cycle.
+
+### Reproducibility
+
+Linux and macOS archives are produced with `tar --sort=name
+--owner=0 --group=0 --numeric-owner --mtime='@0'`; the Windows
+zip uses `7z -mtc=off` to strip per-file timestamps. Re-running
+the release workflow on the same commit produces byte-identical
+archives and matching SHA-256 values.
+
+### Compatibility floor
+
+- Crate MSRV: 1.85 (declared in `Cargo.toml` and verified by the
+  `msrv` CI job). Building from source requires at least this
+  toolchain version.
+- Build hosts: GitHub-hosted runners current at release time
+  (`ubuntu-24.04`, `macos-latest`, `windows-latest`). The Linux
+  binary links against the glibc bundled with Ubuntu 24.04;
+  older glibc baselines require building from source.
+- No runtime native dependencies: the Russian holiday calendar
+  is embedded at compile time via `build.rs`.
+
+### Download patterns
+
+The GitHub Release download URL is stable across releases:
+
+```
+https://github.com/VitalyOstanin/markdown-org-extract/releases/download/v<version>/markdown-org-extract-<version>-<target>.<ext>
+https://github.com/VitalyOstanin/markdown-org-extract/releases/download/v<version>/markdown-org-extract-<version>-<target>.<ext>.sha256
+```
+
+`releases/latest` resolves to the most recent non-pre-release;
+suitable for unattended downloads when a specific tag is not
+required.
+
+### Out of scope
+
+- The binaries are unsigned. Trust is anchored in TLS to GitHub
+  plus the published SHA-256 values.
+- Distribution-specific repacks (`.deb`, `.rpm`, AUR, MacPorts,
+  Homebrew formula) are not maintained by this project; the
+  upstream artefact is the GitHub Release archive.
+- Additional targets (`aarch64-unknown-linux-gnu`,
+  `x86_64-apple-darwin`, musl variants) may be added in a future
+  minor release. Removal of a previously published target
+  requires a major-version bump.
 
 ## Usage
 

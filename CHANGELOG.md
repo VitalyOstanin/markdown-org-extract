@@ -164,6 +164,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the supported-timestamp section now that the implementation
   exists, and replaced the absolute local path to the upstream
   Elisp checkout with the canonical Savannah URL.
+- README gained a "For downstream packagers" section that pins
+  the contract the GitHub Release artefacts keep within a major
+  version: asset naming (`markdown-org-extract-<version>-<target>.<ext>`),
+  archive layout (single top-level directory; binary + README +
+  LICENSE; no debug symbols, no manpages), per-archive `.sha256`
+  format (`sha256sum`-compatible, verifiable with
+  `sha256sum -c`), reproducibility flags
+  (`tar --sort=name --owner=0 --group=0 --numeric-owner --mtime='@0'`;
+  `7z -mtc=off`), compatibility floor (MSRV 1.85, Ubuntu 24.04
+  glibc baseline, no runtime native deps), the stable
+  GitHub-download URL pattern, and the explicit out-of-scope
+  list (no signing, no distro-specific repacks). Any future
+  layout change requires both a CHANGELOG entry and an ADR.
 
 ### Fixed
 

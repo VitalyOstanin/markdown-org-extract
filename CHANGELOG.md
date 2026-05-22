@@ -109,6 +109,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Changelog `### Yanked`), and the GitHub-Release pre-release
   marker. CLAUDE.md and the ADR index were updated with the
   decision pointer.
+- [ADR-0011](docs/adr/0011-release-commit-and-tag-format.md) fixes
+  the release commit subject (`release: <X.Y.Z>`) and the tag
+  format (annotated, body mirrors the matching CHANGELOG section)
+  so `git show v<X.Y.Z>` is a self-contained change description.
+  Applies from the next release forward; historical commits and
+  tags are not rewritten.
 
 ### Fixed
 

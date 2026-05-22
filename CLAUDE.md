@@ -38,6 +38,14 @@ pointers to the full text and rationale.
   was red — the 0.3.0 → 0.3.1 precedent. The ADR carries the
   decision table, the CHANGELOG `### Yanked` convention, and the
   GitHub-Release pre-release marker procedure.
+- Release commit and tag format are fixed in
+  [ADR-0011](docs/adr/0011-release-commit-and-tag-format.md). The
+  release commit subject is `release: <X.Y.Z>`. Tags are always
+  annotated (`git tag -a v<X.Y.Z>`); the tag body mirrors the
+  matching `## [<X.Y.Z>] — YYYY-MM-DD` CHANGELOG section so
+  `git show v<X.Y.Z>` is a self-contained change description.
+  Applies from the next release forward; historical commits and
+  tags are not rewritten.
 
 ## Background
 

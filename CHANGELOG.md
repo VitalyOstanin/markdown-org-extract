@@ -170,6 +170,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so `git show v<X.Y.Z>` is a self-contained change description.
   Applies from the next release forward; historical commits and
   tags are not rewritten.
+- Invariant test on `parse_repeater` prefix-stripping order pins
+  `++1d → CatchUp`, `+1d → Cumulative`, `.+1d → Restart`. A refactor
+  that re-orders the `strip_prefix` arms (matching `+` before `++`)
+  would silently classify `++1d` as `Cumulative`; the explicit
+  assertion now catches that. Closes logic L9 from the 2026-05-21
+  review.
+- `holidays::get_holidays_for_year` and
+  `holidays::workdays_between_exclusive` carry rustdoc explaining the
+  out-of-coverage behaviour: years outside the bundled calendar
+  return an empty `Vec` (not an error), and `workdays_between_exclusive`
+  computes plain weekday counts arithmetically while excluding
+  holidays/transfer-workdays the dataset does not know about. The CLI
+  date validators keep that case out of normal use. Closes logic L11
+  and L12 from the 2026-05-21 review.
+- `--verbose` now emits a one-off `tracing::warn!` when the count
+  exceeds `-vvv` (the documented TRACE level). Previously `-vvvv` and
+  beyond mapped silently to TRACE, leaving a user expecting "more than
+  trace" with no signal that the level is already maxed out. The
+  warning is suppressed by `RUST_LOG=error` like any other warn-level
+  diagnostic. Closes cli-ux M4 from the 2026-05-21 review.
+- Regression guard for the `Utc::now().with_timezone(&tz)` contract in
+  `filter_agenda`. A helper `compute_today_in_tz(now_utc, tz)` was
+  extracted so it can be tested with an injected "now"; eastward and
+  westward midnight-crossing assertions pin the result to the local
+  date rather than UTC. A future refactor that drops the timezone
+  conversion (returning UTC-relative dates) now fails the unit tests
+  instead of producing silently wrong agendas near midnight. Closes
+  logic L6 from the 2026-05-21 review.
+- README "Requirements" rewords the Rust 1.85 entry so it no longer
+  reads as if the crate itself is on edition 2024. The MSRV bump is
+  driven by the bundled `comrak` 0.50+ being on edition 2024;
+  `markdown-org-extract` remains on edition 2021, with the migration
+  tracked in `TODO.md`. Closes docs #1 from the 2026-05-21 review.
 - [ADR-0013](docs/adr/0013-documentation-language.md) fixes the
   per-surface language rule that has been emerging implicitly:
   user-facing docs (`README.md`, `CHANGELOG.md`, `CLAUDE.md`,

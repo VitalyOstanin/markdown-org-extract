@@ -68,6 +68,16 @@ fn parse_date_arg(label: &str, value: &str) -> Result<NaiveDate, AppError> {
         .map_err(|e| AppError::InvalidDate(format!("{label} '{value}': {e}")))
 }
 
+/// Convert a UTC instant into the calendar date as seen in `tz`. Factored out
+/// from `filter_agenda` so it can be unit-tested with an explicit "now":
+/// dropping `.with_timezone(&tz)` would silently produce UTC-relative dates,
+/// which only deviates from local dates near midnight — exactly the case a
+/// developer would not notice in casual testing. The regression guard for
+/// that mistake lives in this module's tests.
+fn compute_today_in_tz(now_utc: chrono::DateTime<chrono::Utc>, tz: Tz) -> NaiveDate {
+    now_utc.with_timezone(&tz).date_naive()
+}
+
 /// Resolve `--from`/`--to` into a `[start, end]` date range, filling a missing
 /// edge from `current_date` (today or `--current-date`).
 ///
@@ -144,7 +154,7 @@ pub fn filter_agenda(
 
     let today = match current_date_override {
         Some(date_str) => parse_date_arg("current-date", date_str)?,
-        None => chrono::Utc::now().with_timezone(&tz).date_naive(),
+        None => compute_today_in_tz(chrono::Utc::now(), tz),
     };
 
     tracing::debug!(
@@ -549,6 +559,55 @@ fn get_month_for_date(date: NaiveDate) -> (NaiveDate, NaiveDate) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn compute_today_in_tz_crosses_midnight_eastward() {
+        // 2024-12-05 22:30 UTC is already 2024-12-06 01:30 in Europe/Moscow
+        // (UTC+3, no DST since 2014). A regression that drops the
+        // `.with_timezone(&tz)` call and reads `now_utc.date_naive()` would
+        // return 2024-12-05 — i.e. agenda for the day that has just ended
+        // locally. This test pins the contract so that regression is caught.
+        let now_utc = chrono::Utc
+            .with_ymd_and_hms(2024, 12, 5, 22, 30, 0)
+            .unwrap();
+        let moscow: Tz = "Europe/Moscow".parse().unwrap();
+        let today = compute_today_in_tz(now_utc, moscow);
+        assert_eq!(
+            today,
+            NaiveDate::from_ymd_opt(2024, 12, 6).unwrap(),
+            "Europe/Moscow at 2024-12-05 22:30 UTC must read as 2024-12-06 local"
+        );
+    }
+
+    #[test]
+    fn compute_today_in_tz_crosses_midnight_westward() {
+        // Mirror direction: 2024-12-06 02:00 UTC is 2024-12-05 18:00 in
+        // America/Los_Angeles (UTC-8 in winter). Defends against the symmetric
+        // bug where `with_timezone` is replaced by raw UTC for "convenience".
+        let now_utc = chrono::Utc.with_ymd_and_hms(2024, 12, 6, 2, 0, 0).unwrap();
+        let la: Tz = "America/Los_Angeles".parse().unwrap();
+        let today = compute_today_in_tz(now_utc, la);
+        assert_eq!(
+            today,
+            NaiveDate::from_ymd_opt(2024, 12, 5).unwrap(),
+            "America/Los_Angeles at 2024-12-06 02:00 UTC must read as 2024-12-05 local"
+        );
+    }
+
+    #[test]
+    fn compute_today_in_tz_same_day_midday() {
+        // Sanity baseline: a midday UTC instant resolves to the same date in
+        // both UTC and a near-UTC timezone, so the assertions above are
+        // genuinely about timezone conversion rather than a date arithmetic
+        // quirk.
+        let now_utc = chrono::Utc.with_ymd_and_hms(2024, 12, 5, 12, 0, 0).unwrap();
+        let moscow: Tz = "Europe/Moscow".parse().unwrap();
+        assert_eq!(
+            compute_today_in_tz(now_utc, moscow),
+            NaiveDate::from_ymd_opt(2024, 12, 5).unwrap(),
+        );
+    }
 
     fn create_test_task_with_type(
         date_str: &str,

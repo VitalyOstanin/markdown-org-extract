@@ -25,7 +25,10 @@ CLI utility for extracting tasks from markdown files with support for Emacs Org-
 
 ### Requirements
 
-- Rust 1.85 or newer (the `comrak` 0.50+ upgrade requires the 2024 edition)
+- Rust 1.85 or newer. The bundled `comrak` 0.50+ ships on Rust edition
+  2024 and therefore requires a 1.85+ toolchain; this crate itself is
+  still on edition 2021 (see [`TODO.md`](TODO.md#switch-to-edition-2024)
+  for the planned migration).
 - Cargo
 
 ### Install from crates.io

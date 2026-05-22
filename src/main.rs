@@ -95,6 +95,19 @@ fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
     let cli = Cli::parse();
     cli.init_tracing();
 
+    // Warn once when the user piles on more -v's than the level mapping
+    // uses (`-vvvv`+). Without the signal, a user expecting "even more
+    // detail than trace" sees no acknowledgement that the count is capped.
+    // tracing::warn! is the right channel: it inherits the colour/format
+    // settings and is suppressed by RUST_LOG=error if the user has
+    // explicitly silenced warnings.
+    if cli.verbose_saturated() {
+        tracing::warn!(
+            verbose = cli.verbose,
+            "--verbose saturated at -vvv (TRACE); additional v's have no effect"
+        );
+    }
+
     if let Some(shell) = cli.completions {
         return handle_completions(shell);
     }

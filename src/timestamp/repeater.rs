@@ -412,6 +412,28 @@ mod tests {
     }
 
     #[test]
+    fn prefix_check_order_distinguishes_catchup_from_cumulative() {
+        // Regression guard for the prefix-stripping order in `parse_repeater`:
+        // `++` must be matched before `+`. If the order were swapped, the
+        // `+` arm would consume the first character of `++1d` and the
+        // parser would silently classify the remainder as
+        // `RepeaterType::Cumulative` with value 1 — same arithmetic, wrong
+        // semantics (org-mode's CatchUp resets occurrences on completion).
+        // The cheap explicit assertion below is what catches a refactor
+        // that re-orders the strip_prefix arms.
+        let cat = parse_repeater("++1d").expect("++1d must parse");
+        assert_eq!(
+            cat.repeater_type,
+            RepeaterType::CatchUp,
+            "++ must be matched before +; got Cumulative instead"
+        );
+        let cum = parse_repeater("+1d").expect("+1d must parse");
+        assert_eq!(cum.repeater_type, RepeaterType::Cumulative);
+        let res = parse_repeater(".+1d").expect(".+1d must parse");
+        assert_eq!(res.repeater_type, RepeaterType::Restart);
+    }
+
+    #[test]
     fn test_parse_workday_restart() {
         let r = parse_repeater(".+1wd").unwrap();
         assert_eq!(r.repeater_type, RepeaterType::Restart);

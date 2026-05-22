@@ -66,7 +66,15 @@ impl HolidayCalendar {
         current
     }
 
-    /// Return all holidays in the given year, sorted ascending
+    /// Return all holidays in the given year, sorted ascending.
+    ///
+    /// Returns an empty `Vec` for years outside the bundled calendar's
+    /// coverage. The internal API is intentionally permissive about the
+    /// `year` value; the CLI tightens this through
+    /// `validate_year` in `src/cli.rs` (currently `1900..=2100`). A caller
+    /// using this method directly from another library should treat an
+    /// empty result as "no data for that year", not as "no holidays in
+    /// that year" — the two are indistinguishable here by design.
     pub fn get_holidays_for_year(&self, year: i32) -> Vec<NaiveDate> {
         // `holidays` is already sorted, so a simple filter preserves order.
         self.holidays
@@ -82,8 +90,13 @@ impl HolidayCalendar {
     /// transfer-workday counts and `k` is the number of holidays/workdays
     /// inside the range (typically a handful for one-month spans).
     ///
-    /// Returns 0 if `end <= start`. Used by `nth_workday_after` to avoid
-    /// the O(N) day-by-day scan in `closest_date` for long agenda ranges.
+    /// Returns 0 if `end <= start` — the caller does not need to pre-check
+    /// the interval direction. Used by `nth_workday_after` to avoid the
+    /// O(N) day-by-day scan in `closest_date` for long agenda ranges.
+    /// Counts beyond the bundled calendar's year coverage are arithmetically
+    /// correct for plain weekdays but exclude any holidays/transfer-workdays
+    /// the dataset does not know about; the CLI's date validators
+    /// (`1900..=2100`) keep that case out of normal use.
     pub fn workdays_between_exclusive(&self, start: NaiveDate, end: NaiveDate) -> i64 {
         if end <= start {
             return 0;

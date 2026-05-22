@@ -1702,6 +1702,50 @@ fn deadline_warning_cookie_overrides_default_window() {
 }
 
 #[test]
+fn verbose_saturation_warns_on_vvvv_and_beyond() {
+    // `-vvvv` and longer maps to TRACE just like `-vvv` does. Silently
+    // accepting it leaves a user who expected "more detail than trace" with
+    // no signal that the level is already maxed out. A single warn on the
+    // first overflow point is the cheapest acknowledgement that "-vvvv"
+    // is the same as "-vvv".
+    let out = bin()
+        .args(["--dir", "examples", "--current-date", "2025-12-05", "-vvvv"])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "expected success on -vvvv; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("saturated") || stderr.contains("--verbose"),
+        "expected verbose saturation message in stderr; got:\n{stderr}"
+    );
+}
+
+#[test]
+fn verbose_at_trace_threshold_does_not_warn() {
+    // Negative control: `-vvv` is the documented trace level and must NOT
+    // produce the saturation warning. Without this guard a regression that
+    // moves the threshold off-by-one would slip through.
+    let out = bin()
+        .args(["--dir", "examples", "--current-date", "2025-12-05", "-vvv"])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "expected success on -vvv; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("saturated"),
+        "expected no saturation message at -vvv; got:\n{stderr}"
+    );
+}
+
+#[test]
 fn holidays_stdout_ends_with_newline() {
     let out = bin()
         .args(["--holidays", "2026", "--quiet"])

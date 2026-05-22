@@ -298,6 +298,15 @@ impl Cli {
         }
     }
 
+    /// Whether the user passed more `-v`s than the level mapping uses.
+    /// `-vvv` already lands on TRACE — anything beyond is silently equal,
+    /// which historically misled users into thinking "-vvvv" meant a
+    /// deeper level. Returns `true` once the count exceeds the documented
+    /// `-vvv` so callers can emit a one-off saturation warning.
+    pub fn verbose_saturated(&self) -> bool {
+        self.verbose > 3
+    }
+
     /// Whether ANSI color should be used in the log output.
     ///
     /// See `decide_use_color` for the full precedence table; this wrapper

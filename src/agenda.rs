@@ -1826,8 +1826,9 @@ mod tests {
     // `org-agenda-get-deadlines` or `org-agenda-get-scheduled`. The
     // project does not implement a progress view, but the daily agenda
     // must not mistake a CLOSED timestamp for a deadline candidate. In
-    // practice, real-world Org files never emit `CLOSED: <...+1w>`, so
+    // practice, real-world Org files never emit `CLOSED: [...+1w]`, so
     // this is a defensive guard rather than a bug fix for a common case.
+    // (ADR-0014 also rules out CLOSED with active `<...>`.)
 
     #[test]
     fn test_closed_repeating_not_in_overdue() {

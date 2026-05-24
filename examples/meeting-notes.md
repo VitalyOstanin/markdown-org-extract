@@ -12,7 +12,7 @@ Attendees: Alice, Bob, Charlie
 Need to address the concerns raised by the client.
 
 #### DONE Send meeting minutes
-`CLOSED: <2024-12-04 Mon>`
+`CLOSED: [2024-12-04 Mon]`
 Minutes sent to all participants.
 
 ## Product Planning

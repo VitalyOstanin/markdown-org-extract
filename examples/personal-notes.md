@@ -17,7 +17,7 @@ Leg day workout.
 Finish the advanced Rust programming course.
 
 ### DONE Read "Clean Code" book
-`CLOSED: <2024-11-25 Суббота>`
+`CLOSED: [2024-11-25 Суббота]`
 Finished reading and took notes.
 
 ## Home Tasks
@@ -33,7 +33,7 @@ Shopping list:
 - Vegetables
 
 ### DONE Clean garage
-`CLOSED: <2024-12-01 Mon>`
+`CLOSED: [2024-12-01 Mon]`
 Organized and cleaned the garage.
 
 ## Travel Plans

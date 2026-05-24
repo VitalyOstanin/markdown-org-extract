@@ -4,33 +4,61 @@ use std::sync::LazyLock;
 use super::weekdays::normalize_weekdays;
 use crate::regex_limits::{compile_bounded, TS_BODY_MAX};
 
-// `[^>]{0,TS_BODY_MAX}` caps the body length of a single bracketed timestamp
-// so that a hostile or malformed line cannot make `[^>]*` scan thousands of
-// characters before the engine notices the missing `>`.
-static TIMESTAMP_RE: LazyLock<Regex> = LazyLock::new(|| {
+// Per-keyword bracket policy (ADR-0014):
+//   SCHEDULED:, DEADLINE: → only active `<...>`
+//   CLOSED:, CREATED:     → only inactive `[...]` (CREATED follows the
+//                           org-expiry convention; CLOSED matches upstream
+//                           Emacs `org-closed-string` / `org-closed-time-regexp`)
+//   inline plain          → both `<...>` (active) and `[...]` (inactive)
+//
+// `[^>]{0,TS_BODY_MAX}` (or `[^\]]{0,TS_BODY_MAX}`) caps the body length of a
+// single bracketed timestamp so that a hostile or malformed line cannot make
+// `[^>]*` scan thousands of characters before the engine notices the missing
+// closing bracket. Paired alternation (no `[<\[]...[>\]]` shortcuts) keeps
+// mixed pairs `<...]` / `[...>` from matching by construction.
+static KEYWORD_ANGLE_RE: LazyLock<Regex> = LazyLock::new(|| {
     compile_bounded(&format!(
-        r"^\s*((?:SCHEDULED|DEADLINE|CLOSED):\s*)<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>"
+        r"^\s*((?:SCHEDULED|DEADLINE):\s*)<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>"
+    ))
+});
+
+static CLOSED_SQUARE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    compile_bounded(&format!(
+        r"^\s*(CLOSED:\s*)\[(\d{{4}}-\d{{2}}-\d{{2}}[^\]]{{0,{TS_BODY_MAX}}})\]"
     ))
 });
 
 // Range-timestamp separator matches Emacs' org-tr-regexp: one, two, or three
 // dashes between the two bracketed values. The output is always canonicalised
 // to the two-dash form, which is the variant produced by Emacs `org-time-stamp`.
-static RANGE_TIMESTAMP_RE: LazyLock<Regex> = LazyLock::new(|| {
+// Both endpoints must share the bracket form (no mixed pairs).
+static RANGE_ANGLE_RE: LazyLock<Regex> = LazyLock::new(|| {
     compile_bounded(&format!(
         r"^\s*<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>--?-?<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>"
     ))
 });
 
-static SIMPLE_TIMESTAMP_RE: LazyLock<Regex> = LazyLock::new(|| {
+static RANGE_SQUARE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    compile_bounded(&format!(
+        r"^\s*\[(\d{{4}}-\d{{2}}-\d{{2}}[^\]]{{0,{TS_BODY_MAX}}})\]--?-?\[(\d{{4}}-\d{{2}}-\d{{2}}[^\]]{{0,{TS_BODY_MAX}}})\]"
+    ))
+});
+
+static SIMPLE_ANGLE_RE: LazyLock<Regex> = LazyLock::new(|| {
     compile_bounded(&format!(
         r"^\s*<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>"
     ))
 });
 
+static SIMPLE_SQUARE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    compile_bounded(&format!(
+        r"^\s*\[(\d{{4}}-\d{{2}}-\d{{2}}[^\]]{{0,{TS_BODY_MAX}}})\]"
+    ))
+});
+
 static CREATED_RE: LazyLock<Regex> = LazyLock::new(|| {
     compile_bounded(&format!(
-        r"^\s*CREATED:\s*<(\d{{4}}-\d{{2}}-\d{{2}}[^>]{{0,{TS_BODY_MAX}}})>"
+        r"^\s*CREATED:\s*\[(\d{{4}}-\d{{2}}-\d{{2}}[^\]]{{0,{TS_BODY_MAX}}})\]"
     ))
 });
 
@@ -53,33 +81,48 @@ pub fn extract_created_normalized(text: &str) -> Option<String> {
     }
     CREATED_RE
         .captures(text)
-        .map(|caps| format!("CREATED: <{}>", &caps[1]))
+        .map(|caps| format!("CREATED: [{}]", &caps[1]))
 }
 
 /// Extract non-CREATED timestamp from already-weekday-normalized text.
 pub fn extract_timestamp_normalized(text: &str) -> Option<String> {
     // Fast path: every regex below anchors to one of the keyword prefixes
-    // `SCHEDULED:` / `DEADLINE:` / `CLOSED:` (TIMESTAMP_RE) or to the literal
-    // `<` of a bare timestamp (RANGE_TIMESTAMP_RE / SIMPLE_TIMESTAMP_RE).
+    // `SCHEDULED:` / `DEADLINE:` / `CLOSED:` (KEYWORD_ANGLE_RE / CLOSED_SQUARE_RE)
+    // or to the literal `<` / `[` of a bare timestamp (RANGE_* / SIMPLE_*).
     // A byte check on the first non-whitespace byte short-circuits the
     // common case where an inline-code line is unrelated free text, sparing
-    // three regex compilations of input we cannot match.
+    // several regex compilations of input we cannot match.
     let trimmed = text.trim_start();
     match trimmed.as_bytes().first() {
-        Some(b'S' | b'D' | b'C' | b'<') => {}
+        Some(b'S' | b'D' | b'C' | b'<' | b'[') => {}
         _ => return None,
     }
 
-    if let Some(caps) = TIMESTAMP_RE.captures(text) {
+    // Keyword forms first: each keyword accepts only one bracket form
+    // (ADR-0014). The output preserves the bracket form so consumers can
+    // tell `<...>` from `[...]`.
+    if let Some(caps) = KEYWORD_ANGLE_RE.captures(text) {
         return Some(format!("{}<{}>", &caps[1], &caps[2]));
     }
-
-    if let Some(caps) = RANGE_TIMESTAMP_RE.captures(text) {
-        return Some(format!("<{}>--<{}>", &caps[1], &caps[2]));
+    if let Some(caps) = CLOSED_SQUARE_RE.captures(text) {
+        return Some(format!("{}[{}]", &caps[1], &caps[2]));
     }
 
-    if let Some(caps) = SIMPLE_TIMESTAMP_RE.captures(text) {
+    // Plain inline timestamps: ranges before singles (a range starts with a
+    // single timestamp's prefix, so SIMPLE_* would otherwise eat the first
+    // bracket and leave `--<...>` dangling). Both endpoints share a bracket
+    // form by construction; mixed pairs are not matched.
+    if let Some(caps) = RANGE_ANGLE_RE.captures(text) {
+        return Some(format!("<{}>--<{}>", &caps[1], &caps[2]));
+    }
+    if let Some(caps) = RANGE_SQUARE_RE.captures(text) {
+        return Some(format!("[{}]--[{}]", &caps[1], &caps[2]));
+    }
+    if let Some(caps) = SIMPLE_ANGLE_RE.captures(text) {
         return Some(format!("<{}>", &caps[1]));
+    }
+    if let Some(caps) = SIMPLE_SQUARE_RE.captures(text) {
+        return Some(format!("[{}]", &caps[1]));
     }
 
     None
@@ -165,19 +208,30 @@ fn detect_ts_type(timestamp: &str) -> Option<String> {
 }
 
 fn split_range(s: &str) -> Option<(&str, &str)> {
-    // Find a "<...>(--?-?)<...>" pattern and return the inner bodies (without
-    // angle brackets). The dash count matches Emacs' org-tr-regexp: one, two,
-    // or three dashes; the canonical wire form is two.
-    let start = s.find('<')?;
+    // Find a "<...>(--?-?)<...>" or "[...](--?-?)[...]" pattern and return
+    // the inner bodies (without brackets). The dash count matches Emacs'
+    // org-tr-regexp: one, two, or three dashes; the canonical wire form is
+    // two. Both endpoints must share a bracket form — mixed pairs are
+    // rejected by construction (ADR-0014), since `strip_prefix(open)` fails
+    // when the second bracket is the opposite kind.
+    let lt = s.find('<');
+    let lb = s.find('[');
+    let (start, open, close) = match (lt, lb) {
+        (Some(i), Some(j)) if i < j => (i, '<', '>'),
+        (Some(_), Some(j)) => (j, '[', ']'),
+        (Some(i), None) => (i, '<', '>'),
+        (None, Some(j)) => (j, '[', ']'),
+        (None, None) => return None,
+    };
     let after_first = &s[start + 1..];
-    let end_first_rel = after_first.find('>')?;
+    let end_first_rel = after_first.find(close)?;
     let first_body = &after_first[..end_first_rel];
     let rest = &after_first[end_first_rel + 1..];
     let rest = rest.strip_prefix('-')?;
     let rest = rest.strip_prefix('-').unwrap_or(rest);
     let rest = rest.strip_prefix('-').unwrap_or(rest);
-    let rest = rest.strip_prefix('<')?;
-    let end_second_rel = rest.find('>')?;
+    let rest = rest.strip_prefix(open)?;
+    let end_second_rel = rest.find(close)?;
     let second_body = &rest[..end_second_rel];
     Some((first_body, second_body))
 }
@@ -222,7 +276,7 @@ mod tests {
         // not literal `CREATED:` short-circuits before the regex.
         assert!(extract_created_normalized("inline code without CREATED").is_none());
         assert!(extract_created_normalized("SCHEDULED: <2024-12-05>").is_none());
-        assert!(extract_created_normalized("CREATED: <2024-12-05 Thu>").is_some());
+        assert!(extract_created_normalized("CREATED: [2024-12-05 Thu]").is_some());
     }
 
     #[test]
@@ -273,8 +327,18 @@ mod tests {
 
     #[test]
     fn extract_created_basic() {
-        let c = extract_created("CREATED: <2024-12-05 Thu>", &[]).unwrap();
-        assert_eq!(c, "CREATED: <2024-12-05 Thu>");
+        // ADR-0014: CREATED follows the org-expiry convention and uses
+        // inactive `[...]`. Angle brackets must not be accepted.
+        let c = extract_created("CREATED: [2024-12-05 Thu]", &[]).unwrap();
+        assert_eq!(c, "CREATED: [2024-12-05 Thu]");
+    }
+
+    #[test]
+    fn extract_created_rejects_angle_brackets() {
+        // ADR-0014: this used to be accepted in 0.4.x. The new policy
+        // pins CREATED to inactive `[...]` to match upstream's org-expiry
+        // convention. This test guards against an accidental revert.
+        assert!(extract_created("CREATED: <2024-12-05 Thu>", &[]).is_none());
     }
 
     #[test]
@@ -325,7 +389,7 @@ mod tests {
         // Regression: previously `.contains("SCHEDULED:")` was used and would misclassify
         // a CREATED timestamp whose body mentioned SCHEDULED.
         let (ts_type, _, _, _, _) =
-            parse_timestamp_fields("CREATED: <2024-12-05 see SCHEDULED:>", &[]);
+            parse_timestamp_fields("CREATED: [2024-12-05 see SCHEDULED:]", &[]);
         assert_eq!(ts_type, Some("PLAIN".to_string()));
     }
 
@@ -380,6 +444,116 @@ mod tests {
         // A string with neither `<` nor `[` cannot have a bracket form.
         let (_, _, _, _, active) = parse_timestamp_fields("not a timestamp", &[]);
         assert_eq!(active, None);
+    }
+
+    // ADR-0014 matrix: each keyword accepts exactly one bracket form;
+    // mixed pairs `<...]` / `[...>` are rejected; inline plain accepts both.
+    // The tests below pin the policy at the extract layer (regex).
+
+    #[test]
+    fn matrix_scheduled_active_accepted() {
+        let ts = extract_timestamp("SCHEDULED: <2024-12-05 Thu>", &[]).unwrap();
+        assert_eq!(ts, "SCHEDULED: <2024-12-05 Thu>");
+    }
+
+    #[test]
+    fn matrix_scheduled_inactive_rejected() {
+        // SCHEDULED only accepts `<...>` (upstream `org-scheduled-time-regexp`).
+        assert!(extract_timestamp("SCHEDULED: [2024-12-05 Thu]", &[]).is_none());
+    }
+
+    #[test]
+    fn matrix_deadline_active_accepted() {
+        let ts = extract_timestamp("DEADLINE: <2024-12-05 Thu>", &[]).unwrap();
+        assert_eq!(ts, "DEADLINE: <2024-12-05 Thu>");
+    }
+
+    #[test]
+    fn matrix_deadline_inactive_rejected() {
+        // DEADLINE only accepts `<...>` (upstream `org-deadline-time-regexp`).
+        assert!(extract_timestamp("DEADLINE: [2024-12-05 Thu]", &[]).is_none());
+    }
+
+    #[test]
+    fn matrix_closed_inactive_accepted() {
+        // CLOSED accepts only `[...]` (upstream `org-closed-time-regexp`).
+        let ts = extract_timestamp("CLOSED: [2024-12-05 Thu 14:30]", &[]).unwrap();
+        assert_eq!(ts, "CLOSED: [2024-12-05 Thu 14:30]");
+    }
+
+    #[test]
+    fn matrix_closed_active_rejected() {
+        // Breaking change in 0.5.0: CLOSED with angle brackets was accepted
+        // in 0.4.x but does not match upstream Emacs semantics. ADR-0014
+        // moves CLOSED to inactive only; the migration is documented in
+        // CHANGELOG.
+        assert!(extract_timestamp("CLOSED: <2024-12-05 Thu 14:30>", &[]).is_none());
+    }
+
+    #[test]
+    fn matrix_created_inactive_accepted() {
+        // CREATED follows the org-expiry convention (inactive `[...]`).
+        let c = extract_created("CREATED: [2024-12-05 Thu]", &[]).unwrap();
+        assert_eq!(c, "CREATED: [2024-12-05 Thu]");
+    }
+
+    #[test]
+    fn matrix_created_active_rejected() {
+        // Breaking change in 0.5.0 paired with the CLOSED change above.
+        assert!(extract_created("CREATED: <2024-12-05 Thu>", &[]).is_none());
+    }
+
+    #[test]
+    fn matrix_inline_active_accepted() {
+        let ts = extract_timestamp("<2024-12-05 Thu>", &[]).unwrap();
+        assert_eq!(ts, "<2024-12-05 Thu>");
+    }
+
+    #[test]
+    fn matrix_inline_inactive_accepted() {
+        let ts = extract_timestamp("[2024-12-05 Thu]", &[]).unwrap();
+        assert_eq!(ts, "[2024-12-05 Thu]");
+    }
+
+    #[test]
+    fn matrix_inline_mixed_open_angle_close_square_rejected() {
+        // Mixed pairs must not match because each regex uses a single
+        // bracket family (no `[<\[]...[>\]]` shortcut).
+        assert!(extract_timestamp("<2024-12-05 Thu]", &[]).is_none());
+    }
+
+    #[test]
+    fn matrix_inline_mixed_open_square_close_angle_rejected() {
+        assert!(extract_timestamp("[2024-12-05 Thu>", &[]).is_none());
+    }
+
+    #[test]
+    fn matrix_inline_range_active_accepted() {
+        let ts = extract_timestamp("<2024-12-05 Thu>--<2024-12-06 Fri>", &[]).unwrap();
+        assert_eq!(ts, "<2024-12-05 Thu>--<2024-12-06 Fri>");
+    }
+
+    #[test]
+    fn matrix_inline_range_inactive_accepted() {
+        let ts = extract_timestamp("[2024-12-05 Thu]--[2024-12-06 Fri]", &[]).unwrap();
+        assert_eq!(ts, "[2024-12-05 Thu]--[2024-12-06 Fri]");
+    }
+
+    #[test]
+    fn matrix_inline_range_mixed_first_active_falls_back_to_single() {
+        // Mixed-form ranges do not match RANGE_*_RE (each regex sticks to a
+        // single bracket family). The first single timestamp is still
+        // extracted because SIMPLE_ANGLE_RE does not anchor on the end of
+        // the input — the trailing `--[...]` is left as outside context.
+        // This is the same behaviour as `<...>foo bar` matching just `<...>`.
+        let ts = extract_timestamp("<2024-12-05 Thu>--[2024-12-06 Fri]", &[]).unwrap();
+        assert_eq!(ts, "<2024-12-05 Thu>");
+    }
+
+    #[test]
+    fn matrix_inline_range_mixed_first_inactive_falls_back_to_single() {
+        let ts = extract_timestamp("[2024-12-05 Thu]--<2024-12-06 Fri>", &[]).unwrap();
+        assert_eq!(ts, "[2024-12-05 Thu]");
     }
 
     #[test]

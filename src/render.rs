@@ -427,7 +427,7 @@ mod tests {
             content: "Body text.".to_string(),
             task_type: Some(TaskType::Todo),
             priority: Some(Priority::A),
-            created: Some("CREATED: <2025-09-01 Mon>".to_string()),
+            created: Some("CREATED: [2025-09-01 Mon]".to_string()),
             timestamp: Some("DEADLINE: <2025-10-01 Wed>".to_string()),
             timestamp_type: Some("DEADLINE".to_string()),
             timestamp_active: Some(true),
@@ -447,7 +447,7 @@ mod tests {
 **File:** `notes.md:42`\n\
 **Type:** TODO\n\
 **Priority:** A\n\
-**Created:** `CREATED: <2025-09-01 Mon>`\n\
+**Created:** `CREATED: [2025-09-01 Mon]`\n\
 **Time:** `DEADLINE: <2025-10-01 Wed>`\n\
 \n\
 Body text.\n\n";
@@ -462,7 +462,7 @@ Body text.\n\n";
 <p><strong>File:</strong> notes.md:42</p>\n\
 <p><strong>Type:</strong> TODO</p>\n\
 <p><strong>Priority:</strong> A</p>\n\
-<p><strong>Created:</strong> CREATED: &lt;2025-09-01 Mon&gt;</p>\n\
+<p><strong>Created:</strong> CREATED: [2025-09-01 Mon]</p>\n\
 <p><strong>Time:</strong> DEADLINE: &lt;2025-10-01 Wed&gt;</p>\n\
 <p>Body text.</p>\n\
 </body></html>";

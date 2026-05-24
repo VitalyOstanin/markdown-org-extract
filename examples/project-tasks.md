@@ -11,7 +11,7 @@ Need to finalize the database structure before implementation.
 Configure GitHub Actions for automated testing and deployment.
 
 ### DONE Create project repository
-`CLOSED: <2024-12-01 Пн>`
+`CLOSED: [2024-12-01 Пн]`
 Repository created and initial structure set up.
 
 ## Development Tasks
@@ -25,7 +25,7 @@ Add JWT-based authentication system.
 Need to document all REST endpoints.
 
 ### DONE Setup development environment
-`CLOSED: <2024-11-28 Чт>`
+`CLOSED: [2024-11-28 Чт]`
 Docker containers configured for local development.
 
 ## Meetings & Events
@@ -49,5 +49,5 @@ Annual technology conference attendance.
 Critical bug fix needs review.
 
 ### DONE Review pull request #38
-`CLOSED: <2024-12-02 Сб>`
+`CLOSED: [2024-12-02 Сб]`
 Feature implementation approved and merged.

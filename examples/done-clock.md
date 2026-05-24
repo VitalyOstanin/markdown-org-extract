@@ -1,5 +1,5 @@
 ### DONE Complete task Y
-`CLOSED: <2024-12-08 Sun>`
+`CLOSED: [2024-12-08 Sun]`
 
 ```
 CLOCK: [2024-12-08 Sun 09:00]--[2024-12-08 Sun 10:00] =>  1:00

@@ -576,7 +576,7 @@ mod tests {
         // Heading without a timestamp must keep `timestamp_active = None`,
         // matching the rule that absent optional fields skip JSON
         // serialisation (ADR-0015).
-        let content = "### Project kickoff\n\n`CREATED: <2025-09-01 Mon>`\n";
+        let content = "### Project kickoff\n\n`CREATED: [2025-09-01 Mon]`\n";
         let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].timestamp_active, None);
@@ -616,11 +616,11 @@ mod tests {
     #[test]
     fn extract_tasks_keeps_created_without_todo() {
         // Heading without TODO/DONE keyword but with a CREATED line is still a task.
-        let content = "### Project kickoff\n\n`CREATED: <2025-09-01 Mon>`\n";
+        let content = "### Project kickoff\n\n`CREATED: [2025-09-01 Mon]`\n";
         let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].task_type, None);
-        assert_eq!(tasks[0].created, Some("CREATED: <2025-09-01 Mon>".into()));
+        assert_eq!(tasks[0].created, Some("CREATED: [2025-09-01 Mon]".into()));
     }
 
     #[test]
@@ -806,10 +806,10 @@ Second paragraph.\n\
 
     #[test]
     fn extract_tasks_indented_inline_code_created() {
-        let content = "#### Project kickoff\n    `CREATED: <2025-09-01 Mon>`\n";
+        let content = "#### Project kickoff\n    `CREATED: [2025-09-01 Mon]`\n";
         let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
         assert_eq!(tasks.len(), 1);
         let t = &tasks[0];
-        assert_eq!(t.created.as_deref(), Some("CREATED: <2025-09-01 Mon>"));
+        assert_eq!(t.created.as_deref(), Some("CREATED: [2025-09-01 Mon]"));
     }
 }

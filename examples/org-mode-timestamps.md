@@ -34,7 +34,7 @@ Multi-day event spanning weekend.
 Meeting with specific time slot.
 
 ### DONE Completed task
-`CLOSED: <2025-12-01 Mon>`
+`CLOSED: [2025-12-01 Mon]`
 
 Task that was completed.
 

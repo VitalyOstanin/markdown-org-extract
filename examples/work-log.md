@@ -18,7 +18,7 @@ CLOCK: [2025-12-09 Tue 11:30]--[2025-12-09 Tue 12:00] =>  0:30
 ```
 
 ### DONE Fix login bug
-`CLOSED: <2025-12-08 Mon>`
+`CLOSED: [2025-12-08 Mon]`
 
 Fixed the session timeout issue.
 

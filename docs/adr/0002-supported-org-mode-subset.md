@@ -10,7 +10,10 @@
 
 ## Status
 
-Accepted.
+Accepted. Amended by [ADR-0014](0014-active-and-inactive-timestamps.md)
+on 2026-05-24: the per-keyword bracket policy below is superseded by
+the table in ADR-0014, and the out-of-scope bullet on inactive
+timestamps is partly removed.
 
 ## Context
 
@@ -79,8 +82,12 @@ The following Org-mode features are deliberately **out of scope**:
 
 - Custom TODO state sequences via `#+TODO:` directives. Only
   hard-coded `TODO` and `DONE` are recognised.
-- Inactive timestamps in square brackets `[...]` outside of CLOCK
-  and CLOSED contexts.
+- ~~Inactive timestamps in square brackets `[...]` outside of CLOCK
+  and CLOSED contexts.~~ Superseded by
+  [ADR-0014](0014-active-and-inactive-timestamps.md) (2026-05-24):
+  inactive `[...]` is now accepted for `CLOSED:`, `CREATED:`, and
+  inline plain timestamps; rejected for `SCHEDULED:` and `DEADLINE:`;
+  CLOCK behaviour is unchanged.
 - Multi-day agenda display of date-range timestamps
   `<...>--?-?<...>`. The dash separator is accepted in all three
   variants Emacs allows (one, two, or three dashes, matching

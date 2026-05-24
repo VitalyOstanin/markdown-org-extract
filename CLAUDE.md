@@ -61,6 +61,20 @@ pointers to the full text and rationale.
   (research artefacts); Russian-locale examples in `examples/` stay
   as is. New `docs/*` files are English by default; introducing a
   new non-English research surface requires updating ADR-0013.
+- Per-keyword bracket policy for timestamps is fixed in
+  [ADR-0014](docs/adr/0014-active-and-inactive-timestamps.md).
+  `SCHEDULED:` / `DEADLINE:` accept only active `<...>`; `CLOSED:` /
+  `CREATED:` accept only inactive `[...]`; inline plain timestamps
+  accept both; CLOCK is unchanged (both, per ADR-0003). Mixed pairs
+  `<...]` / `[...>` are rejected. Inactive timestamps never feed
+  agenda. Amends ADR-0002.
+- JSON output evolution follows
+  [ADR-0015](docs/adr/0015-json-schema-evolution.md). New fields are
+  non-breaking; consumers must ignore unknown keys. No
+  `schema_version` field. Coordination with `markdown-org-vscode` is
+  via `x-markdown-org.extractorVersion` in its `package.json`.
+  Removing / renaming / re-typing / re-semanticising a field is
+  breaking and bumps the version.
 
 ## Background
 
@@ -70,7 +84,7 @@ pointers to the full text and rationale.
 - [ADR-0002](docs/adr/0002-supported-org-mode-subset.md): which
   Org-mode syntax is parsed and which is out of scope (Obsidian
   Tasks emoji markers and Dataview inline fields are **not**
-  parsed).
+  parsed). Amended by ADR-0014 (bracket policy).
 - [ADR-0003](docs/adr/0003-clock-metadata-support.md): CLOCK
   metadata layout, bracket variants, and total-time calculation.
 

@@ -10,6 +10,7 @@ package.
 - [Property-based and fuzz tests](#property-based-and-fuzz-tests)
 - [Localising CLI messages](#localising-cli-messages)
 - [Benchmarks (criterion)](#benchmarks-criterion)
+- [Active and inactive timestamps: square brackets across all keywords](#active-and-inactive-timestamps-square-brackets-across-all-keywords)
 - [Open info-level review notes](#open-info-level-review-notes)
 
 ## Switch to edition 2024
@@ -76,6 +77,131 @@ Areas:
 - `closest_date` across different `unit` values.
 
 Directory `benches/`, with `criterion` as a dev-dependency.
+
+## Active and inactive timestamps: square brackets across all keywords
+
+Emacs Org-mode distinguishes **active** timestamps `<2026-05-25 Mon>`
+(land in agenda, drive scheduling) from **inactive** ones
+`[2026-05-25 Mon]` (purely descriptive, never appear in agenda).
+Today this project accepts only the angle-bracket form for every
+keyword: `SCHEDULED:`, `DEADLINE:`, `CLOSED:`, `CREATED:` and bare
+inline timestamps. ADR-0002 explicitly lists "Inactive timestamps in
+square brackets `[...]` outside of CLOCK and CLOSED contexts" as out
+of scope, and in practice even `CLOSED: [...]` is rejected by the
+current regex set (`CLOSED:\s*<...>` only). The downstream editor
+(`markdown-org-vscode`) wants to align with upstream Emacs Org and
+support both forms across all keywords plus inline.
+
+This is an ADR-level decision because it changes the
+producer/consumer contract and breaks the simplification recorded in
+ADR-0002.
+
+### Required changes in this crate
+
+1. Regex updates in `src/timestamp/extract.rs`:
+   - `TIMESTAMP_RE`: accept either `<...>` or `[...]` for
+     SCHEDULED/DEADLINE/CLOSED and capture which form was used.
+   - `CREATED_RE`: same for CREATED.
+   - `SIMPLE_TIMESTAMP_RE` and `RANGE_TIMESTAMP_RE`: same for bare
+     timestamps (inline use case).
+   - Closing-bracket must match the opening one (no mixed
+     `<2026-05-25]`); this likely needs paired alternation rather
+     than `[<\[]...[>\]]` since the latter accepts mismatched pairs.
+2. Parser surface in `src/timestamp/parser.rs`:
+   - `SINGLE_RE` mirrors the bracketing decision.
+3. Data model: extend the `Timestamp` type (see `src/timestamp.rs`
+   and `src/timestamp/parser.rs`) with an `active: bool` flag (or a
+   `Bracket::Active | Bracket::Inactive` enum). All consumers --
+   `extract_tasks`, `build_*_agenda`, JSON output -- must propagate
+   it so downstream tools can filter on it.
+4. Agenda semantics:
+   - Inactive timestamps must NOT participate in agenda windows
+     (`build_week_agenda`, `build_day_agenda`, "tasks" mode that
+     pulls SCHEDULED/DEADLINE). The agenda-eligible filter mirrors
+     Emacs' `org-ts-regexp` (active only).
+   - `CLOSED:` is by convention inactive in Emacs but never feeds
+     agenda regardless; the flag just lets consumers display it.
+   - `CREATED:` is by convention inactive; same treatment.
+5. JSON output: expose the bracket form so the editor can preserve
+   it on round-trip. Versioning of the JSON schema may be needed
+   (consider whether existing consumers tolerate a new field).
+6. CLOCK: already accepts both forms (`src/clock.rs`, `CLOCK_RE`).
+   Audit whether the `active` flag needs to surface for CLOCK
+   entries too, or whether the existing dual matching is enough.
+7. Tests:
+   - Unit tests under `tests/` (or wherever timestamp tests live)
+     covering every keyword × both forms.
+   - Round-trip tests: parse `[CLOSED: [...]]`, serialise, parse
+     again -- form is preserved.
+   - Agenda invariant tests: `[SCHEDULED: [...]]` is **not** picked
+     up by agenda windows; `<SCHEDULED: <...>>` is. Wait,
+     `SCHEDULED:` with inactive brackets is unusual in Emacs --
+     verify in `/home/vyt/devel/org-mode/lisp/org.el` whether
+     `org-scheduled-time-regexp` matches `[...]` at all; if not,
+     decide whether this crate is stricter than Emacs (recommend:
+     follow Emacs and accept only `<...>` for SCHEDULED/DEADLINE,
+     accept both for CLOSED/CREATED/inline; document in the new
+     ADR).
+
+### ADR work (do NOT skip)
+
+`docs/adr/0002-supported-org-mode-subset.md` currently lists
+inactive `[...]` as out of scope. That decision is reversed (in
+part). Pick one of:
+
+- New ADR `docs/adr/0014-active-and-inactive-timestamps.md`,
+  amending ADR-0002 in the Status section ("Amends ADR-0002").
+- Or amend ADR-0002 in place with a dated note and bump its
+  status to "Amended by ADR-0014".
+
+ADR-0002 explicitly says (Consequences section): "Adding a new
+Org-mode form requires an explicit decision (new ADR or amendment)
+rather than silently accumulating syntax." Honour that.
+
+The new ADR must cover:
+
+- Which keywords accept which bracket forms (table, with
+  cross-reference to the Emacs regex constants that justify each
+  row -- see `org-deadline-time-regexp`, `org-scheduled-time-regexp`,
+  `org-closed-time-regexp` in `lisp/org.el`).
+- Agenda semantics: inactive timestamps never drive agenda.
+- Round-trip guarantee: the form a producer wrote is the form a
+  consumer reads back.
+- Migration impact: old consumers that have a hard `<...>` regex
+  will silently miss `[...]` lines -- call out the JSON schema
+  field that signals which form was matched, and recommend
+  consumers grep that field rather than re-parsing the timestamp
+  string.
+
+### Out of scope for this task
+
+- Custom TODO state sequences via `#+TODO:` directives (still out
+  of scope per ADR-0002, no change).
+- Properties drawers and `:CREATED:` inside them (separate task).
+- Date-range timestamps across the active/inactive boundary
+  (`<a>--[b]` etc.) -- Emacs does not produce these; we don't need
+  to either.
+
+### Release & coordination
+
+- Bump version to a new minor (e.g. 0.5.0). Mention the new ADR in
+  CHANGELOG.
+- Coordinate with `markdown-org-vscode`: after release, that
+  project bumps `x-markdown-org.extractorVersion` in its
+  `package.json` and adopts the new JSON schema field.
+
+### References
+
+- Emacs Org regexes for keyword variants:
+  `lisp/org.el:547` (deadline), `:563` (scheduled), `:572` (closed)
+  in `/home/vyt/devel/org-mode`.
+- Emacs Org regexes for plain timestamps: `lisp/org.el:425-432`
+  (`org-ts-regexp`, `org-ts-regexp-inactive`, `org-ts-regexp-both`).
+- `org-toggle-timestamp-type` in `lisp/org.el:15510` for the
+  precedent on switching forms in place.
+- Consumer-side notes:
+  `markdown-org-vscode/TODO.md` (square-bracket section, to be
+  added in the same work cycle).
 
 ## Open info-level review notes
 

@@ -21,6 +21,14 @@ struct PreparedTask<'a> {
 }
 
 fn prepare_tasks(tasks: &[Task]) -> Vec<PreparedTask<'_>> {
+    // ADR-0014 invariant: inactive `[...]` timestamps never feed the
+    // agenda. Filtering at the parse step keeps the rest of the agenda
+    // logic bracket-form-agnostic — every downstream bucket already
+    // skips entries whose `parsed` is `None`. SCHEDULED/DEADLINE are
+    // guaranteed active by the extract-layer regex (ADR-0014), CLOSED
+    // is guaranteed inactive there and was already excluded from
+    // overdue/upcoming by `handle_repeating_task`; the only case this
+    // filter actually drops is a PLAIN inline `[YYYY-MM-DD ...]`.
     tasks
         .iter()
         .map(|t| PreparedTask {
@@ -28,7 +36,8 @@ fn prepare_tasks(tasks: &[Task]) -> Vec<PreparedTask<'_>> {
             parsed: t
                 .timestamp
                 .as_deref()
-                .and_then(|ts| parse_org_timestamp(ts, None)),
+                .and_then(|ts| parse_org_timestamp(ts, None))
+                .filter(|p| p.active),
         })
         .collect()
 }
@@ -642,6 +651,62 @@ mod tests {
 
     fn create_test_task(date_str: &str, time: Option<&str>, task_type: TaskType) -> Task {
         create_test_task_with_type(date_str, time, task_type, "SCHEDULED")
+    }
+
+    /// Build a Task with a plain inline timestamp (no keyword prefix). The
+    /// bracket form (`<...>` vs `[...]`) drives `timestamp_active`, which
+    /// agenda re-derives via `parse_org_timestamp` — the field on `Task` is
+    /// informational for downstream consumers, not for the agenda filter.
+    fn create_test_plain_task(timestamp: &str, date_str: &str) -> Task {
+        let active = timestamp.starts_with('<');
+        Task {
+            file: "test.md".to_string(),
+            line: 1,
+            heading: "Plain timestamp task".to_string(),
+            content: String::new(),
+            task_type: Some(TaskType::Todo),
+            priority: None,
+            created: None,
+            timestamp: Some(timestamp.to_string()),
+            timestamp_type: Some("PLAIN".to_string()),
+            timestamp_active: Some(active),
+            timestamp_date: Some(date_str.to_string()),
+            timestamp_time: None,
+            timestamp_end_time: None,
+            clocks: None,
+            total_clock_time: None,
+        }
+    }
+
+    #[test]
+    fn agenda_excludes_plain_inactive_timestamp() {
+        // ADR-0014 invariant: inactive `[...]` timestamps never feed agenda.
+        // PLAIN inline is the only form that can be inactive and reach the
+        // agenda layer (SCHEDULED/DEADLINE only accept `<...>`, CLOSED was
+        // already excluded by the timestamp_type guard in handle_repeating_task
+        // and is filtered by the same `active` flag here).
+        let tasks = vec![create_test_plain_task("[2024-12-05 Thu]", "2024-12-05")];
+        let day = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, day, day);
+        assert!(
+            agenda.scheduled_no_time.is_empty(),
+            "inactive plain timestamp must not appear in scheduled bucket"
+        );
+        assert!(agenda.scheduled_timed.is_empty());
+        assert!(agenda.overdue.is_empty());
+        assert!(agenda.upcoming.is_empty());
+    }
+
+    #[test]
+    fn agenda_includes_plain_active_timestamp() {
+        // Counterpart to the inactive case: an active plain timestamp on
+        // its date shows up in the scheduled-no-time bucket. Without this
+        // guard the inactive-filter implementation could over-shoot and
+        // silently drop active timestamps too.
+        let tasks = vec![create_test_plain_task("<2024-12-05 Thu>", "2024-12-05")];
+        let day = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let agenda = build_day_agenda(&tasks, day, day);
+        assert_eq!(agenda.scheduled_no_time.len(), 1);
     }
 
     #[test]

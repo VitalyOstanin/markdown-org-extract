@@ -234,14 +234,14 @@ fn finalize_task(path: &Path, info: HeadingInfo, mappings: &[(&str, &str)]) -> O
     }
 
     let line = info.line;
-    let (ts_type, ts_date, ts_time, ts_end_time) = if let Some(ref ts) = info.timestamp {
+    let (ts_type, ts_date, ts_time, ts_end_time, ts_active) = if let Some(ref ts) = info.timestamp {
         let parsed = parse_timestamp_fields(ts, mappings);
         if parsed.1.is_none() {
             warn_invalid_timestamp(path, line, ts);
         }
         parsed
     } else {
-        (None, None, None, None)
+        (None, None, None, None, None)
     };
 
     let (clocks_opt, total_time) = if !info.clocks.is_empty() {
@@ -261,6 +261,7 @@ fn finalize_task(path: &Path, info: HeadingInfo, mappings: &[(&str, &str)]) -> O
         created: info.created,
         timestamp: info.timestamp,
         timestamp_type: ts_type,
+        timestamp_active: ts_active,
         timestamp_date: ts_date,
         timestamp_time: ts_time,
         timestamp_end_time: ts_end_time,
@@ -556,6 +557,29 @@ mod tests {
         assert_eq!(tt, None);
         assert_eq!(p, Some(Priority::A));
         assert_eq!(h, "NoSpace");
+    }
+
+    #[test]
+    fn extract_tasks_marks_scheduled_angle_bracket_as_active() {
+        // End-to-end: a SCHEDULED line with `<...>` must surface
+        // `timestamp_active = Some(true)` in the resulting Task, so
+        // downstream consumers can branch on bracket form without
+        // re-parsing the timestamp string. See ADR-0014.
+        let content = "### TODO Pin me\n`SCHEDULED: <2026-05-21 Thu>`\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].timestamp_active, Some(true));
+    }
+
+    #[test]
+    fn extract_tasks_marks_missing_timestamp_active_as_none() {
+        // Heading without a timestamp must keep `timestamp_active = None`,
+        // matching the rule that absent optional fields skip JSON
+        // serialisation (ADR-0015).
+        let content = "### Project kickoff\n\n`CREATED: <2025-09-01 Mon>`\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].timestamp_active, None);
     }
 
     #[test]

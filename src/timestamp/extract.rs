@@ -87,12 +87,22 @@ pub fn extract_timestamp_normalized(text: &str) -> Option<String> {
 
 /// Parse timestamp fields for JSON output.
 ///
-/// Returns `(timestamp_type, date, time, end_time)`.
+/// Returns `(timestamp_type, date, time, end_time, active)`.
+///
+/// `active` is `Some(true)` for an active timestamp `<...>`, `Some(false)`
+/// for an inactive one `[...]`, and `None` when the input does not contain
+/// a recognisable opening bracket. The bracket form is detected on the
+/// first `<` / `[` after the keyword prefix; see ADR-0014 for the
+/// per-keyword policy.
 ///
 /// For range timestamps like `<2024-12-05 10:00>--<2024-12-06 14:00>` the result is
-/// `(_, Some("2024-12-05"), Some("10:00"), Some("14:00"))` — i.e. the second bracket's
+/// `(_, Some("2024-12-05"), Some("10:00"), Some("14:00"), _)` — i.e. the second bracket's
 /// start time is treated as `end_time`. For inline ranges `<2024-12-05 10:00-12:00>`
 /// the explicit range form is used.
+// The 5-tuple is grandfathered: callers in `parser.rs` and the test suite
+// already destructure it. A struct refactor is tracked separately and does
+// not block the active-flag addition (ADR-0014).
+#[allow(clippy::type_complexity)]
 pub fn parse_timestamp_fields(
     timestamp: &str,
     mappings: &[(&str, &str)],
@@ -101,8 +111,10 @@ pub fn parse_timestamp_fields(
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<bool>,
 ) {
     let ts_type = detect_ts_type(timestamp);
+    let active = detect_active(timestamp);
     let normalized = normalize_weekdays(timestamp, mappings);
 
     // Handle ranges: <...>--<...>
@@ -116,12 +128,25 @@ pub fn parse_timestamp_fields(
         } else {
             extract_time_pair(second).0
         };
-        return (ts_type, date, time, end_time);
+        return (ts_type, date, time, end_time, active);
     }
 
     let date = DATE_RE.captures(&normalized).map(|c| c[1].to_string());
     let (time, end_time) = extract_time_pair(&normalized);
-    (ts_type, date, time, end_time)
+    (ts_type, date, time, end_time, active)
+}
+
+fn detect_active(timestamp: &str) -> Option<bool> {
+    // The first `<` or `[` after any keyword prefix decides the form.
+    // Whichever comes first wins; a string with neither yields `None`.
+    let lt = timestamp.find('<');
+    let lb = timestamp.find('[');
+    match (lt, lb) {
+        (Some(i), Some(j)) => Some(i < j),
+        (Some(_), None) => Some(true),
+        (None, Some(_)) => Some(false),
+        (None, None) => None,
+    }
 }
 
 fn detect_ts_type(timestamp: &str) -> Option<String> {
@@ -232,7 +257,7 @@ mod tests {
     fn parse_fields_range_one_dash_recovers_second_time() {
         // Same regression coverage as the two-dash range, but for the single-
         // dash variant that Emacs also accepts.
-        let (_, date, time, end_time) =
+        let (_, date, time, end_time, _) =
             parse_timestamp_fields("<2024-12-05 Thu 10:00>-<2024-12-06 Fri 14:00>", &[]);
         assert_eq!(date, Some("2024-12-05".to_string()));
         assert_eq!(time, Some("10:00".to_string()));
@@ -259,7 +284,7 @@ mod tests {
 
     #[test]
     fn parse_fields_scheduled_with_time() {
-        let (ts_type, date, time, end_time) =
+        let (ts_type, date, time, end_time, _) =
             parse_timestamp_fields("SCHEDULED: <2024-12-05 Thu 10:00>", &[]);
         assert_eq!(ts_type, Some("SCHEDULED".to_string()));
         assert_eq!(date, Some("2024-12-05".to_string()));
@@ -269,7 +294,7 @@ mod tests {
 
     #[test]
     fn parse_fields_inline_time_range() {
-        let (_, _, time, end_time) =
+        let (_, _, time, end_time, _) =
             parse_timestamp_fields("SCHEDULED: <2024-12-05 Thu 10:00-12:00>", &[]);
         assert_eq!(time, Some("10:00".to_string()));
         assert_eq!(end_time, Some("12:00".to_string()));
@@ -278,7 +303,7 @@ mod tests {
     #[test]
     fn parse_fields_range_timestamp_recovers_second_time() {
         // Regression: <... 10:00>--<... 14:00> used to lose 14:00. Now it must surface as end_time.
-        let (ts_type, date, time, end_time) =
+        let (ts_type, date, time, end_time, _) =
             parse_timestamp_fields("<2024-12-05 Thu 10:00>--<2024-12-06 Fri 14:00>", &[]);
         assert_eq!(ts_type, Some("PLAIN".to_string()));
         assert_eq!(date, Some("2024-12-05".to_string()));
@@ -289,7 +314,7 @@ mod tests {
     #[test]
     fn parse_fields_range_inline_takes_precedence() {
         // If first bracket already has a 10:00-12:00 range, use it; ignore the second bracket time.
-        let (_, _, time, end_time) =
+        let (_, _, time, end_time, _) =
             parse_timestamp_fields("<2024-12-05 Thu 10:00-12:00>--<2024-12-06 Fri 14:00>", &[]);
         assert_eq!(time, Some("10:00".to_string()));
         assert_eq!(end_time, Some("12:00".to_string()));
@@ -299,17 +324,62 @@ mod tests {
     fn detect_ts_type_does_not_match_body_substring() {
         // Regression: previously `.contains("SCHEDULED:")` was used and would misclassify
         // a CREATED timestamp whose body mentioned SCHEDULED.
-        let (ts_type, _, _, _) =
+        let (ts_type, _, _, _, _) =
             parse_timestamp_fields("CREATED: <2024-12-05 see SCHEDULED:>", &[]);
         assert_eq!(ts_type, Some("PLAIN".to_string()));
     }
 
     #[test]
     fn parse_fields_no_time() {
-        let (_, date, time, end_time) = parse_timestamp_fields("DEADLINE: <2024-12-05 Thu>", &[]);
+        let (_, date, time, end_time, _) =
+            parse_timestamp_fields("DEADLINE: <2024-12-05 Thu>", &[]);
         assert_eq!(date, Some("2024-12-05".to_string()));
         assert_eq!(time, None);
         assert_eq!(end_time, None);
+    }
+
+    // ADR-0014: `active` reports the bracket form so consumers can branch
+    // on it. SINGLE_RE accepts only `<...>` today, so production parses
+    // always yield Some(true); the inactive case is constructed directly
+    // from a string to pin `detect_active`'s behaviour for the future
+    // regex update.
+
+    #[test]
+    fn parse_fields_marks_angle_bracket_keyword_as_active() {
+        let (_, _, _, _, active) =
+            parse_timestamp_fields("SCHEDULED: <2024-12-05 Thu>", &[]);
+        assert_eq!(active, Some(true));
+    }
+
+    #[test]
+    fn parse_fields_marks_square_bracket_keyword_as_inactive() {
+        // `parse_timestamp_fields` itself does not gate on the keyword
+        // policy from ADR-0014 — it only reports the form that was seen.
+        // The regex layer (separate task) is what will accept or reject
+        // each keyword/form combination. Pinning behaviour here keeps
+        // `detect_active` honest once the regex change lands.
+        let (_, _, _, _, active) =
+            parse_timestamp_fields("CLOSED: [2024-12-05 Thu 14:30]", &[]);
+        assert_eq!(active, Some(false));
+    }
+
+    #[test]
+    fn parse_fields_marks_inline_plain_active() {
+        let (_, _, _, _, active) = parse_timestamp_fields("<2024-12-05 Thu>", &[]);
+        assert_eq!(active, Some(true));
+    }
+
+    #[test]
+    fn parse_fields_marks_inline_plain_inactive() {
+        let (_, _, _, _, active) = parse_timestamp_fields("[2024-12-05 Thu]", &[]);
+        assert_eq!(active, Some(false));
+    }
+
+    #[test]
+    fn parse_fields_no_bracket_returns_none_active() {
+        // A string with neither `<` nor `[` cannot have a bracket form.
+        let (_, _, _, _, active) = parse_timestamp_fields("not a timestamp", &[]);
+        assert_eq!(active, None);
     }
 
     #[test]

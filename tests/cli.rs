@@ -1377,6 +1377,7 @@ fn json_snapshot_tasks_mode_minimal_fixture() {
     \"task_type\": \"TODO\",
     \"timestamp\": \"SCHEDULED: <2026-05-21 Thu>\",
     \"timestamp_type\": \"SCHEDULED\",
+    \"timestamp_active\": true,
     \"timestamp_date\": \"2026-05-21\"
   }
 ]
@@ -1437,6 +1438,7 @@ fn json_snapshot_agenda_day_minimal_fixture() {
         \"task_type\": \"TODO\",
         \"timestamp\": \"SCHEDULED: <2026-05-21 Thu>\",
         \"timestamp_type\": \"SCHEDULED\",
+        \"timestamp_active\": true,
         \"timestamp_date\": \"2026-05-21\"
       }
     ],

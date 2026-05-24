@@ -55,6 +55,10 @@ pub struct ParsedTimestamp {
     /// (see `org-get-wdays` in `lisp/org.el`). When set, it overrides the
     /// global `DEADLINE_WARNING_DAYS` for the corresponding DEADLINE.
     pub warning_days: Option<i64>,
+    /// Bracket form: `true` for active `<...>`, `false` for inactive
+    /// `[...]`. See ADR-0014 for which keywords accept which forms and
+    /// for the agenda invariant (inactive timestamps never feed agenda).
+    pub active: bool,
 }
 
 /// Convert a warning cookie's value/unit pair into whole days, mirroring
@@ -100,10 +104,17 @@ pub fn parse_org_timestamp(ts: &str, mappings: Option<&[(&str, &str)]>) -> Optio
         warning_cookie_to_days(value, c.get(2)?.as_str())
     });
 
+    // SINGLE_RE currently only matches `<...>`, so `active` is `true` for
+    // every successful parse. When the regex is extended to accept `[...]`
+    // (see ADR-0014 and the regex-update task), `active` will be derived
+    // from the opening bracket captured by the same regex.
+    let active = bracket.starts_with('<');
+
     Some(ParsedTimestamp {
         date,
         repeater,
         warning_days,
+        active,
     })
 }
 
@@ -218,5 +229,16 @@ mod tests {
         let with_warning_first = parse_org_timestamp("<2025-12-10 Wed -3d +1d>", None).unwrap();
         assert_eq!(with_warning_first.warning_days, Some(3));
         assert!(with_warning_first.repeater.is_some());
+    }
+
+    // ADR-0014 adds an `active` flag to ParsedTimestamp. SINGLE_RE today
+    // matches only `<...>`, so every successful parse yields `active = true`.
+    // The inactive branch becomes reachable when the regex is widened in
+    // a follow-up task; pinning the current behaviour here protects the
+    // agenda invariant (inactive never feeds agenda) once that lands.
+    #[test]
+    fn parse_org_timestamp_marks_angle_bracket_as_active() {
+        let parsed = parse_org_timestamp("<2025-12-10 Wed>", None).unwrap();
+        assert!(parsed.active, "<...> timestamp must be active");
     }
 }

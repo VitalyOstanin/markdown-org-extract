@@ -200,6 +200,12 @@ pub struct Task {
     pub timestamp: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_type: Option<String>,
+    /// Bracket form of the timestamp: `Some(true)` for active `<...>`,
+    /// `Some(false)` for inactive `[...]`, `None` when no timestamp is
+    /// present. See ADR-0014 for the per-keyword policy and ADR-0015 for
+    /// the schema-evolution rule under which this field was added.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp_active: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -437,6 +443,78 @@ mod tests {
         assert_eq!(json, "\"5\"");
         let json = serde_json::to_string(&Priority::Numeric(64)).unwrap();
         assert_eq!(json, "\"64\"");
+    }
+
+    // ADR-0014: `timestamp_active` is the JSON marker for the bracket form
+    // (`true` = `<...>`, `false` = `[...]`). The field is `Option<bool>` so
+    // tasks without a timestamp omit it entirely (per ADR-0015's rule that
+    // unset Option fields skip serialisation, keeping the addition
+    // non-breaking for existing consumers).
+
+    fn empty_task() -> Task {
+        Task {
+            file: "t.md".into(),
+            line: 1,
+            heading: String::new(),
+            content: String::new(),
+            task_type: None,
+            priority: None,
+            created: None,
+            timestamp: None,
+            timestamp_type: None,
+            timestamp_active: None,
+            timestamp_date: None,
+            timestamp_time: None,
+            timestamp_end_time: None,
+            clocks: None,
+            total_clock_time: None,
+        }
+    }
+
+    #[test]
+    fn task_serializes_timestamp_active_true_when_active() {
+        let mut t = empty_task();
+        t.timestamp = Some("SCHEDULED: <2026-05-25 Mon>".into());
+        t.timestamp_type = Some("SCHEDULED".into());
+        t.timestamp_active = Some(true);
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(
+            json.contains("\"timestamp_active\":true"),
+            "JSON must surface timestamp_active=true: {json}"
+        );
+    }
+
+    #[test]
+    fn task_serializes_timestamp_active_false_when_inactive() {
+        let mut t = empty_task();
+        t.timestamp = Some("CLOSED: [2026-05-24 Sun 14:30]".into());
+        t.timestamp_type = Some("CLOSED".into());
+        t.timestamp_active = Some(false);
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(
+            json.contains("\"timestamp_active\":false"),
+            "JSON must surface timestamp_active=false: {json}"
+        );
+    }
+
+    #[test]
+    fn task_omits_timestamp_active_when_none() {
+        // Per ADR-0015, missing optional fields stay out of JSON entirely
+        // so the addition is non-breaking for old consumers.
+        let json = serde_json::to_string(&empty_task()).unwrap();
+        assert!(
+            !json.contains("timestamp_active"),
+            "absent timestamp must not emit the field: {json}"
+        );
+    }
+
+    #[test]
+    fn task_round_trips_timestamp_active_through_serde() {
+        let mut t = empty_task();
+        t.timestamp_active = Some(false);
+        let json = serde_json::to_string(&t).unwrap();
+        let back: Task = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.timestamp_active, Some(false));
     }
 
     #[test]

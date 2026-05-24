@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [\[Unreleased\]](#unreleased)
+- [\[0.5.0\] — 2026-05-25](#050--2026-05-25)
 - [\[0.4.2\] — 2026-05-22](#042--2026-05-22)
 - [\[0.4.1\] — 2026-05-22](#041--2026-05-22)
 - [\[0.4.0\] — 2026-05-22](#040--2026-05-22)
@@ -22,6 +23,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 _No user-visible changes yet._
+
+## [0.5.0] — 2026-05-25
+
+### Breaking
+
+- `CLOSED:` and `CREATED:` keywords no longer accept active angle
+  brackets. `CLOSED: <…>` and `CREATED: <…>` were accepted in 0.4.x
+  but diverged from upstream Emacs Org-mode (`org-closed-time-regexp`)
+  and from the `org-expiry` convention for `CREATED`. ADR-0014 pins
+  the policy: `CLOSED:` and `CREATED:` require inactive square
+  brackets (`CLOSED: [2024-12-08 Sun]`, `CREATED: [2024-09-01 Mon]`);
+  `SCHEDULED:` and `DEADLINE:` continue to require active angle
+  brackets and now reject `[…]` by construction. Mixed pairs
+  (`<…]`, `[…>`) are also rejected. Migration: rewrite affected
+  timestamps with the matching bracket form; bodies are unchanged.
+
+### Added
+
+- New JSON field `timestamp_active: bool` on each task surfaces the
+  bracket form (`true` for `<…>`, `false` for `[…]`). The field is
+  omitted when no timestamp is present, so the addition is
+  non-breaking for consumers that ignore unknown keys. ADR-0015
+  documents the schema-evolution policy under which this field was
+  added (no `schema_version` field; downstream `markdown-org-vscode`
+  pins a minimum extractor version via
+  `x-markdown-org.extractorVersion` in its `package.json`).
+- Inline plain timestamps now accept both `<2024-12-05 Thu>` and
+  `[2024-12-05 Thu]` forms. Previously only the angle form was
+  recognised. Inactive plain timestamps appear in the JSON output
+  with `timestamp_active: false` but never feed agenda (see ADR-0014).
+- `parse_org_timestamp` recognises repeater (`+1d`, `.+2w`, …) and
+  warning cookies (`-Nd`, `-Nw`, …) inside both bracket forms.
+
+### Changed
+
+- Agenda (day / week / month) drops any task whose timestamp is
+  inactive `[…]`. `CLOSED:`-typed entries were already excluded from
+  overdue / upcoming buckets; the new filter extends that to inline
+  plain `[…]`. `SCHEDULED:` / `DEADLINE:` are unaffected because the
+  regex layer guarantees they are always active.
+- CLOCK behaviour is unchanged. ADR-0014 explicitly preserves
+  ADR-0003: `CLOCK:` accepts both `<…>` and `[…]` start/end
+  endpoints, and a closed CLOCK range may mix the two between start
+  and end.
+
+### Documentation
+
+- New ADR-0014 (per-keyword bracket policy for timestamps) amends
+  ADR-0002 and pins the regex layer's per-keyword rules against
+  upstream Emacs Org-mode citations.
+- New ADR-0015 (JSON schema evolution policy) documents the
+  non-breaking-field rule and the
+  `x-markdown-org.extractorVersion`-based coordination with
+  `markdown-org-vscode`.
 
 ## [0.4.2] — 2026-05-22
 

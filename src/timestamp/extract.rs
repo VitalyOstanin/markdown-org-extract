@@ -410,8 +410,7 @@ mod tests {
 
     #[test]
     fn parse_fields_marks_angle_bracket_keyword_as_active() {
-        let (_, _, _, _, active) =
-            parse_timestamp_fields("SCHEDULED: <2024-12-05 Thu>", &[]);
+        let (_, _, _, _, active) = parse_timestamp_fields("SCHEDULED: <2024-12-05 Thu>", &[]);
         assert_eq!(active, Some(true));
     }
 
@@ -422,8 +421,7 @@ mod tests {
         // The regex layer (separate task) is what will accept or reject
         // each keyword/form combination. Pinning behaviour here keeps
         // `detect_active` honest once the regex change lands.
-        let (_, _, _, _, active) =
-            parse_timestamp_fields("CLOSED: [2024-12-05 Thu 14:30]", &[]);
+        let (_, _, _, _, active) = parse_timestamp_fields("CLOSED: [2024-12-05 Thu 14:30]", &[]);
         assert_eq!(active, Some(false));
     }
 

@@ -149,10 +149,35 @@ mod tests {
     #[test]
     fn test_rejects_mixed_brackets() {
         // Opening `[` must close with `]`; opening `<` must close with `>`.
-        // Mixing them is malformed and should not match.
+        // Mixing them within a single timestamp is malformed and must not
+        // match (paired alternation in CLOCK_RE catches this by construction).
         assert!(extract_clocks("CLOCK: [2023-02-19 21:30>").is_empty());
         assert!(extract_clocks("CLOCK: <2023-02-19 21:30]").is_empty());
         assert!(extract_clocks("CLOCK: [2023-02-19 21:30>--<2023-02-19 23:35]").is_empty());
+    }
+
+    #[test]
+    fn test_clock_range_endpoints_may_differ_in_bracket_form() {
+        // ADR-0003 keeps CLOCK forgiving: both `<...>` and `[...]` are
+        // valid bracket forms for the timer's start/end. ADR-0014 tightens
+        // the rule for other timestamp kinds (SCHEDULED/DEADLINE/CLOSED/
+        // CREATED) but explicitly leaves CLOCK unchanged. A real user
+        // might have closed an active timer started in `<...>` form and
+        // the editor wrote the end in `[...]`; the parser should accept
+        // this without erroring on the mismatch.
+        let mixed_range_first_square =
+            "CLOCK: [2023-02-19 Sun 21:30]--<2023-02-19 Sun 23:35> => 2:05";
+        let clocks = extract_clocks(mixed_range_first_square);
+        assert_eq!(clocks.len(), 1);
+        assert_eq!(clocks[0].start, "2023-02-19 Sun 21:30");
+        assert_eq!(clocks[0].end, Some("2023-02-19 Sun 23:35".to_string()));
+
+        let mixed_range_first_angle =
+            "CLOCK: <2023-02-19 Sun 21:30>--[2023-02-19 Sun 23:35] => 2:05";
+        let clocks = extract_clocks(mixed_range_first_angle);
+        assert_eq!(clocks.len(), 1);
+        assert_eq!(clocks[0].start, "2023-02-19 Sun 21:30");
+        assert_eq!(clocks[0].end, Some("2023-02-19 Sun 23:35".to_string()));
     }
 
     #[test]

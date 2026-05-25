@@ -79,10 +79,10 @@ Directory `benches/`, with `criterion` as a dev-dependency.
 
 ## Open info-level review notes
 
-Items from `docs/reviews/2026-05-21-1811-review.md` that were
-deliberately deferred at the close of the audit round. Each is
-non-blocking, info-severity, and recorded here so the rationale
-does not get lost.
+Items from the `docs/reviews/` audit rounds
+(`2026-05-21-1811-review.md` and `2026-05-25-1450-review.md`) that
+were deliberately deferred at their close. Each is non-blocking,
+info-severity, and recorded here so the rationale does not get lost.
 
 - **`tasks` mode filters only `TaskType::Todo` (logic i2)** — the
   README explicitly says "tasks whose state is TODO", so the
@@ -134,3 +134,28 @@ does not get lost.
   confusing message. Not a real risk for an already-published
   crates.io name, but worth a follow-up grep if a rename ever
   happens.
+- **Split `tests/cli.rs` by theme (tests i5)** — the integration
+  suite is one ~1800-line file. Splitting it into
+  `tests/cli_help.rs`, `tests/cli_output.rs`,
+  `tests/cli_agenda_window.rs`, `tests/cli_exit_codes.rs` would ease
+  navigation, but each `tests/*.rs` is a separate crate, so the
+  shared `bin()` helper and fixtures must be lifted into a
+  `tests/common/mod.rs` first. Long-term tech debt, not blocking;
+  do it when the file next grows enough to slow a search.
+- **Pre-tracing error format differs from tracing (observability O2)**
+  — hard errors before `Cli::parse()` (`install_signal_handlers`
+  failure) and the final `run()` error print via `eprintln!`
+  (`error: <msg>`), while everything after `init_tracing` uses the
+  `tracing-subscriber` fmt layout. This is deliberate — a hard error
+  must reach the user even under `--quiet`, before any subscriber
+  exists — and is an accepted CLI-architecture trait, not a defect.
+  Revisit only if stderr ever needs a single machine-parseable shape
+  end to end.
+- **Structured `kind`/`category` event field (observability O7)** —
+  events are classified only by message text today
+  (`cannot parse timestamp`, `walker entry failed`, the summary).
+  A stable tag (`kind = "parse.invalid_timestamp"`,
+  `"scan.walker_error"`, `"scan.summary"`) would let a consumer
+  classify stderr without matching prose. Not needed while stderr is
+  read by humans / CI; add it when `markdown-org-vscode` (or another
+  consumer) starts parsing the CLI's stderr for diagnostics.

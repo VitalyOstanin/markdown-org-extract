@@ -4,6 +4,11 @@ Architectural and policy decisions live in [`docs/adr/`](docs/adr/).
 This file lists the ones the agent must apply during work, with
 pointers to the full text and rationale.
 
+## Table of contents
+
+- [Decisions in force](#decisions-in-force)
+- [Background](#background)
+
 ## Decisions in force
 
 - TDD is mandatory for every code change. See

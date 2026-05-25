@@ -322,8 +322,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   brackets (`CLOSED: [2024-12-08 Sun]`, `CREATED: [2024-09-01 Mon]`);
   `SCHEDULED:` and `DEADLINE:` continue to require active angle
   brackets and now reject `[…]` by construction. Mixed pairs
-  (`<…]`, `[…>`) are also rejected. Migration: rewrite affected
-  timestamps with the matching bracket form; bodies are unchanged.
+  (`<…]`, `[…>`) are also rejected.
+
+  **Migration** — rewrite the affected `CLOSED:` / `CREATED:` lines,
+  swapping the angle brackets for square brackets. The keyword often
+  sits inside an inline code span (`` `CLOSED: <…>` ``), so the recipe
+  is not anchored to the start of the line:
+
+  ```bash
+  sed -i -E 's/(CLOSED:|CREATED:) <([^>]+)>/\1 [\2]/g' path/to/notes/*.md
+  ```
+
+  The date/text inside the brackets is unchanged; only the bracket
+  characters differ.
 
 ### Added
 

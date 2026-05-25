@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `release.yml` no longer interpolates `inputs.tag` into the shell
+  body of the "Resolve tag and version" step. The value now flows
+  through `env:` so a malicious workflow_dispatch input cannot
+  smuggle additional commands at YAML expansion time (SEC-1 in the
+  2026-05-25 review). The resolved tag is then validated by the
+  new `scripts/release-validate-tag.sh` against the
+  `vX.Y.Z[-pre+build]` SemVer-style format on both code paths
+  (push-tag and workflow_dispatch).
+
 ### Changed
 
 - `parser::extract_tasks` no longer owns a process-global

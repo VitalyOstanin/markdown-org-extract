@@ -144,13 +144,24 @@ jobs:
         # workflow_dispatch end up here; later steps read steps.tag.outputs.tag
         # (with `v` prefix, e.g. `v0.2.3`) and steps.tag.outputs.version
         # (without prefix, e.g. `0.2.3`) instead of re-deriving them.
+        #
+        # The workflow_dispatch input is passed through `env:` rather than
+        # interpolated into the shell body so a malicious tag value cannot
+        # smuggle additional commands at template-expansion time (SEC-1 in
+        # the 2026-05-25 review). `release-validate-tag.sh` then enforces
+        # the `vX.Y.Z[-pre+build]` format on the resolved tag regardless of
+        # which trigger produced it.
         id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TAG_INPUT: ${{ inputs.tag }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ inputs.tag }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="$TAG_INPUT"
           else
             TAG="${GITHUB_REF#refs/tags/}"
           fi
+          bash scripts/release-validate-tag.sh "$TAG"
           VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -311,14 +322,23 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Resolve tag and version
+        # Mirrors the "Resolve tag and version" step in the `test` job:
+        # `inputs.tag` flows through `env:` (no YAML expansion into the
+        # shell), then `release-validate-tag.sh` enforces the tag format
+        # before any later step can consume the value. See SEC-1 in the
+        # 2026-05-25 review for context.
         id: tag
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TAG_INPUT: ${{ inputs.tag }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ inputs.tag }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="$TAG_INPUT"
           else
             TAG="${GITHUB_REF#refs/tags/}"
           fi
+          bash scripts/release-validate-tag.sh "$TAG"
           VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"

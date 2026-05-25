@@ -128,6 +128,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   count in the summary record, so a consumer that indexes by `file`
   can tell some paths will not round-trip. Behaviour and rationale
   are pinned in ADR-0019 (MIN-15 in the 2026-05-25 encoding review).
+- Diagnostic records now key the file under one consistent name.
+  The per-file tracing span and the read / search / UTF-8 / non-UTF-8
+  events previously used `path=` while the parser events used
+  `file=`; all now use `file=`, matching the `Task.file` output
+  field, so a single path no longer appears under two keys at `-vv`
+  (O3 in the 2026-05-25 observability review).
+- A root `run` span carrying the scanned directory wraps the whole
+  pass, so `scan finished`, the summary, and the agenda events
+  inherit `run{dir=…}` and a multi-run log is attributable. The
+  span is at `info`, so the default `warn` output is unchanged; the
+  context appears from `-v` upward (O4, same review).
+- The trace event emitted when `parse_repeater` rejects an input is
+  now the static name `parse_repeater_rejected` (the rejection
+  cause stays in the `reason` field) instead of the message
+  `parse_repeater: rejected`, which mixed the operation identifier
+  with prose under `with_target(false)` (O6, same review).
 
 ### Tests
 

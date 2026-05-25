@@ -299,7 +299,7 @@ impl ProcessingStats {
     pub fn note_nonutf8_path(&mut self, lossy: &str) {
         if self.nonutf8_paths == 0 {
             tracing::warn!(
-                path = %lossy,
+                file = %lossy,
                 "file path is not valid UTF-8; the `file` field is rendered with U+FFFD replacement characters and may not round-trip. Further such paths this run are counted in the summary only."
             );
         }

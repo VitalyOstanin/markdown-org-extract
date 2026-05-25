@@ -78,12 +78,12 @@ pub fn parse_repeater(s: &str) -> Option<Repeater> {
     } else if let Some(r) = s.strip_prefix('+') {
         (RepeaterType::Cumulative, r)
     } else {
-        tracing::trace!(input = %s, reason = "missing prefix", "parse_repeater: rejected");
+        tracing::trace!(input = %s, reason = "missing prefix", "parse_repeater_rejected");
         return None;
     };
 
     if rest.is_empty() {
-        tracing::trace!(input = %s, reason = "empty after prefix", "parse_repeater: rejected");
+        tracing::trace!(input = %s, reason = "empty after prefix", "parse_repeater_rejected");
         return None;
     }
 
@@ -92,12 +92,12 @@ pub fn parse_repeater(s: &str) -> Option<Repeater> {
         let value: u32 = match value_str.parse() {
             Ok(v) => v,
             Err(_) => {
-                tracing::trace!(input = %s, reason = "non-numeric value for wd", "parse_repeater: rejected");
+                tracing::trace!(input = %s, reason = "non-numeric value for wd", "parse_repeater_rejected");
                 return None;
             }
         };
         if value == 0 {
-            tracing::trace!(input = %s, reason = "zero step for wd", "parse_repeater: rejected");
+            tracing::trace!(input = %s, reason = "zero step for wd", "parse_repeater_rejected");
             return None;
         }
         return Some(Repeater {
@@ -110,7 +110,7 @@ pub fn parse_repeater(s: &str) -> Option<Repeater> {
     let unit_char = match rest.chars().last() {
         Some(c) => c,
         None => {
-            tracing::trace!(input = %s, reason = "empty rest after wd check", "parse_repeater: rejected");
+            tracing::trace!(input = %s, reason = "empty rest after wd check", "parse_repeater_rejected");
             return None;
         }
     };
@@ -118,12 +118,12 @@ pub fn parse_repeater(s: &str) -> Option<Repeater> {
     let value: u32 = match value_str.parse() {
         Ok(v) => v,
         Err(_) => {
-            tracing::trace!(input = %s, reason = "non-numeric value", "parse_repeater: rejected");
+            tracing::trace!(input = %s, reason = "non-numeric value", "parse_repeater_rejected");
             return None;
         }
     };
     if value == 0 {
-        tracing::trace!(input = %s, reason = "zero step", "parse_repeater: rejected");
+        tracing::trace!(input = %s, reason = "zero step", "parse_repeater_rejected");
         return None;
     }
 
@@ -138,7 +138,7 @@ pub fn parse_repeater(s: &str) -> Option<Repeater> {
                 input = %s,
                 unit_char = %unit_char,
                 reason = "unknown unit",
-                "parse_repeater: rejected"
+                "parse_repeater_rejected"
             );
             return None;
         }

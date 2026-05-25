@@ -123,6 +123,17 @@ fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
     }
 
     let dir_canonical = validate_dir(&cli.dir)?;
+
+    // Root span for the whole run, carrying the scanned directory. Every
+    // event from here on — the per-file spans, `scan finished`, the summary,
+    // and the agenda events that otherwise have no span — inherits
+    // `run{dir=...}` so a multi-run log can be attributed (2026-05-25 review,
+    // O4). It is an `info_span`, so at the default `warn` level it is inactive
+    // and adds nothing to the default output; the context appears from `-v`
+    // upward, the same threshold at which `scan finished` becomes visible.
+    let run_span = tracing::info_span!("run", dir = %dir_canonical.display());
+    let _run = run_span.enter();
+
     let mappings = get_weekday_mappings(&cli.locale);
 
     let (tasks, stats) = scan_files(&cli, &dir_canonical, &mappings, interrupt)?;
@@ -315,7 +326,7 @@ fn scan_files(
                 // *why* a path failed without re-flooding the default
                 // warn stream that the O5 aggregation deliberately
                 // quietened (2026-05-25 review, m3 / error-handling).
-                tracing::debug!(path = %path.display(), error = %e, "file read failed; skipping");
+                tracing::debug!(file = %path.display(), error = %e, "file read failed; skipping");
                 continue;
             }
         }
@@ -324,7 +335,7 @@ fn scan_files(
         if let Err(e) = searcher.search_slice(&matcher, &buf, FoundSink { found: &mut found }) {
             stats.files_failed_search += 1;
             stats.record_failed_path(&path.display().to_string());
-            tracing::debug!(path = %path.display(), error = %e, "content search failed; skipping");
+            tracing::debug!(file = %path.display(), error = %e, "content search failed; skipping");
             continue;
         }
 
@@ -337,7 +348,7 @@ fn scan_files(
             Err(e) => {
                 stats.files_failed_read += 1;
                 stats.record_failed_path(&path.display().to_string());
-                tracing::debug!(path = %path.display(), error = %e, "file is not valid UTF-8; skipping");
+                tracing::debug!(file = %path.display(), error = %e, "file is not valid UTF-8; skipping");
                 continue;
             }
         };
@@ -367,10 +378,13 @@ fn scan_files(
         }
 
         // Wrap parsing in a span so every debug!/trace! emitted by the parser,
-        // timestamp extractor, and clock extractor inherits `path` automatically.
+        // timestamp extractor, and clock extractor inherits `file` automatically.
         // Without this, multi-file runs at `-vv` produce a soup of messages
-        // without any way to tie a warning back to the file it came from.
-        let span = tracing::debug_span!("file", path = %display_path);
+        // without any way to tie a warning back to the file it came from. The
+        // key is `file` (not `path`) so the span agrees with the parser events
+        // and the `Task.file` output field — one path, one key (2026-05-25
+        // review, O3).
+        let span = tracing::debug_span!("file", file = %display_path);
         let extracted = span.in_scope(|| {
             extract_tasks_with_counter(
                 Path::new(&display_path),

@@ -799,12 +799,14 @@ fn rejects_inverted_from_to_range() {
 }
 
 #[test]
-fn debug_log_includes_per_file_span_field() {
+fn debug_log_uses_unified_file_key_not_path() {
     // -vv enables debug-level events. The parser emits a `parsed file` event
-    // inside a `file` span carrying `path = ...`. The tracing fmt-layer prints
-    // span fields in the message, so stderr must contain a `path=` segment for
-    // at least one processed file. Locks the span wrapping in main.rs against
-    // accidental removal.
+    // inside a `file` span. Both the span and the parser events key the path
+    // under `file = ...` (matching `Task.file`); the older split where the
+    // span used `path=` while events used `file=` (O3, 2026-05-25 review) is
+    // gone. The tracing fmt-layer prints span fields in the message, so a
+    // clean run's stderr must carry `file=` and must NOT carry a stray `path=`
+    // segment. Locks the unified key against regression.
     let out = bin()
         .args(["--dir", "examples", "--current-date", "2025-12-05", "-vv"])
         .output()
@@ -816,8 +818,82 @@ fn debug_log_includes_per_file_span_field() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("path="),
-        "expected `path=` from the file span, got stderr: {stderr}"
+        stderr.contains("file="),
+        "expected `file=` from the unified file key, got stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("path="),
+        "the file span/events must use `file=`, never a stray `path=`; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn run_span_wraps_scan_finished_at_info() {
+    // O4 (2026-05-25 review): a root `run` span carries the scanned `dir` so
+    // every event under it — including the info-level `scan finished` summary
+    // — is attributable to a run. At -v the info span is active, so the
+    // fmt-layer prefixes the `scan finished` line with `run{dir=...}:`. Pins
+    // the root span against accidental removal without bloating the default
+    // (warn) output, where an info span is inactive.
+    let out = bin()
+        .args(["--dir", "examples", "--current-date", "2025-12-05", "-v"])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let scan_line = stderr
+        .lines()
+        .find(|l| l.contains("scan finished"))
+        .unwrap_or_else(|| panic!("no `scan finished` line at -v; stderr: {stderr}"));
+    assert!(
+        scan_line.contains("run{dir="),
+        "the `scan finished` line must inherit the root `run{{dir=...}}` span; line was: {scan_line}"
+    );
+}
+
+#[test]
+fn parse_repeater_rejection_uses_static_event_name() {
+    // O6 (2026-05-25 review): the trace event fired when `parse_repeater`
+    // rejects an input used the message `parse_repeater: rejected`, mixing the
+    // operation identifier with the text. With `with_target(false)` the
+    // operation is otherwise invisible, so the message is now a single static
+    // name `parse_repeater_rejected` (the reason stays in the `reason` field).
+    // A zero-step repeater `+0d` is the cheapest rejected input to exercise.
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("repeater.md");
+    fs::write(
+        &path,
+        "### TODO repeater probe\n`SCHEDULED: <2024-12-09 Mon +0d>`\n",
+    )
+    .unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--current-date",
+            "2024-12-09",
+            "-vvv",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("parse_repeater_rejected"),
+        "expected the static event name `parse_repeater_rejected` at -vvv; stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("parse_repeater: rejected"),
+        "the colon-style message must be gone; stderr: {stderr}"
     );
 }
 

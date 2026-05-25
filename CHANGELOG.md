@@ -164,6 +164,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   absolute path it tried (build.rs minor in the 2026-05-25
   security/DX review).
 
+### Dependencies
+
+- `serde_json` lockfile bumped `1.0.149` → `1.0.150` (a single
+  patch release; no semantic change, SemVer-compatible with the
+  existing `1.0.149` constraint). The `tempfile` dev-dependency
+  constraint is raised `3.10` → `3.27` to match the version the
+  lockfile already pinned; this is a cosmetic alignment of the
+  manifest with the resolved tree (MIN-16 in the 2026-05-25
+  tech-versions review).
+
 ### Removed
 
 - The dead `AppError::Walk` variant and its

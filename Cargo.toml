@@ -44,7 +44,7 @@ chrono = { version = "0.4.44", default-features = false }
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"
-tempfile = "3.10"
+tempfile = "3.27"
 
 # Optimised release profile for a CLI binary: thin LTO + single codegen unit
 # trims startup time and binary size at the cost of slightly slower builds.

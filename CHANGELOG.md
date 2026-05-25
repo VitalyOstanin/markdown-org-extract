@@ -152,6 +152,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   budget. The legacy `extract_tasks(path, content, mappings,
   max_tasks)` wrapper is kept and now creates a per-call counter
   internally; existing callers see no behaviour change.
+- The `scheduled_no_time` agenda bucket is now sorted
+  deterministically: by priority (high first, mirroring upstream
+  org-agenda's `urgency-down`), then by file path and line. It was
+  the only day-agenda bucket left unsorted, so its order followed
+  the filesystem walker's unspecified traversal and could differ
+  between runs on identical input (m1 in the 2026-05-25 logic
+  review). No-priority tasks sort last, consistent with the
+  `--tasks` flat list. The week and month agendas inherit the same
+  ordering, since they build each day through the same code path.
 
 ### Changed (build)
 

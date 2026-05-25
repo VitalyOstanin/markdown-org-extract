@@ -279,6 +279,30 @@ fn build_day_agenda_prepared(
         .scheduled_timed
         .sort_by(|a, b| a.task.timestamp_time.cmp(&b.task.timestamp_time));
     agenda.upcoming.sort_by_key(|t| t.days_offset);
+    // scheduled_no_time has no time-of-day to order by, so it is sorted by
+    // priority (high first, mirroring upstream org-agenda's `urgency-down`),
+    // then by file path and line as a deterministic tiebreaker. Without this
+    // the bucket inherited the walker's filesystem traversal order, which is
+    // unspecified and could differ between runs on identical input (m1 in the
+    // 2026-05-25 logic review). No-priority tasks sort last, consistent with
+    // the `--tasks` flat list.
+    agenda.scheduled_no_time.sort_by(|a, b| {
+        let pa = a
+            .task
+            .priority
+            .as_ref()
+            .map(|p| p.order())
+            .unwrap_or(NO_PRIORITY_ORDER);
+        let pb = b
+            .task
+            .priority
+            .as_ref()
+            .map(|p| p.order())
+            .unwrap_or(NO_PRIORITY_ORDER);
+        pa.cmp(&pb)
+            .then_with(|| a.task.file.cmp(&b.task.file))
+            .then_with(|| a.task.line.cmp(&b.task.line))
+    });
 
     agenda
 }
@@ -707,6 +731,60 @@ mod tests {
         let day = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let agenda = build_day_agenda(&tasks, day, day);
         assert_eq!(agenda.scheduled_no_time.len(), 1);
+    }
+
+    #[test]
+    fn scheduled_no_time_sorts_by_priority_then_file_line() {
+        use crate::types::Priority;
+
+        // m1 in the 2026-05-25 logic review: scheduled_no_time was the only
+        // day-agenda bucket left unsorted, so its order followed the walker's
+        // filesystem traversal and could differ between runs on identical
+        // input. It is now ordered by priority (high first, mirroring upstream
+        // org-agenda's `urgency-down`), then by file path and line as a fully
+        // deterministic tiebreaker (approximating `category-keep` / source
+        // order). No-priority tasks sort strictly last, like the `--tasks`
+        // flat list.
+        let day = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
+        let make = |heading: &str, prio: Option<Priority>, file: &str, line: u32| Task {
+            file: file.to_string(),
+            line,
+            heading: heading.to_string(),
+            content: String::new(),
+            task_type: Some(TaskType::Todo),
+            priority: prio,
+            created: None,
+            timestamp: Some("SCHEDULED: <2024-12-05 Thu>".to_string()),
+            timestamp_type: Some("SCHEDULED".to_string()),
+            timestamp_active: Some(true),
+            timestamp_date: Some("2024-12-05".to_string()),
+            timestamp_time: None,
+            timestamp_end_time: None,
+            clocks: None,
+            total_clock_time: None,
+        };
+
+        // Deliberately scrambled input order: highest priority arrives second,
+        // the no-priority task arrives first, and the two `[#A]` entries are
+        // in reverse file:line order relative to the expected output.
+        let tasks = vec![
+            make("none-a1", None, "a.md", 1),
+            make("A-b5", Some(Priority::A), "b.md", 5),
+            make("B-a1", Some(Priority::B), "a.md", 1),
+            make("A-a9", Some(Priority::A), "a.md", 9),
+        ];
+
+        let agenda = build_day_agenda(&tasks, day, day);
+        let order: Vec<&str> = agenda
+            .scheduled_no_time
+            .iter()
+            .map(|t| t.task.heading.as_str())
+            .collect();
+        assert_eq!(
+            order,
+            vec!["A-a9", "A-b5", "B-a1", "none-a1"],
+            "scheduled_no_time must sort by priority (high first), then file path, then line"
+        );
     }
 
     #[test]

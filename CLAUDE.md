@@ -94,6 +94,17 @@ pointers to the full text and rationale.
   `parser.rs::warning_cookie_requires_separator_and_terminator`. A
   reviewer finding "WARNING_BODY_RE diverges from upstream" closes
   with a pointer to it.
+- Input encoding expectations are fixed in
+  [ADR-0019](docs/adr/0019-input-encoding-expectations.md): content
+  is expected UTF-8 / NFC (no `unicode-normalization` pass — the
+  weekday table has no decomposable characters); a non-UTF-8 file
+  path is still processed but its `file` field renders lossily
+  (U+FFFD) with one `warn` per run and a `nonutf8_paths` summary
+  count (not WTF-8 / `serde_bytes`, which would break ADR-0015); and
+  `TS_BODY_MAX` / `CLOCK_BODY_MAX` are code-point caps, not byte
+  budgets. A reviewer finding "add Unicode normalisation", "the
+  `file` field can be lossy", or "`TS_BODY_MAX` is not a byte limit"
+  closes with a pointer to it.
 
 ## Background
 

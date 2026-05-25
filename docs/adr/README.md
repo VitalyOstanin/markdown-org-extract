@@ -49,6 +49,7 @@ was decided, and the trade-offs that came with it.
 | 0016 | [RUST_LOG overrides --verbose / --quiet](0016-rust-log-cli-precedence.md)              | Accepted |
 | 0017 | [No branch protection on master; pre-commit hook policy](0017-no-branch-protection-on-master.md) | Accepted |
 | 0018 | [Warning-cookie boundary divergence from upstream](0018-warning-cookie-boundary.md) | Accepted |
+| 0019 | [Input encoding expectations](0019-input-encoding-expectations.md)                     | Accepted |
 
 ## Adding a new ADR
 

@@ -19,11 +19,19 @@ const DFA_SIZE_LIMIT_BYTES: usize = 1 << 20; // 1 MiB
 /// engine will scan if the closing `>` is missing — defense in depth, not
 /// a semantic limit. Used by every timestamp pattern in
 /// `src/timestamp/extract.rs`.
+///
+/// The unit is **Unicode code points, not bytes**: `regex` runs in Unicode
+/// mode by default, so each `[^>]` repetition consumes one code point. A
+/// Cyrillic body therefore reaches the cap in fewer characters' worth of
+/// bytes than an ASCII body of the same length. This is intentional — the
+/// cap bounds the scan window regardless of per-code-point byte width
+/// (ADR-0019); it is not a byte-size budget.
 pub const TS_BODY_MAX: usize = 256;
 
 /// Upper bound on the body of a single CLOCK timestamp inside `[…]` / `<…>`.
 /// CLOCK bodies are well-formed `YYYY-MM-DD Day HH:MM` strings (~22 chars),
-/// so this cap is generous but bounded. Used by `src/clock.rs`.
+/// so this cap is generous but bounded. Used by `src/clock.rs`. Counted in
+/// Unicode code points, not bytes — see `TS_BODY_MAX` and ADR-0019.
 pub const CLOCK_BODY_MAX: usize = 128;
 
 /// Compile a regex with conservative size limits. Panics if `pattern` is invalid

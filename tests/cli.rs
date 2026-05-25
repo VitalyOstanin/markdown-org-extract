@@ -2350,3 +2350,53 @@ fn rust_log_env_overrides_verbose_flag() {
         "RUST_LOG=error must mute the -vv info line; stderr: {muted_err}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_path_is_processed_and_warned() {
+    // ADR-0019: a file whose name is not valid UTF-8 (legal on Linux, where
+    // filenames are arbitrary non-NUL byte sequences) is still read and its
+    // tasks emitted — the I/O goes through the OsStr path, not the lossy
+    // string. The `file` field is rendered with U+FFFD replacement chars, so
+    // the tool warns once per run that the path will not round-trip. The file
+    // content itself is valid UTF-8; only the name is not.
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let dir = tempdir().unwrap();
+    // `bad\xFFname.md`: 0xFF is a lone invalid UTF-8 byte; the `.md` suffix is
+    // intact so the default `*.md` glob still selects the file.
+    let fname = OsString::from_vec(b"bad\xFFname.md".to_vec());
+    let path = dir.path().join(&fname);
+    fs::write(
+        &path,
+        "### TODO non utf8 path task\n`SCHEDULED: <2024-12-09 Mon>`\n",
+    )
+    .unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--current-date",
+            "2024-12-09",
+        ])
+        .output()
+        .expect("run over a non-UTF-8 named file");
+
+    assert!(
+        out.status.success(),
+        "scan must succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("non utf8 path task"),
+        "the task from the non-UTF-8 named file must still be emitted; stdout: {stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("not valid UTF-8"),
+        "a non-UTF-8 path must trigger a warning; stderr: {stderr}"
+    );
+}

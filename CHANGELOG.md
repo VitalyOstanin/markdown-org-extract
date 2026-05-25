@@ -120,6 +120,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before); jq / grep can read it without stitching together
   multiple consecutive warn lines, and a noisy summary no longer
   drowns out genuine per-file warnings.
+- A file whose path is not valid UTF-8 (arbitrary bytes on Linux,
+  unpaired surrogates on Windows; not reachable on macOS) is now
+  flagged. Its tasks are still emitted — the `file` field is
+  rendered lossily with U+FFFD via `Path::display` — and the run
+  emits one `warn` on the first such path plus a `nonutf8_paths`
+  count in the summary record, so a consumer that indexes by `file`
+  can tell some paths will not round-trip. Behaviour and rationale
+  are pinned in ADR-0019 (MIN-15 in the 2026-05-25 encoding review).
 
 ### Tests
 
@@ -245,6 +253,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the regex comment cites the exact upstream regex. Satisfies
   the ADR-0012 verify-and-record rule for F5 in the 2026-05-25
   logic review.
+- ADR-0019 records the input-encoding expectations: content is
+  expected UTF-8 / NFC (no `unicode-normalization` pass — verified
+  that no weekday-table entry has a decomposable character), the
+  non-UTF-8-path handling above, and that `TS_BODY_MAX` /
+  `CLOCK_BODY_MAX` are code-point caps rather than byte budgets.
+  The `regex_limits.rs` comments now state the code-point unit
+  (MIN-15 in the 2026-05-25 encoding review).
 
 ## [0.5.0] — 2026-05-25
 

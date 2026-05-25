@@ -355,6 +355,17 @@ fn scan_files(
             }
         };
 
+        // A path that is not valid UTF-8 (arbitrary bytes on Linux, unpaired
+        // surrogates on Windows) was just rendered lossily into `display_path`
+        // via `Path::display`, which substitutes U+FFFD for the invalid bytes.
+        // The file is still processed, but the `file` field cannot round-trip,
+        // so warn once per run and count it (ADR-0019). `to_str().is_none()` is
+        // the precise signal: it distinguishes a genuinely non-UTF-8 path from
+        // a valid path that merely happens to contain a literal U+FFFD.
+        if path.to_str().is_none() {
+            stats.note_nonutf8_path(&display_path);
+        }
+
         // Wrap parsing in a span so every debug!/trace! emitted by the parser,
         // timestamp extractor, and clock extractor inherits `path` automatically.
         // Without this, multi-file runs at `-vv` produce a soup of messages

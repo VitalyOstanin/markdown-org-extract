@@ -265,6 +265,13 @@ pub struct ProcessingStats {
     /// Surfaced in the summary so the user knows the output reflects only the
     /// portion processed up to the signal.
     pub interrupted: bool,
+    /// Count of processed files whose path is not valid UTF-8 (legal on Linux,
+    /// where filenames are arbitrary non-NUL byte sequences; possible on
+    /// Windows via unpaired surrogates; not reachable on macOS). Their `file`
+    /// field is rendered lossily — `Path::display` substitutes U+FFFD for the
+    /// invalid bytes — so the path may not round-trip for a consumer. The
+    /// file itself is still read and its tasks emitted. See ADR-0019.
+    pub nonutf8_paths: usize,
 }
 
 impl ProcessingStats {
@@ -275,12 +282,28 @@ impl ProcessingStats {
             || self.walk_errors > 0
             || self.max_tasks_reached
             || self.interrupted
+            || self.nonutf8_paths > 0
     }
 
     pub fn record_failed_path(&mut self, path: &str) {
         if self.failed_paths.len() < MAX_DIAGNOSTIC_ITEMS {
             self.failed_paths.push(path.to_string());
         }
+    }
+
+    /// Record a processed file whose path is not valid UTF-8. The first such
+    /// path in a run emits one `warn` (with its lossy U+FFFD rendering for
+    /// context); later ones only bump the counter, so a directory full of
+    /// non-UTF-8 names cannot flood stderr. The aggregate count is also
+    /// surfaced in `print_summary`. See ADR-0019.
+    pub fn note_nonutf8_path(&mut self, lossy: &str) {
+        if self.nonutf8_paths == 0 {
+            tracing::warn!(
+                path = %lossy,
+                "file path is not valid UTF-8; the `file` field is rendered with U+FFFD replacement characters and may not round-trip. Further such paths this run are counted in the summary only."
+            );
+        }
+        self.nonutf8_paths += 1;
     }
 
     pub fn print_summary(&self) {
@@ -305,6 +328,7 @@ impl ProcessingStats {
             max_tasks_reached = self.max_tasks_reached,
             max_tasks_limit = self.max_tasks_limit,
             interrupted = self.interrupted,
+            nonutf8_paths = self.nonutf8_paths,
             failed_paths_count = self.failed_paths.len(),
             failed_paths_cap = MAX_DIAGNOSTIC_ITEMS,
             failed_paths = ?self.failed_paths,
@@ -369,6 +393,28 @@ mod tests {
         assert!(
             stats.has_warnings(),
             "interrupted runs must always show a summary"
+        );
+    }
+
+    #[test]
+    fn note_nonutf8_path_counts_and_makes_summary_visible() {
+        // ADR-0019: a non-UTF-8 path is processed but rendered lossily. The
+        // count is tracked so the summary surfaces it, and the bucket is part
+        // of `has_warnings` so a run that hit only such paths still prints a
+        // summary. The warn-once side effect is exercised end-to-end by the
+        // `non_utf8_path_is_processed_and_warned` CLI test; here we pin the
+        // accounting, which is what gates the single warn.
+        let mut stats = ProcessingStats::default();
+        assert!(!stats.has_warnings(), "default stats must be quiet");
+        stats.note_nonutf8_path("bad\u{FFFD}name.md");
+        stats.note_nonutf8_path("other\u{FFFD}.md");
+        assert_eq!(
+            stats.nonutf8_paths, 2,
+            "every non-UTF-8 path must be counted"
+        );
+        assert!(
+            stats.has_warnings(),
+            "a run with non-UTF-8 paths must surface a summary"
         );
     }
 

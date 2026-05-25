@@ -306,20 +306,25 @@ fn scan_files(
                 stats.files_skipped_size += 1;
                 continue;
             }
-            Err(_) => {
+            Err(e) => {
                 stats.files_failed_read += 1;
                 stats.record_failed_path(&path.display().to_string());
+                // The path is surfaced in the aggregated summary warn
+                // (see ProcessingStats::print_summary). Keep the
+                // underlying cause at debug level so `-vv` can explain
+                // *why* a path failed without re-flooding the default
+                // warn stream that the O5 aggregation deliberately
+                // quietened (2026-05-25 review, m3 / error-handling).
+                tracing::debug!(path = %path.display(), error = %e, "file read failed; skipping");
                 continue;
             }
         }
 
         let mut found = false;
-        if searcher
-            .search_slice(&matcher, &buf, FoundSink { found: &mut found })
-            .is_err()
-        {
+        if let Err(e) = searcher.search_slice(&matcher, &buf, FoundSink { found: &mut found }) {
             stats.files_failed_search += 1;
             stats.record_failed_path(&path.display().to_string());
+            tracing::debug!(path = %path.display(), error = %e, "content search failed; skipping");
             continue;
         }
 
@@ -329,9 +334,10 @@ fn scan_files(
 
         let content = match std::str::from_utf8(&buf) {
             Ok(s) => s,
-            Err(_) => {
+            Err(e) => {
                 stats.files_failed_read += 1;
                 stats.record_failed_path(&path.display().to_string());
+                tracing::debug!(path = %path.display(), error = %e, "file is not valid UTF-8; skipping");
                 continue;
             }
         };

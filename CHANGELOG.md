@@ -80,6 +80,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (diagnostics)
 
+- The three per-file failure branches in `scan_files`
+  (read / content-search / UTF-8) now log the underlying
+  `io::Error` / search error / `Utf8Error` at `debug` level with
+  the path, instead of discarding it. The cause is visible at
+  `-vv`; the default warn stream stays aggregated into the single
+  summary record (m3 in the 2026-05-25 review). Previously only
+  the path reached the summary and the reason was lost entirely.
 - `ProcessingStats::print_summary` now emits one structured warn
   record per run instead of up to 22 separate lines. The list of
   failed paths is carried in a `failed_paths` field on the

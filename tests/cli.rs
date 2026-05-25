@@ -1839,6 +1839,63 @@ fn print_summary_aggregates_failed_paths_into_single_warn() {
 }
 
 #[test]
+fn per_file_failure_reason_is_logged_at_debug() {
+    // m3 (2026-05-25 code / error-handling review): the three per-file
+    // failure branches in scan_files (read / search / utf8) used to
+    // discard the underlying io::Error / Utf8Error, recording only the
+    // path. The error cause is now logged at debug level so `-vv`
+    // explains *why* a path failed, while the default warn stream stays
+    // aggregated (one summary record, per O5). This pins both halves:
+    // the cause is present at -vv and absent at default verbosity.
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("bad.md");
+    // Passes the keyword pre-filter (`# TODO`) but fails str::from_utf8
+    // on the lone 0xFF byte, taking the utf8 branch.
+    let mut bytes = b"# TODO test\n".to_vec();
+    bytes.push(0xFF);
+    bytes.extend_from_slice(b"\n");
+    fs::write(&path, &bytes).unwrap();
+
+    // At -vv the per-file reason is visible.
+    let verbose = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "-vv",
+            "--current-date",
+            "2025-12-05",
+        ])
+        .output()
+        .expect("run");
+    let verbose_stderr = String::from_utf8_lossy(&verbose.stderr);
+    assert!(
+        verbose_stderr.contains("file is not valid UTF-8; skipping"),
+        "at -vv the per-file failure reason must be logged; stderr was:\n{verbose_stderr}"
+    );
+    assert!(
+        verbose_stderr.contains("bad.md"),
+        "the per-file debug record must carry the path; stderr was:\n{verbose_stderr}"
+    );
+
+    // At default verbosity the per-file debug record is suppressed; the
+    // path still appears once, in the aggregated summary warn.
+    let quiet = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--current-date",
+            "2025-12-05",
+        ])
+        .output()
+        .expect("run");
+    let quiet_stderr = String::from_utf8_lossy(&quiet.stderr);
+    assert!(
+        !quiet_stderr.contains("file is not valid UTF-8; skipping"),
+        "at default verbosity the per-file debug record must be silent; stderr was:\n{quiet_stderr}"
+    );
+}
+
+#[test]
 fn utf8_bom_prefix_does_not_swallow_first_heading() {
     // Files saved by editors such as Windows Notepad or VS Code with the
     // "UTF-8 with BOM" option ship a leading EF BB BF byte sequence

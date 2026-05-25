@@ -100,12 +100,17 @@ does not get lost.
   variants. Reconsider when a sixth variant or a structured
   context field (e.g. failing path on more variants) appears: the
   derive saves real code at that point.
-- **`O_NOFOLLOW` on `--output` open (error-handling I02)** — the
-  TOCTOU window between `validate_output_path` and `fs::write` is
-  documented in the function comment. Closing it needs an
+- **`O_NOFOLLOW` on `--output` open (error-handling I02; SEC-2)** —
+  the TOCTOU window between `validate_output_path` and `fs::write`
+  is documented in the function comment. Closing it needs an
   `OpenOptions` path with `O_NOFOLLOW` (Unix-only) and a fallback
   on Windows. Defer until the CLI runs in a context where the
-  attacker does not already own the target directory.
+  attacker does not already own the target directory. The
+  2026-05-25 security review (SEC-2, info) re-confirmed this is the
+  same window and that the non-setuid user-level CLI threat model
+  (cf. `cp` / `mv` / `tee`, none of which fight TOCTOU without
+  `O_NOFOLLOW`) makes the deferral correct; a reviewer re-raising
+  it closes with a pointer here.
 - **`read_capped` file-type re-check (error-handling I03)** — the
   walker filters by `is_file()` and `read_capped_into` caps the
   read at `MAX_FILE_SIZE + 1`, so a FIFO/named pipe replacement
@@ -117,11 +122,6 @@ does not get lost.
   profile. Adding a non-blocking release build to `ci.yml` (Linux
   only) would catch optimizer-only regressions earlier. Worth
   doing when the next "optimised-only" bug surfaces, not before.
-- **`TS_WARNINGS_EMITTED` global counter (observability INFO-4)** —
-  the static `AtomicUsize` is shared process-wide. Fine for a
-  one-shot CLI; matters if the parser is ever lifted into a
-  `[lib]` target. Replace with a counter threaded through
-  `extract_tasks` at that point.
 - **`file` span pre-filtering coverage (observability INFO-6)** —
   `tracing::debug_span!("file", ...)` wraps `extract_tasks` only.
   If per-file debug events ever land in the pre-filter phase

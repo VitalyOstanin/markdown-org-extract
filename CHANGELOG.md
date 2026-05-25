@@ -84,6 +84,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `### Added` / `### Changed` headings were silently dropped. The
   verifier fails such a tag and points at `--cleanup=verbatim`
   (L1 / I1 in the 2026-05-25 release review).
+- `.github/dependabot.yml` enables weekly Dependabot updates for the
+  `github-actions` ecosystem, grouped into a single pull request and
+  commit-prefixed `ci` to match the repository's conventional-commit
+  style. This automates the previously-manual bumping of the
+  SHA-pinned actions; cargo dependencies stay under the existing
+  informational `outdated.yml` cron (INFO-2 in the 2026-05-25 infra-CI
+  review). The `macos-latest` runner label is kept as a deliberate
+  trade-off (auto-migration over manual EOL tracking), not pinned.
 
 ### Documentation (developer)
 

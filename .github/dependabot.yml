@@ -1,0 +1,21 @@
+# Dependabot keeps the SHA-pinned GitHub Actions in .github/workflows up
+# to date, opening one weekly pull request that bumps every action (SHA
+# plus the trailing `# vX.Y.Z` marker comment). cargo dependencies are
+# tracked informationally by outdated.yml (a weekly `cargo outdated`
+# cron that reports without opening PRs), so only the github-actions
+# ecosystem is configured here. See the 2026-05-25 infra-CI review
+# (INFO-2).
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Batch all action bumps into a single PR instead of one per action.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    # Match the repository's conventional-commit style (e.g. `ci: ...`).
+    commit-message:
+      prefix: "ci"

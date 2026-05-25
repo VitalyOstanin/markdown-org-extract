@@ -161,7 +161,16 @@ pub enum DatePreference {
 }
 
 /// Select the occurrence side (`n1` or `n2`) that matches the requested
-/// `prefer`ence, given the bracket `n1 <= current < n2` (or `current == n1`).
+/// `prefer`ence, given the half-open bracket `n1 <= current < n2`.
+///
+/// The interval is right-open by construction (every `bracket_*` builder
+/// returns `n2` strictly after `current`), matching upstream org-mode where
+/// a period boundary belongs to the *next* period. So `current == n1` is the
+/// reachable left edge (the occurrence itself), while `current == n2` never
+/// occurs here — were it to, `Past` would already treat it as the next
+/// period (`current >= n2` → `n2`) and `Future` would skip past `n1`. `Past`
+/// returns the latest occurrence `<= current`; `Future` the earliest
+/// `>= current` (F7, 2026-05-25 logic review).
 fn pick(
     prefer: DatePreference,
     current: NaiveDate,
@@ -228,7 +237,14 @@ fn bracket_year(
 
     // Next valid occurrence strictly after `current`.
     let mut k2 = (n1.year() - base_year) / value + 1;
-    let safety_limit = max_complete + 200; // accommodate Feb-29 (gap up to 8 years)
+    // Accommodate Feb-29 (gap up to 8 years). `max_complete` is >= 0 whenever
+    // `current >= base_date`, which `closest_date` guarantees before
+    // dispatching here, so `+ 200` is already a positive ceiling. The
+    // `.max(0)` is defense-in-depth (F6, 2026-05-25 logic review): a direct
+    // call with `current < base_date` would otherwise yield a negative
+    // `max_complete` and a ceiling below `k2`, returning None silently
+    // instead of looping with a sane bound.
+    let safety_limit = max_complete.max(0) + 200;
     let n2 = loop {
         if k2 > safety_limit {
             return None;
@@ -477,6 +493,22 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_repeater_multibyte_in_value_no_panic() {
+        // F4 (2026-05-25 logic review): the slice-safety guard at
+        // `rest[..rest.len() - unit_char.len_utf8()]` only strips the *last*
+        // char, so a multibyte char left in the *middle* of the value
+        // (`+1ф5d`: ascii unit `d`, Cyrillic `ф` inside the digits) survives
+        // into `value_str`. `u32::parse` then rejects it, so the function
+        // returns None without panicking — but that path was not pinned. The
+        // multibyte byte boundary must also not be mistaken for a slice index.
+        assert!(parse_repeater("+1ф5d").is_none());
+        assert!(parse_repeater("++2д3w").is_none());
+        assert!(parse_repeater(".+1喜2y").is_none());
+        // Cyrillic inside a workday value, ascii `wd` suffix.
+        assert!(parse_repeater("+1ф2wd").is_none());
+    }
+
+    #[test]
     fn parse_repeater_rejects_each_failure_mode() {
         // Each rejection branch logs a distinct reason at trace-level; we cannot
         // observe the trace output here without a test subscriber, but at least
@@ -709,6 +741,13 @@ mod tests {
         prefer: DatePreference,
         step: u32,
     ) -> Option<NaiveDate> {
+        // F3 (2026-05-25 logic review): a zero step makes the inner
+        // `for _ in 0..step` walk no day, so `next` never advances past
+        // `current` and the outer `loop` spins forever. `parse_repeater`
+        // already rejects `+0wd`, so production never reaches here with 0;
+        // this guard stops a future test that passes 0 from hanging the
+        // suite, failing loudly in debug instead.
+        debug_assert!(step > 0, "workday oracle requires step > 0 to terminate");
         let calendar = crate::holidays::HolidayCalendar::global();
         if current == base_date {
             return Some(base_date);

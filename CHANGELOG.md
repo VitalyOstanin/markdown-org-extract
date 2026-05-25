@@ -173,6 +173,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   this would silently drop the first task; comrak 0.52 already strips
   the BOM cleanly. The test ensures any future comrak upgrade that
   regresses this path fails CI rather than silently losing tasks.
+- New regression test `test_parse_repeater_multibyte_in_value_no_panic`
+  pins that a repeater with a multibyte character *inside* the numeric
+  value (e.g. `+1ф5d`, `+1ф2wd`) is rejected without panicking. The
+  existing multibyte test only covered a multibyte *trailing* unit
+  char; this closes the slice-semantics gap noted as F4 in the
+  2026-05-25 logic review. Defensive hardening from the same review:
+  the workday test oracle now `debug_assert!`s `step > 0` so a future
+  zero-step test fails loudly instead of spinning forever (F3), and
+  `bracket_year`'s loop ceiling is computed as `max_complete.max(0) +
+  200` so a direct call with `current < base_date` degrades to `None`
+  rather than a negative bound (F6). Both paths are unreachable through
+  the public API today; the `pick` docstring was also clarified to
+  state the bracket is the half-open `n1 <= current < n2` (F7).
 
 ### Performance
 

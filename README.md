@@ -117,6 +117,18 @@ cargo check
 cargo clippy
 ```
 
+Run the full CI-equivalent locally before pushing or opening a PR:
+```bash
+scripts/check.sh
+```
+
+`scripts/check.sh` chains `cargo fmt --check`,
+`yamllint .github/workflows/`, `cargo clippy --all-targets -D warnings`,
+`cargo doc --no-deps -D warnings`, and `cargo test`. It is the single
+command that mirrors the CI configuration; running `cargo test` alone
+will not catch `rustfmt` or `yamllint` regressions that block CI on a
+subsequent push.
+
 #### Workday-handling test coverage
 
 `holidays` module:
@@ -1008,6 +1020,7 @@ markdown-org-extract/
 │   └── cli.rs              # CLI integration tests (assert_cmd)
 ├── examples/               # Sample markdown files
 ├── docs/                   # Supplementary documentation
+├── scripts/                # Developer helper scripts (see table below)
 ├── holidays_ru.json        # RF holiday / workday calendar
 ├── build.rs                # Generates holidays_data.rs at build time
 ├── rustfmt.toml            # Formatter settings (edition 2021, width 100)
@@ -1022,6 +1035,21 @@ markdown-org-extract/
 ├── LICENSE                 # MIT
 └── README.md
 ```
+
+### Helper scripts
+
+The `scripts/` directory holds developer-facing helpers. None of them
+ship to end users on crates.io (the `Cargo.toml` `exclude` list omits
+the whole directory).
+
+| Script                          | Purpose                                                                |
+| ------------------------------- | ---------------------------------------------------------------------- |
+| `scripts/check.sh`              | Full CI parity locally: `fmt --check` + `yamllint` + `clippy -D warnings` + `doc -D warnings` + `cargo test`. Run before every commit; CI runs the same steps |
+| `scripts/install-hooks.sh`      | Install a git `pre-commit` hook that delegates to `scripts/check.sh`. Pass `--force` to overwrite an existing hook |
+| `scripts/check-changelog.sh`    | Validate `CHANGELOG.md` shape before tagging: `## [Unreleased]` empty, latest version section present, version numbers monotonic |
+| `scripts/package-archive.sh`    | Build a release archive (`.tar.gz` on Linux / macOS, `.zip` on Windows) with a deterministic layout. Used by `.github/workflows/release.yml` |
+| `scripts/verify-archive.sh`     | Verify a release archive's filename, layout, and SHA-256. Mirrors what downstream packagers run |
+| `scripts/release-validate-tag.sh` | Validate that a release tag follows `vX.Y.Z[-pre+build]`. Called from `.github/workflows/release.yml` on both push-tag and workflow_dispatch paths |
 
 The `Cargo.toml` `exclude` list omits `docs/`, `.github/`, `scripts/`,
 `TODO.md`, and `CHANGELOG.md` from the published crate tarball on

@@ -33,6 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `vX.Y.Z[-pre+build]` SemVer-style format on both code paths
   (push-tag and workflow_dispatch).
 
+### Documentation (developer)
+
+- README now documents `scripts/check.sh` as the single command
+  that mirrors CI locally (fmt + yamllint + clippy + doc + test).
+  Running `cargo test` alone does not catch `rustfmt` or
+  `yamllint` regressions, which was the immediate cause of the
+  0.5.0 CI red. A new "Helper scripts" subsection under "Project
+  layout" tabulates every script under `scripts/` with its
+  purpose.
+
 ### Changed (diagnostics)
 
 - `ProcessingStats::print_summary` now emits one structured warn

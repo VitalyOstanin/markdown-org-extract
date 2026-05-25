@@ -248,6 +248,16 @@ fn bracket_year(
 /// Bracket on the month-repeater grid, truncating the day to fit the
 /// destination month while always starting from `base_date` so that
 /// `base_day` is preserved across truncations.
+///
+/// The returned pair satisfies the `pick` / `closest_date` invariant
+/// `n1 <= current < n2`. The month-number difference alone does not
+/// guarantee that: when `base_day` falls later in the month than
+/// `current`'s day (or `base_day` is truncated to a short month),
+/// `add_months(base, complete_months)` can land *after* `current`
+/// inside `current`'s own month. In that case the occurrence in
+/// `current`'s month is actually `n2`, so we step `complete_months`
+/// back one full period. `add_months` already truncates the day, so we
+/// reuse it directly instead of recomputing the truncation by hand.
 fn bracket_month(
     base_date: NaiveDate,
     current: NaiveDate,
@@ -256,25 +266,27 @@ fn bracket_month(
     use chrono::Datelike;
 
     let months_to_add = value as i32;
-    let base_day = base_date.day();
 
     let months_diff = (current.year() - base_date.year()) * 12
         + (current.month() as i32 - base_date.month() as i32);
-    let complete_months = (months_diff / months_to_add) * months_to_add;
+    let mut complete_months = (months_diff / months_to_add) * months_to_add;
 
-    let n1_raw = add_months(base_date, complete_months)?;
-    let n1 = NaiveDate::from_ymd_opt(
-        n1_raw.year(),
-        n1_raw.month(),
-        base_day.min(days_in_month(n1_raw.year(), n1_raw.month())),
-    )?;
+    let mut n1 = add_months(base_date, complete_months)?;
+    if n1 > current {
+        // The occurrence in `current`'s month has not been reached yet;
+        // the previous period is the latest occurrence on or before
+        // `current`. Stepping back by one full period lands in a month
+        // strictly earlier than `current`'s, so the invariant holds and
+        // the date we just rejected becomes `n2`.
+        complete_months -= months_to_add;
+        n1 = add_months(base_date, complete_months)?;
+    }
+    debug_assert!(
+        n1 <= current,
+        "bracket_month: n1={n1} still after current={current} after step-back"
+    );
 
-    let n2_raw = add_months(base_date, complete_months + months_to_add)?;
-    let n2 = NaiveDate::from_ymd_opt(
-        n2_raw.year(),
-        n2_raw.month(),
-        base_day.min(days_in_month(n2_raw.year(), n2_raw.month())),
-    )?;
+    let n2 = add_months(base_date, complete_months + months_to_add)?;
 
     Some((n1, n2))
 }
@@ -622,6 +634,54 @@ mod tests {
         let c2 = NaiveDate::from_ymd_opt(2024, 5, 1).unwrap();
         let fut2 = closest_date(base, c2, DatePreference::Future, &repeater).unwrap();
         assert_eq!(fut2, NaiveDate::from_ymd_opt(2024, 5, 31).unwrap());
+    }
+
+    #[test]
+    fn test_closest_date_month_past_respects_invariant() {
+        // Regression for F1 (2026-05-25 logic review): the `pick` /
+        // `closest_date` contract guarantees `n1 <= current < n2`, so for
+        // `Past` the answer must be the latest occurrence on or before
+        // `current` — never a date strictly after it.
+        //
+        // base = 2024-01-31, +1m. Occurrences (with the project's
+        // day-truncation semantics) are 2024-01-31, 02-29, 03-31, 04-30, …
+        // For current = 2024-04-15 the latest occurrence on or before is
+        // 2024-03-31, NOT the truncated April occurrence 2024-04-30 (which
+        // is after current and was returned before the fix).
+        let base = NaiveDate::from_ymd_opt(2024, 1, 31).unwrap();
+        let repeater = Repeater {
+            repeater_type: RepeaterType::Cumulative,
+            value: 1,
+            unit: RepeaterUnit::Month,
+        };
+        let current = NaiveDate::from_ymd_opt(2024, 4, 15).unwrap();
+        let past = closest_date(base, current, DatePreference::Past, &repeater).unwrap();
+        assert_eq!(
+            past,
+            NaiveDate::from_ymd_opt(2024, 3, 31).unwrap(),
+            "Past must be the last occurrence on or before current, not after it"
+        );
+        assert!(past <= current, "invariant n1 <= current violated");
+
+        // Future from the same point is unchanged: the earliest occurrence on
+        // or after 2024-04-15 is the truncated April date 2024-04-30.
+        let fut = closest_date(base, current, DatePreference::Future, &repeater).unwrap();
+        assert_eq!(fut, NaiveDate::from_ymd_opt(2024, 4, 30).unwrap());
+
+        // A multi-month period (+3m) must also keep the invariant. base + 3m
+        // grid lands on 2024-04-30; for current = 2024-04-15 the last
+        // occurrence on or before is the base date 2024-01-31.
+        let r3 = Repeater {
+            repeater_type: RepeaterType::Cumulative,
+            value: 3,
+            unit: RepeaterUnit::Month,
+        };
+        let past3 = closest_date(base, current, DatePreference::Past, &r3).unwrap();
+        assert_eq!(
+            past3, base,
+            "+3m Past from 2024-04-15 must be the base 2024-01-31"
+        );
+        assert!(past3 <= current);
     }
 
     #[test]

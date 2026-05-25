@@ -22,6 +22,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Monthly repeaters whose base day is later in the month than the
+  query day no longer return a *future* date for a `Past`
+  preference. `bracket_month` computed the bracket from the bare
+  month-number difference, so for a `+1m` repeater based on
+  2024-01-31 and a query on 2024-04-15 it returned the truncated
+  April occurrence 2024-04-30 (after the query) instead of the
+  last real occurrence 2024-03-31. The `pick` / `closest_date`
+  contract `n1 <= current < n2` is now honoured for the month
+  grid: when the occurrence in the query's own month falls after
+  the query, the bracket steps back one full period. This makes
+  `closest_date(.., Past, ..)` consistent for monthly repeaters
+  and removes an accidental gap where such a task could be skipped
+  by the agenda overdue filter (F1 in the 2026-05-25 logic
+  review). Day truncation itself is unchanged (a deliberate
+  divergence from upstream's day-overflow semantics).
+
 ### Security
 
 - `release.yml` no longer interpolates `inputs.tag` into the shell

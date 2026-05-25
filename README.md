@@ -68,6 +68,11 @@ Reload the shell or re-source its config after writing the file.
 
 ### Building the project
 
+> The rest of this section — building, running from a checkout, and
+> testing — is for contributors and people building from source. If you
+> installed the binary with `cargo install` (above), skip to
+> [Usage](#usage); you do not need to clone the repository.
+
 Debug build:
 ```bash
 cargo build
@@ -298,6 +303,42 @@ In `--color auto` mode the following env vars are honoured (precedence from high
 
 CLI flags `--color always`, `--color never`, and `--no-color` override any of the above.
 
+### Environment variables
+
+The CLI reads no configuration files; behaviour is driven by flags and a
+small set of environment variables:
+
+- `RUST_LOG` — sets the diagnostic log filter (`tracing` syntax, e.g.
+  `RUST_LOG=debug` or `RUST_LOG=markdown_org_extract=trace`). When set,
+  it **overrides** `--verbose` / `--quiet` entirely (see
+  [ADR-0016](docs/adr/0016-rust-log-cli-precedence.md)).
+- `NO_COLOR`, `CLICOLOR_FORCE`, `CLICOLOR` — control ANSI colour in the
+  diagnostic log; see the colour-precedence table under
+  [Options](#options).
+
+The timezone is **not** taken from the `TZ` environment variable; it is
+controlled only by `--tz` (default `Europe/Moscow`). "Today" can be
+pinned with `--current-date` for reproducible output.
+
+### File selection
+
+The scan walks `--dir` with the [`ignore`](https://docs.rs/ignore)
+crate's standard filters, so it behaves like other Rust tooling
+(`ripgrep`, `fd`):
+
+- `.ignore` files (including nested ones deeper in the tree) are always
+  honoured; matching files are not scanned.
+- `.gitignore`, the global gitignore, and `.git/info/exclude` are
+  honoured only when the scanned tree is inside a git repository — the
+  `ignore` crate evaluates them relative to the enclosing `.git`. A
+  `.gitignore` in a directory with no `.git` has no effect; use
+  `.ignore` for VCS-independent rules.
+- Hidden files and directories (dot-prefixed) are skipped.
+- Symbolic links are not followed, and the walk stays on the starting
+  filesystem (it will not cross a mount point).
+- Of the files that survive those filters, only those matching `--glob`
+  (default `*.md`) are parsed.
+
 ### Examples
 
 Extract tasks from the current directory as JSON:
@@ -430,6 +471,14 @@ shell pipelines can branch on the cause:
 | `74`  | IO failure (`EX_IOERR`)                                                  | unreadable input file, walker error, write failure on `--output`                                          |
 | `130` | scan aborted by signal (`128 + SIGINT`)                                  | Ctrl-C during a long scan; SIGTERM on Unix. A partial `processing summary` is logged on stderr at warn.   |
 
+A broken output pipe is **not** an error: when a downstream consumer
+closes the read end early (`markdown-org-extract … | head -n 1`), the
+write fails with `EPIPE` / `BrokenPipe`. By then the bytes the consumer
+kept have already been produced, so the CLI exits `0` silently with no
+diagnostic — matching `cat`, `grep`, and `jq` in the same situation. A
+broken pipe on `--output` (a real file) is reported normally as an IO
+error (`74`); only the stdout pipe is treated as a clean stop.
+
 `AppError::Io` embeds the failing path or stream sentinel (`<stdout>`)
 in its `Display`, so an IO error reads
 `error: io: /tmp/out.json: Permission denied (os error 13)` instead of
@@ -470,9 +519,10 @@ CLOCK-block demonstrations (time tracking):
 - `simple-clock.md` — CLOCK inside fenced code blocks
 - `done-clock.md` — CLOCK attached to a DONE task (post-completion accounting)
 
-Try running:
+Try running (after `cargo install`, or substitute `cargo run --release --`
+from a checkout):
 ```bash
-./target/release/markdown-org-extract --dir ./examples --format md
+markdown-org-extract --dir ./examples --format md
 ```
 
 ## Agenda modes

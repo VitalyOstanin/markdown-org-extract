@@ -2,7 +2,6 @@ use comrak::nodes::{AstNode, NodeValue};
 use comrak::{parse_document, Arena, Options};
 use regex::Regex;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::LazyLock;
 
 use crate::clock::{calculate_total_minutes, extract_clocks, format_duration};
@@ -13,14 +12,16 @@ use crate::timestamp::{
 };
 use crate::types::{Priority, Task, TaskType, MAX_DIAGNOSTIC_ITEMS};
 
-// Per-process cap on invalid-timestamp warnings reuses `MAX_DIAGNOSTIC_ITEMS`
-// so both diagnostic surfaces (failed-path list and parse-warning stream)
-// stay aligned: "20 entries is already noisy". The counter is global because
-// warnings come from per-file parsing and we want one bound across all files.
-static TS_WARNINGS_EMITTED: AtomicUsize = AtomicUsize::new(0);
-
-fn warn_invalid_timestamp(path: &Path, line: u32, ts: &str) {
-    let n = TS_WARNINGS_EMITTED.fetch_add(1, Ordering::Relaxed);
+// Per-call cap on invalid-timestamp warnings reuses `MAX_DIAGNOSTIC_ITEMS` so
+// both diagnostic surfaces (failed-path list and parse-warning stream) stay
+// aligned: "20 entries is already noisy". The counter is owned by the caller
+// -- typically `ProcessingStats::ts_warnings_emitted` for a CLI run -- so
+// long-running library use cases and parallel scans do not pollute each
+// other's budget. The previous process-global `AtomicUsize` was replaced as
+// part of the 0.5.0 review (M1).
+fn warn_invalid_timestamp(counter: &mut usize, path: &Path, line: u32, ts: &str) {
+    let n = *counter;
+    *counter = counter.saturating_add(1);
     if n < MAX_DIAGNOSTIC_ITEMS {
         tracing::warn!(
             file = %path.display(),
@@ -56,21 +57,28 @@ static HEADING_TODO_RE: LazyLock<Regex> = LazyLock::new(|| compile_bounded(r"^(T
 static HEADING_PRIORITY_RE: LazyLock<Regex> =
     LazyLock::new(|| compile_bounded(r"\[#([A-Z]|6[0-4]|[1-5][0-9]|[0-9])\] ?"));
 
-/// Extract tasks from markdown content.
+/// Extract tasks from markdown content with a caller-owned warning counter.
+///
+/// Production callers (see `main.rs::scan_files`) pass
+/// `&mut ProcessingStats::ts_warnings_emitted` so the per-`MAX_DIAGNOSTIC_ITEMS`
+/// cap on invalid-timestamp warnings spans every file in the run. Library
+/// callers can pass their own counter to scope the budget per scan.
 ///
 /// # Arguments
 /// * `path` - Path to the markdown file. Stored verbatim in `Task.file` for output.
 /// * `content` - File content (UTF-8).
 /// * `mappings` - Weekday name mappings for localization.
 /// * `max_tasks` - Per-file cap. Parsing stops as soon as this many tasks accumulate.
+/// * `ts_warning_counter` - Mutable counter used to gate invalid-timestamp warnings.
 ///
 /// # Returns
 /// Vector of extracted tasks, capped at `max_tasks`.
-pub fn extract_tasks(
+pub fn extract_tasks_with_counter(
     path: &Path,
     content: &str,
     mappings: &[(&str, &str)],
     max_tasks: usize,
+    ts_warning_counter: &mut usize,
 ) -> Vec<Task> {
     let arena = Arena::new();
     let root = parse_document(&arena, content, &safe_comrak_options());
@@ -79,7 +87,14 @@ pub fn extract_tasks(
     let mut current_heading: Option<HeadingInfo> = None;
 
     for node in root.children() {
-        process_node(node, path, &mut tasks, &mut current_heading, mappings);
+        process_node(
+            node,
+            path,
+            &mut tasks,
+            &mut current_heading,
+            mappings,
+            ts_warning_counter,
+        );
 
         if tasks.len() >= max_tasks {
             tracing::warn!(
@@ -93,7 +108,7 @@ pub fn extract_tasks(
 
     // Flush remaining heading
     if let Some(info) = current_heading.take() {
-        if let Some(task) = finalize_task(path, info, mappings) {
+        if let Some(task) = finalize_task(path, info, mappings, ts_warning_counter) {
             tasks.push(task);
         }
     }
@@ -106,6 +121,24 @@ pub fn extract_tasks(
     );
 
     tasks
+}
+
+/// Extract tasks from markdown content with a per-call warning budget.
+///
+/// Convenience wrapper around [`extract_tasks_with_counter`] that owns the
+/// counter for the duration of one call. Used by the unit-test suite and
+/// available to library callers that scope the invalid-timestamp warning
+/// cap per file. The production CLI (`main.rs::scan_files`) uses
+/// `extract_tasks_with_counter` directly so the cap spans the whole run.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn extract_tasks(
+    path: &Path,
+    content: &str,
+    mappings: &[(&str, &str)],
+    max_tasks: usize,
+) -> Vec<Task> {
+    let mut counter = 0_usize;
+    extract_tasks_with_counter(path, content, mappings, max_tasks, &mut counter)
 }
 
 /// Comrak parsing options.
@@ -142,6 +175,7 @@ fn process_node<'a>(
     tasks: &mut Vec<Task>,
     current_heading: &mut Option<HeadingInfo>,
     mappings: &[(&str, &str)],
+    ts_warning_counter: &mut usize,
 ) {
     // Snapshot the borrow once — clone the value (cheap for Heading/Paragraph) and
     // read the sourcepos line in the same scope; drop before any code that
@@ -154,7 +188,7 @@ fn process_node<'a>(
         NodeValue::Heading(_) => {
             // Finalize previous heading first
             if let Some(info) = current_heading.take() {
-                if let Some(task) = finalize_task(path, info, mappings) {
+                if let Some(task) = finalize_task(path, info, mappings, ts_warning_counter) {
                     tasks.push(task);
                 }
             }
@@ -228,7 +262,12 @@ fn process_node<'a>(
     }
 }
 
-fn finalize_task(path: &Path, info: HeadingInfo, mappings: &[(&str, &str)]) -> Option<Task> {
+fn finalize_task(
+    path: &Path,
+    info: HeadingInfo,
+    mappings: &[(&str, &str)],
+    ts_warning_counter: &mut usize,
+) -> Option<Task> {
     if info.task_type.is_none() && info.created.is_none() && info.timestamp.is_none() {
         return None;
     }
@@ -237,7 +276,7 @@ fn finalize_task(path: &Path, info: HeadingInfo, mappings: &[(&str, &str)]) -> O
     let (ts_type, ts_date, ts_time, ts_end_time, ts_active) = if let Some(ref ts) = info.timestamp {
         let parsed = parse_timestamp_fields(ts, mappings);
         if parsed.1.is_none() {
-            warn_invalid_timestamp(path, line, ts);
+            warn_invalid_timestamp(ts_warning_counter, path, line, ts);
         }
         parsed
     } else {
@@ -399,6 +438,39 @@ fn collect_text_recursive<'a>(node: &'a AstNode<'a>, out: &mut String) {
 mod tests {
     use super::*;
     use crate::types::DEFAULT_MAX_TASKS;
+
+    #[test]
+    fn warn_invalid_timestamp_advances_per_call_counter() {
+        // The 0.5.0 review (M1) replaced a process-global
+        // `TS_WARNINGS_EMITTED: AtomicUsize` with a counter owned by the
+        // caller (typically `ProcessingStats::ts_warnings_emitted`).
+        // This test pins the per-call advance: each call bumps the
+        // counter by exactly one.
+        let mut counter = 0_usize;
+        let path = Path::new("t.md");
+        for i in 1..=25 {
+            warn_invalid_timestamp(&mut counter, path, i, "<bad>");
+        }
+        assert_eq!(counter, 25);
+    }
+
+    #[test]
+    fn warn_invalid_timestamp_counters_are_independent() {
+        // Independent counters do not pollute each other: e.g. a library
+        // consumer running two separate scans, or unit tests in the same
+        // binary, each see a fresh budget. With the previous global
+        // static this assertion would not hold across runs in one
+        // process.
+        let mut counter_a = 0_usize;
+        let mut counter_b = 0_usize;
+        let path = Path::new("t.md");
+        for _ in 0..MAX_DIAGNOSTIC_ITEMS {
+            warn_invalid_timestamp(&mut counter_a, path, 1, "<bad>");
+        }
+        warn_invalid_timestamp(&mut counter_b, path, 1, "<bad>");
+        assert_eq!(counter_a, MAX_DIAGNOSTIC_ITEMS);
+        assert_eq!(counter_b, 1);
+    }
 
     #[test]
     fn test_parse_heading_with_priority() {

@@ -254,6 +254,13 @@ pub struct ProcessingStats {
     pub max_tasks_limit: usize,
     /// Paths of files that could not be read or searched. Capped to avoid unbounded growth.
     pub failed_paths: Vec<String>,
+    /// Cumulative count of invalid-timestamp warnings encountered during the
+    /// scan, threaded through `extract_tasks_with_counter`. The first
+    /// `MAX_DIAGNOSTIC_ITEMS` are emitted verbatim; the next one collapses
+    /// into a single "suppressed (showed first N)" notice; further ones are
+    /// silent. Owned by `ProcessingStats` so the budget spans every file in
+    /// the run without resorting to process-global state.
+    pub ts_warnings_emitted: usize,
     /// Scan was aborted by SIGINT/SIGTERM before all entries were visited.
     /// Surfaced in the summary so the user knows the output reflects only the
     /// portion processed up to the signal.

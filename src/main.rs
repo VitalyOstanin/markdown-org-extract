@@ -33,7 +33,7 @@ use crate::agenda::filter_agenda;
 use crate::cli::{get_weekday_mappings, Cli};
 use crate::error::AppError;
 use crate::format::OutputFormat;
-use crate::parser::extract_tasks;
+use crate::parser::extract_tasks_with_counter;
 use crate::render::{render_html, render_markdown};
 use crate::types::{ProcessingStats, MAX_FILE_SIZE};
 
@@ -354,8 +354,15 @@ fn scan_files(
         // Without this, multi-file runs at `-vv` produce a soup of messages
         // without any way to tie a warning back to the file it came from.
         let span = tracing::debug_span!("file", path = %display_path);
-        let extracted = span
-            .in_scope(|| extract_tasks(Path::new(&display_path), content, mappings, cli.max_tasks));
+        let extracted = span.in_scope(|| {
+            extract_tasks_with_counter(
+                Path::new(&display_path),
+                content,
+                mappings,
+                cli.max_tasks,
+                &mut stats.ts_warnings_emitted,
+            )
+        });
         tasks.extend(extracted);
         stats.files_processed += 1;
 

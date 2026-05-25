@@ -22,6 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `parser::extract_tasks` no longer owns a process-global
+  `AtomicUsize` for the invalid-timestamp warning budget. The
+  counter is now passed through the new
+  `parser::extract_tasks_with_counter` API and lives on
+  `ProcessingStats::ts_warnings_emitted`. A long-running library
+  consumer or a parallel scan no longer pollutes another caller's
+  budget. The legacy `extract_tasks(path, content, mappings,
+  max_tasks)` wrapper is kept and now creates a per-call counter
+  internally; existing callers see no behaviour change.
+
 ### Documentation
 
 - README aligned with 0.5.0 behaviour: `CLOSED:` / `CREATED:`

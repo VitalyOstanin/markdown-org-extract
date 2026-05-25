@@ -1046,6 +1046,7 @@ the whole directory).
 | ------------------------------- | ---------------------------------------------------------------------- |
 | `scripts/check.sh`              | Full CI parity locally: `fmt --check` + `yamllint` + `clippy -D warnings` + `doc -D warnings` + `cargo test`. Run before every commit; CI runs the same steps |
 | `scripts/install-hooks.sh`      | Install a git `pre-commit` hook that delegates to `scripts/check.sh`. Pass `--force` to overwrite an existing hook |
+| `scripts/audit.sh`              | RustSec advisory scan (`cargo audit`) for a pre-push / pre-release run. Kept out of `check.sh` so the commit loop stays offline and fast; skips with an install hint if `cargo-audit` is absent. CI runs the same check via `rustsec/audit-check` |
 | `scripts/check-changelog.sh`    | Validate `CHANGELOG.md` shape before tagging: `## [Unreleased]` empty, latest version section present, version numbers monotonic |
 | `scripts/package-archive.sh`    | Build a release archive (`.tar.gz` on Linux / macOS, `.zip` on Windows) with a deterministic layout. Used by `.github/workflows/release.yml` |
 | `scripts/verify-archive.sh`     | Verify a release archive's filename, layout, and SHA-256. Mirrors what downstream packagers run |

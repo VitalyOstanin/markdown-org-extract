@@ -445,3 +445,35 @@ fn install_hooks_fails_outside_git_repo() {
         "stderr should explain the missing repo: {stderr}"
     );
 }
+
+#[test]
+fn audit_sh_skips_gracefully_when_cargo_audit_missing() {
+    // MIN-9 (2026-05-25 review): scripts/audit.sh is the deliberate
+    // out-of-pre-commit place for the RustSec advisory scan. When the
+    // optional `cargo-audit` binary is not installed it must print how to
+    // install it and exit 0 — a missing optional tool is not a failure of
+    // the caller's change.
+    //
+    // PATH is restricted to /usr/bin:/bin so `command -v cargo-audit` fails
+    // deterministically (cargo install puts cargo-audit in ~/.cargo/bin,
+    // which is excluded), while the shebang's `/usr/bin/env bash` and bash
+    // itself remain resolvable.
+    let out = Command::new(script("audit.sh"))
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .expect("run audit.sh");
+    assert!(
+        out.status.success(),
+        "a missing cargo-audit must be a graceful skip (exit 0); status: {:?}",
+        out.status
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("cargo-audit is not installed"),
+        "stderr should explain the tool is absent: {stderr}"
+    );
+    assert!(
+        stderr.contains("cargo install --locked cargo-audit"),
+        "stderr should give the install command: {stderr}"
+    );
+}

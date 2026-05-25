@@ -59,6 +59,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `vX.Y.Z[-pre+build]` SemVer-style format on both code paths
   (push-tag and workflow_dispatch).
 
+### Added (developer)
+
+- `scripts/audit.sh` runs a local RustSec advisory scan
+  (`cargo audit`) for a deliberate pre-push / pre-release check. It
+  is intentionally kept out of `scripts/check.sh` (and therefore the
+  pre-commit hook) so the commit loop stays offline and fast per
+  ADR-0017; CI continues to run the same scan on every push via
+  `rustsec/audit-check`. If `cargo-audit` is not installed the
+  script prints the install command and exits 0 (MIN-9 in the
+  2026-05-25 review).
+
 ### Documentation (developer)
 
 - ADR-0017 records the decision not to configure branch

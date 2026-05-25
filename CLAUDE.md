@@ -75,6 +75,10 @@ pointers to the full text and rationale.
   via `x-markdown-org.extractorVersion` in its `package.json`.
   Removing / renaming / re-typing / re-semanticising a field is
   breaking and bumps the version.
+- `RUST_LOG` takes precedence over `--verbose` / `--quiet`. See
+  [ADR-0016](docs/adr/0016-rust-log-cli-precedence.md). The status
+  quo is pinned by `tests/cli.rs::rust_log_env_overrides_verbose_flag`;
+  reverse the precedence only by superseding the ADR.
 
 ## Background
 

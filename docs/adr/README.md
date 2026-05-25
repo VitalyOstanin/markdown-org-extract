@@ -46,6 +46,7 @@ was decided, and the trade-offs that came with it.
 | 0013 | [Documentation language](0013-documentation-language.md)                               | Accepted |
 | 0014 | [Active and inactive timestamps](0014-active-and-inactive-timestamps.md)               | Accepted |
 | 0015 | [JSON schema evolution and consumer coordination](0015-json-schema-evolution.md)       | Accepted |
+| 0016 | [RUST_LOG overrides --verbose / --quiet](0016-rust-log-cli-precedence.md)              | Accepted |
 
 ## Adding a new ADR
 

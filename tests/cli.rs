@@ -1765,3 +1765,58 @@ fn holidays_stdout_ends_with_newline() {
         String::from_utf8_lossy(&out.stdout[out.stdout.len().saturating_sub(8)..])
     );
 }
+
+#[test]
+fn rust_log_env_overrides_verbose_flag() {
+    // ADR-0016 pins the precedence: `RUST_LOG` always wins over
+    // `--verbose` / `--quiet`. With `-vv` the binary emits
+    // `tracing::info!("scan finished")` on stderr; with
+    // `RUST_LOG=error` the same level filter is muted.
+    let baseline = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--format",
+            "json",
+            "--current-date",
+            "2025-12-05",
+            "-vv",
+        ])
+        .env_remove("RUST_LOG")
+        .output()
+        .expect("baseline run");
+    assert!(
+        baseline.status.success(),
+        "baseline stderr: {}",
+        String::from_utf8_lossy(&baseline.stderr)
+    );
+    let baseline_err = String::from_utf8_lossy(&baseline.stderr);
+    assert!(
+        baseline_err.contains("scan finished"),
+        "baseline -vv must emit info-level 'scan finished'; stderr: {baseline_err}"
+    );
+
+    let muted = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--format",
+            "json",
+            "--current-date",
+            "2025-12-05",
+            "-vv",
+        ])
+        .env("RUST_LOG", "error")
+        .output()
+        .expect("muted run");
+    assert!(
+        muted.status.success(),
+        "muted stderr: {}",
+        String::from_utf8_lossy(&muted.stderr)
+    );
+    let muted_err = String::from_utf8_lossy(&muted.stderr);
+    assert!(
+        !muted_err.contains("scan finished"),
+        "RUST_LOG=error must mute the -vv info line; stderr: {muted_err}"
+    );
+}

@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/CLOCK_IMPLEMENTATION.md` / `docs/org-mode-keywords.md`
   links in "See also" are replaced with pointers to ADR-0002,
   ADR-0003, ADR-0014 and the `docs/adr/` index.
+- ADR-0016 pins the `RUST_LOG` overrides `--verbose` / `--quiet`
+  precedence that 0.5.0 already ships. The contract is enforced
+  by a regression test in `tests/cli.rs`.
 
 ## [0.5.0] — 2026-05-25
 

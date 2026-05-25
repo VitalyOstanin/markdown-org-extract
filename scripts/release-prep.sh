@@ -45,16 +45,29 @@ if [ ! -f "$CHANGELOG" ]; then
     exit 2
 fi
 
-# Identical extraction to .github/workflows/release.yml and ADR-0011:
+# Same extraction the GitHub Release notes use (release.yml) and ADR-0011:
 # everything between "## [<VERSION>]" and the next "## [" heading, with the
-# leading and trailing blank lines trimmed. Keeping it byte-for-byte the same
-# as the workflow guarantees the tag body and the GitHub Release notes read
-# the same.
+# leading and trailing blank lines trimmed. The output is byte-for-byte the
+# same as the workflow's, so the tag body and the GitHub Release notes match;
+# the trim is done in awk (not a GNU-only sed blank-line delete) so it also
+# runs under BSD sed on the macOS CI runner. release.yml keeps its sed because
+# its publish job is Linux-only.
 body=$(awk -v ver="$VERSION" '
     $0 ~ "^## \\["ver"\\]" { flag=1; next }
     flag && /^## \[/ { exit }
-    flag { print }
-' "$CHANGELOG" | sed -e '1{/^$/d}' -e '$,${/^$/d}')
+    flag {
+        # Drop leading blank lines, then buffer the rest while tracking the
+        # last non-blank line so trailing blanks are dropped in END. Internal
+        # blank lines are preserved.
+        if ($0 == "" && !started) next
+        started = 1
+        buf[++n] = $0
+        if ($0 != "") last = n
+    }
+    END {
+        for (i = 1; i <= last; i++) print buf[i]
+    }
+' "$CHANGELOG")
 
 if [ -z "$body" ]; then
     echo "error: $CHANGELOG has no non-empty '## [${VERSION}]' section" >&2

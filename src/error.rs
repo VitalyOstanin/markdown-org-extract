@@ -33,15 +33,13 @@ pub enum AppError {
     Serialization(String),
     /// Regex compilation failed
     Regex(String),
-    /// Directory traversal (`ignore` crate) failed
-    Walk(String),
 }
 
 impl fmt::Display for AppError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // The CLI prepends `error: ` to whatever this returns. Avoid adding a
         // second category prefix when the inner `msg` is already a complete
-        // sentence; for opaque variants (Io / Walk / Regex / Serialization /
+        // sentence; for opaque variants (Io / Regex / Serialization /
         // InvalidTimezone) keep a short lowercase tag so output stays grepable.
         match self {
             AppError::Io { context, source } => write!(f, "io: {context}: {source}"),
@@ -53,7 +51,6 @@ impl fmt::Display for AppError {
             AppError::DateRange(msg) => write!(f, "{msg}"),
             AppError::Serialization(msg) => write!(f, "serialization: {msg}"),
             AppError::Regex(msg) => write!(f, "regex: {msg}"),
-            AppError::Walk(msg) => write!(f, "walk: {msg}"),
         }
     }
 }
@@ -64,7 +61,7 @@ impl AppError {
     /// - `2`  -- usage / input-validation failures the user can correct by
     ///   changing CLI arguments (matches clap's own argument-error exit).
     /// - `74` -- IO failures (`EX_IOERR` from `sysexits.h`): unreadable files,
-    ///   directory traversal errors, write failures.
+    ///   write failures.
     /// - `70` -- internal software errors (`EX_SOFTWARE`): a regex we built
     ///   ourselves did not compile, or our own serializer failed.
     pub fn exit_code(&self) -> i32 {
@@ -75,7 +72,7 @@ impl AppError {
             | AppError::InvalidTimezone(_)
             | AppError::InvalidOutput(_)
             | AppError::DateRange(_) => 2,
-            AppError::Io { .. } | AppError::Walk(_) => 74,
+            AppError::Io { .. } => 74,
             AppError::Regex(_) | AppError::Serialization(_) => 70,
         }
     }
@@ -113,12 +110,6 @@ impl std::error::Error for AppError {
 impl From<serde_json::Error> for AppError {
     fn from(err: serde_json::Error) -> Self {
         AppError::Serialization(err.to_string())
-    }
-}
-
-impl From<ignore::Error> for AppError {
-    fn from(err: ignore::Error) -> Self {
-        AppError::Walk(err.to_string())
     }
 }
 
@@ -190,7 +181,7 @@ mod tests {
         use std::error::Error as _;
         assert!(AppError::InvalidDirectory("x".into()).source().is_none());
         assert!(AppError::Regex("x".into()).source().is_none());
-        assert!(AppError::Walk("x".into()).source().is_none());
+        assert!(AppError::Serialization("x".into()).source().is_none());
     }
 
     #[test]
@@ -224,14 +215,13 @@ mod tests {
     }
 
     #[test]
-    fn exit_code_io_and_walk_return_74() {
+    fn exit_code_io_returns_74() {
         let io = io::Error::new(ErrorKind::NotFound, "missing");
         assert_eq!(
             AppError::io("/tmp/x", io).exit_code(),
             74,
             "Io maps to EX_IOERR (74) from sysexits.h"
         );
-        assert_eq!(AppError::Walk("x".into()).exit_code(), 74);
     }
 
     #[test]

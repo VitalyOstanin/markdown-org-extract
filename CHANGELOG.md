@@ -98,6 +98,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   max_tasks)` wrapper is kept and now creates a per-call counter
   internally; existing callers see no behaviour change.
 
+### Removed
+
+- The dead `AppError::Walk` variant and its
+  `From<ignore::Error>` conversion are gone. `scan_files` handles
+  walker errors locally (records the failing path in the summary
+  and continues the traversal) and never propagates an
+  `ignore::Error` through `?`, so the variant was reachable only
+  from its own unit tests. Removing it follows the same rationale
+  as the deliberately-absent blanket `From<io::Error>`: a future
+  caller that wants to make a walk error fatal must add the
+  conversion back explicitly, with a rationale, rather than
+  inheriting a silent path (MIN-3 in the 2026-05-25 review).
+
 ### Documentation
 
 - README aligned with 0.5.0 behaviour: `CLOSED:` / `CREATED:`

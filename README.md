@@ -1045,6 +1045,8 @@ the whole directory).
 | `scripts/package-archive.sh`    | Build a release archive (`.tar.gz` on Linux / macOS, `.zip` on Windows) with a deterministic layout. Used by `.github/workflows/release.yml` |
 | `scripts/verify-archive.sh`     | Verify a release archive's filename, layout, and SHA-256. Mirrors what downstream packagers run |
 | `scripts/release-validate-tag.sh` | Validate that a release tag follows `vX.Y.Z[-pre+build]`. Called from `.github/workflows/release.yml` on both push-tag and workflow_dispatch paths |
+| `scripts/release-prep.sh`       | Print the canonical annotated-tag message for a version: the `v<X.Y.Z>` subject plus the `CHANGELOG.md` section body (`### ` subheadings included). Tag with `git tag -a vX.Y.Z --cleanup=verbatim -F <(scripts/release-prep.sh X.Y.Z)` — `--cleanup=verbatim` is required, otherwise the default cleanup deletes the `### ` headings as comment lines |
+| `scripts/release-verify-tag-body.sh` | Check that the release tag is annotated and its body mirrors the `CHANGELOG.md` section (ADR-0011). Run from `.github/workflows/release.yml` before publishing; also runnable locally right after tagging |
 
 The `Cargo.toml` `exclude` list omits `docs/`, `.github/`, `scripts/`,
 `TODO.md`, and `CHANGELOG.md` from the published crate tarball on

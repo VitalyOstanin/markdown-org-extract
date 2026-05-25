@@ -2,6 +2,12 @@
 //!   * `scripts/check.sh`        — local equivalent of CI (fmt + clippy + test).
 //!   * `scripts/install-hooks.sh` — installs a git `pre-commit` hook that
 //!     delegates to `scripts/check.sh`.
+//!   * `scripts/release-validate-tag.sh` — the tag-shape validator shared by
+//!     both call sites in the release workflow.
+//!   * `scripts/release-prep.sh` — prints the canonical annotated-tag message
+//!     for a version (subject + CHANGELOG section body).
+//!   * `scripts/release-verify-tag-body.sh` — checks a created tag is
+//!     annotated and its body mirrors the CHANGELOG section (ADR-0011).
 //!
 //! Both scripts are POSIX bash. Tests drive them through `bash` with a
 //! tempdir-isolated environment so the project's real `.git/hooks/` and
@@ -475,5 +481,238 @@ fn audit_sh_skips_gracefully_when_cargo_audit_missing() {
     assert!(
         stderr.contains("cargo install --locked cargo-audit"),
         "stderr should give the install command: {stderr}"
+    );
+}
+
+// `scripts/release-prep.sh` and `scripts/release-verify-tag-body.sh` close
+// the L1/I1/I2 gap from the 2026-05-25 release review: the v0.5.0 annotated
+// tag lost its `### Added` / `### Changed` headings because the default tag
+// message cleanup (`strip`) deletes lines beginning with the comment
+// character `#`. release-prep.sh emits the canonical message; the verify
+// script (run in the release workflow before publishing) refuses a tag whose
+// body drifted from CHANGELOG.
+
+/// A minimal CHANGELOG fixture with the em-dash header shape that
+/// `scripts/check-changelog.sh` and the awk extractor require. The 0.4.0
+/// section carries two `### ` subheadings so a `strip`-cleanup regression is
+/// observable.
+const CHANGELOG_FIXTURE: &str = "\
+# Changelog
+
+## [Unreleased]
+
+_No user-visible changes yet._
+
+## [0.4.0] — 2026-06-10
+
+### Added
+
+- `--watch` mode that re-runs the agenda on file change.
+
+### Fixed
+
+- Holiday calendar lookup for 2027 (off-by-one on New Year).
+
+## [0.3.0] — 2026-05-01
+
+### Added
+
+- earlier release content that must not leak into 0.4.0 notes.
+";
+
+/// The exact message `release-prep.sh 0.4.0` must print for CHANGELOG_FIXTURE:
+/// the `v0.4.0` subject, a blank line, then the section body with both
+/// `### ` headings preserved and surrounding blank lines trimmed.
+const EXPECTED_PREP_0_4_0: &str = "\
+v0.4.0
+
+### Added
+
+- `--watch` mode that re-runs the agenda on file change.
+
+### Fixed
+
+- Holiday calendar lookup for 2027 (off-by-one on New Year).";
+
+/// Run `scripts/release-prep.sh <version>` with `CHANGELOG` pointed at a
+/// fixture file written into a fresh tempdir. Returns (exit code, stdout,
+/// stderr).
+fn run_release_prep(version: &str, changelog: &str) -> (i32, String, String) {
+    let dir = tempdir().unwrap();
+    let changelog_path = dir.path().join("CHANGELOG.md");
+    fs::write(&changelog_path, changelog).unwrap();
+
+    let output = Command::new("bash")
+        .arg(script("release-prep.sh"))
+        .arg(version)
+        .env("CHANGELOG", &changelog_path)
+        .output()
+        .expect("invoke release-prep.sh");
+    (
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn release_prep_emits_subject_and_section_body_with_headings() {
+    let (code, stdout, stderr) = run_release_prep("0.4.0", CHANGELOG_FIXTURE);
+    assert_eq!(code, 0, "release-prep.sh must succeed; stderr: {stderr}");
+    // Trailing newline aside, the body must match byte-for-byte, including the
+    // `### Added` / `### Fixed` headings the v0.5.0 tag lost.
+    assert_eq!(
+        stdout.trim_end_matches('\n'),
+        EXPECTED_PREP_0_4_0,
+        "release-prep.sh body must mirror the CHANGELOG section verbatim"
+    );
+}
+
+#[test]
+fn release_prep_fails_when_section_missing() {
+    let (code, stdout, stderr) = run_release_prep("9.9.9", CHANGELOG_FIXTURE);
+    assert_ne!(code, 0, "missing section must be an error");
+    assert!(stdout.is_empty(), "no stdout on error; got: {stdout:?}");
+    assert!(
+        stderr.contains("9.9.9"),
+        "stderr should name the missing version: {stderr}"
+    );
+}
+
+/// Initialise a git repo in `dir` with a committer identity and the CHANGELOG
+/// fixture committed, so `git tag -a` works.
+fn init_repo_with_changelog(dir: &Path) {
+    init_git_repo(dir);
+    for (k, v) in [("user.email", "t@example.invalid"), ("user.name", "Test")] {
+        let ok = Command::new("git")
+            .args(["config", k, v])
+            .current_dir(dir)
+            .status()
+            .expect("git config")
+            .success();
+        assert!(ok, "git config {k} failed");
+    }
+    fs::write(dir.join("CHANGELOG.md"), CHANGELOG_FIXTURE).unwrap();
+    let ok = Command::new("git")
+        .args(["add", "CHANGELOG.md"])
+        .current_dir(dir)
+        .status()
+        .expect("git add")
+        .success();
+    assert!(ok, "git add failed");
+    let ok = Command::new("git")
+        .args(["commit", "-q", "-m", "release: 0.4.0"])
+        .current_dir(dir)
+        .status()
+        .expect("git commit")
+        .success();
+    assert!(ok, "git commit failed");
+}
+
+/// Create an annotated tag whose message is `release-prep.sh <version>`.
+/// `verbatim` selects `--cleanup=verbatim` (headings survive) vs the default
+/// `strip` cleanup (headings dropped).
+fn tag_from_prep(repo: &Path, version: &str, verbatim: bool) {
+    let body = Command::new("bash")
+        .arg(script("release-prep.sh"))
+        .arg(version)
+        .current_dir(repo)
+        .output()
+        .expect("release-prep.sh for tagging");
+    assert!(
+        body.status.success(),
+        "release-prep.sh failed: {}",
+        String::from_utf8_lossy(&body.stderr)
+    );
+    let body_file = repo.join("tagbody.txt");
+    fs::write(&body_file, &body.stdout).unwrap();
+
+    let tag = format!("v{version}");
+    let body_file_str = body_file.to_str().unwrap();
+    let mut args: Vec<&str> = vec!["tag", "-a", &tag];
+    if verbatim {
+        args.push("--cleanup=verbatim");
+    }
+    args.push("-F");
+    args.push(body_file_str);
+
+    let ok = Command::new("git")
+        .args(&args)
+        .current_dir(repo)
+        .status()
+        .expect("git tag -a")
+        .success();
+    assert!(ok, "git tag -a failed");
+    fs::remove_file(&body_file).ok();
+}
+
+fn run_release_verify(repo: &Path, version: &str) -> (i32, String, String) {
+    let output = Command::new("bash")
+        .arg(script("release-verify-tag-body.sh"))
+        .arg(version)
+        .current_dir(repo)
+        .output()
+        .expect("invoke release-verify-tag-body.sh");
+    (
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn release_verify_accepts_verbatim_tag_mirroring_changelog() {
+    let dir = tempdir().unwrap();
+    init_repo_with_changelog(dir.path());
+    tag_from_prep(dir.path(), "0.4.0", /* verbatim */ true);
+
+    let (code, _out, stderr) = run_release_verify(dir.path(), "0.4.0");
+    assert_eq!(
+        code, 0,
+        "a verbatim tag built from release-prep.sh must verify; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn release_verify_rejects_lightweight_tag() {
+    let dir = tempdir().unwrap();
+    init_repo_with_changelog(dir.path());
+    let ok = Command::new("git")
+        .args(["tag", "v0.4.0"]) // lightweight: no -a
+        .current_dir(dir.path())
+        .status()
+        .expect("git tag (lightweight)")
+        .success();
+    assert!(ok, "lightweight git tag failed");
+
+    let (code, _out, stderr) = run_release_verify(dir.path(), "0.4.0");
+    assert_ne!(code, 0, "a lightweight tag must be rejected");
+    assert!(
+        stderr.contains("annotated"),
+        "stderr must explain the tag is not annotated: {stderr}"
+    );
+}
+
+#[test]
+fn release_verify_rejects_strip_cleanup_that_drops_headings() {
+    // The literal v0.5.0 regression: tagging with the default cleanup (strip)
+    // removes every `### ...` line because it begins with the comment
+    // character. The verify step must catch this and point at --cleanup=verbatim.
+    let dir = tempdir().unwrap();
+    init_repo_with_changelog(dir.path());
+    tag_from_prep(dir.path(), "0.4.0", /* verbatim */ false);
+
+    let (code, _out, stderr) = run_release_verify(dir.path(), "0.4.0");
+    assert_ne!(
+        code, 0,
+        "a strip-cleanup tag that dropped ### headings must be rejected"
+    );
+    assert!(
+        stderr.contains("verbatim"),
+        "stderr must recommend --cleanup=verbatim: {stderr}"
+    );
+    assert!(
+        stderr.contains("### Added") || stderr.contains("does not mirror"),
+        "stderr should show the divergence: {stderr}"
     );
 }

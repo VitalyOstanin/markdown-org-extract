@@ -69,6 +69,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rustsec/audit-check`. If `cargo-audit` is not installed the
   script prints the install command and exits 0 (MIN-9 in the
   2026-05-25 review).
+- `scripts/release-prep.sh <X.Y.Z>` prints the canonical
+  annotated-tag message for a version — the `v<X.Y.Z>` subject plus
+  the `CHANGELOG.md` section body, using the same awk extraction as
+  the release workflow — so the maintainer tags with
+  `git tag -a vX.Y.Z --cleanup=verbatim -F <(scripts/release-prep.sh X.Y.Z)`
+  instead of hand-copying (I2 in the 2026-05-25 release review).
+- `scripts/release-verify-tag-body.sh <X.Y.Z>` checks that the
+  release tag is annotated and its body mirrors the CHANGELOG
+  section, and the release workflow now runs it before publishing.
+  This closes the gap that let the v0.5.0 tag ship without its
+  `### ` headings: the default tag-message cleanup (`strip`) deletes
+  every line beginning with the comment character, so the
+  `### Added` / `### Changed` headings were silently dropped. The
+  verifier fails such a tag and points at `--cleanup=verbatim`
+  (L1 / I1 in the 2026-05-25 release review).
 
 ### Documentation (developer)
 

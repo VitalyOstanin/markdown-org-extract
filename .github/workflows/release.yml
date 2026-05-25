@@ -196,6 +196,23 @@ jobs:
         # `## [Unreleased]` still carries entries that were not moved over.
         run: ./scripts/check-changelog.sh "${{ steps.tag.outputs.version }}"
 
+      - name: Verify the annotated tag body mirrors CHANGELOG
+        # ADR-0011: the tag is annotated and its body equals the CHANGELOG
+        # section (subject `v<X.Y.Z>` + the `### ...` subheadings). Catches
+        # the v0.5.0 regression where the default tag cleanup (`strip`)
+        # silently dropped every `### ...` heading (L1 in the 2026-05-25
+        # release review) before anything reaches crates.io or the Release.
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          # actions/checkout fetches the commit but not necessarily the
+          # annotated tag object, so fetch it explicitly; `git cat-file -t`
+          # then resolves it as a `tag`. --force keeps the step idempotent
+          # when the local ref already points at the right object.
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          ./scripts/release-verify-tag-body.sh "$VERSION"
+
       - name: Release smoke test
         # Run on the LTO-enabled release profile. Catches optimizer-only bugs
         # (UB exposed by inlining, dead-code elimination collapsing a side

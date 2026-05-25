@@ -59,12 +59,28 @@ Examples:
 
   Install bash completion for the current user:
     markdown-org-extract --completions bash > ~/.local/share/bash-completion/completions/markdown-org-extract
+
+Environment:
+  RUST_LOG        Diagnostic log filter (tracing syntax). Takes precedence
+                  over --verbose / --quiet (e.g. RUST_LOG=error mutes -vv).
+  NO_COLOR        Any value disables ANSI colour in diagnostics.
+  CLICOLOR_FORCE  Non-zero value forces colour even when stderr is not a TTY.
+  CLICOLOR        CLICOLOR=0 disables colour in --color auto mode.
+
+Exit status:
+  0    success (also --holidays, --completions, and a broken output pipe)
+  2    usage or input-validation error
+  70   internal software error (EX_SOFTWARE: regex/serializer)
+  74   IO error (EX_IOERR: unreadable input, walker, --output write)
+  130  aborted by SIGINT/SIGTERM (128 + signal)
 ";
 
 /// Extract org-mode tasks from a directory of markdown files
 #[derive(Parser)]
 #[command(name = "markdown-org-extract")]
-#[command(about = "Extract tasks from markdown files with org-mode timestamps")]
+#[command(
+    about = "Extract tasks from markdown files with org-mode timestamps; emits JSON by default"
+)]
 #[command(long_about = CLI_LONG_ABOUT)]
 #[command(version)]
 pub struct Cli {
@@ -194,7 +210,7 @@ pub struct Cli {
 
     /// Print the shell completion script for the given shell and exit.
     /// Short-circuits scanning; cannot be combined with scan/agenda flags.
-    /// Usage: `markdown-org-extract --completions bash > /etc/bash_completion.d/markdown-org-extract`.
+    /// Usage: `markdown-org-extract --completions bash > ~/.local/share/bash-completion/completions/markdown-org-extract`.
     #[arg(
         long,
         value_enum,
@@ -400,6 +416,13 @@ fn validate_year(s: &str) -> Result<i32, String> {
 
 const MAX_TASKS_ALLOWED: usize = 10_000_000;
 
+/// Human-readable form of [`MAX_TASKS_ALLOWED`] for validator messages, grouped
+/// with underscores so a seven-digit cap reads clearly (`10_000_000` rather
+/// than `10000000`). Kept in sync with the numeric constant by the
+/// `max_tasks_allowed_display_matches_value` unit test (CLI-UX info 8 in the
+/// 2026-05-25 review).
+const MAX_TASKS_ALLOWED_DISPLAY: &str = "10_000_000";
+
 fn validate_max_tasks(s: &str) -> Result<usize, String> {
     use std::num::IntErrorKind;
     let n: usize = match s.parse() {
@@ -411,9 +434,9 @@ fn validate_max_tasks(s: &str) -> Result<usize, String> {
             // so a parse-time overflow is just an over-the-cap value — say so.
             return Err(match e.kind() {
                 IntErrorKind::PosOverflow => {
-                    format!("out of range, must be at most {MAX_TASKS_ALLOWED}")
+                    format!("out of range, must be at most {MAX_TASKS_ALLOWED_DISPLAY}")
                 }
-                _ => format!("must be a positive integer up to {MAX_TASKS_ALLOWED}"),
+                _ => format!("must be a positive integer up to {MAX_TASKS_ALLOWED_DISPLAY}"),
             });
         }
     };
@@ -421,7 +444,7 @@ fn validate_max_tasks(s: &str) -> Result<usize, String> {
         return Err("must be at least 1".to_string());
     }
     if n > MAX_TASKS_ALLOWED {
-        return Err(format!("must be at most {MAX_TASKS_ALLOWED}"));
+        return Err(format!("must be at most {MAX_TASKS_ALLOWED_DISPLAY}"));
     }
     Ok(n)
 }
@@ -561,9 +584,10 @@ mod tests {
 
     #[test]
     fn validate_max_tasks_rejects_above_cap_with_cap_message() {
-        // In-range usize but above MAX_TASKS_ALLOWED.
+        // In-range usize but above MAX_TASKS_ALLOWED. The cap is rendered with
+        // digit-group underscores (CLI-UX info 8, 2026-05-25 review).
         let err = validate_max_tasks("20000000").unwrap_err();
-        assert!(err.contains("at most 10000000"), "got: {err}");
+        assert!(err.contains("at most 10_000_000"), "got: {err}");
     }
 
     #[test]
@@ -573,8 +597,22 @@ mod tests {
         let err = validate_max_tasks("abc").unwrap_err();
         assert!(err.contains("positive integer"), "got: {err}");
         assert!(
-            err.contains("10000000"),
+            err.contains("10_000_000"),
             "expected cap in message, got: {err}"
+        );
+    }
+
+    #[test]
+    fn max_tasks_allowed_display_matches_value() {
+        // The human-readable cap string is a separate const for readability;
+        // pin that it still denotes the numeric cap so the two cannot drift.
+        let parsed: usize = MAX_TASKS_ALLOWED_DISPLAY
+            .replace('_', "")
+            .parse()
+            .expect("display must be a number once underscores are stripped");
+        assert_eq!(
+            parsed, MAX_TASKS_ALLOWED,
+            "MAX_TASKS_ALLOWED_DISPLAY must match MAX_TASKS_ALLOWED"
         );
     }
 
@@ -642,7 +680,7 @@ mod tests {
             "expected 'out of range' wording for overflow, got: {err}"
         );
         assert!(
-            err.contains("10000000"),
+            err.contains("10_000_000"),
             "expected cap in message, got: {err}"
         );
     }

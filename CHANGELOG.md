@@ -221,6 +221,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   review). No-priority tasks sort last, consistent with the
   `--tasks` flat list. The week and month agendas inherit the same
   ordering, since they build each day through the same code path.
+- `--help` now carries an `Exit status:` block (codes 0 / 2 / 70 /
+  74 / 130) and an `Environment:` block (`RUST_LOG`, `NO_COLOR`,
+  `CLICOLOR_FORCE`, `CLICOLOR`), so both are discoverable from the
+  binary instead of only the source or README. The short `-h` about
+  now states JSON is the default output, and the per-arg
+  `--completions` example points at a user-local install path
+  (`~/.local/share/bash-completion/completions/…`) rather than the
+  sudo-only `/etc/bash_completion.d/…` (CLI-UX info 1 / 7 / 8 / 9 in
+  the 2026-05-25 review).
+- The `--max-tasks` out-of-range and non-numeric error messages now
+  render the cap as `10_000_000` instead of `10000000` so the
+  seven-digit limit reads at a glance.
 
 ### Changed (build)
 

@@ -775,6 +775,118 @@ fn short_help_omits_examples_block() {
 }
 
 #[test]
+fn help_long_about_includes_exit_status_section() {
+    // CLI-UX info 1 / finding 9 (2026-05-25 review): shell scripts and bug
+    // reports branch on exit codes, but they were documented only in the
+    // source and the README. `--help` now carries an `Exit status:` block so
+    // the codes are discoverable from the binary itself. Pin the heading plus
+    // the two least-obvious codes (130 for signal, 74 for IO).
+    let out = bin().arg("--help").output().expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Exit status:"),
+        "expected an `Exit status:` block in --help, got: {stdout}"
+    );
+    for code in ["130", "74"] {
+        assert!(
+            stdout.contains(code),
+            "expected exit code `{code}` in the --help Exit status block, got: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn help_long_about_includes_environment_section() {
+    // CLI-UX info 8 / finding (2026-05-25 review): the recognised env vars
+    // (RUST_LOG, NO_COLOR, CLICOLOR, CLICOLOR_FORCE) were scattered across
+    // individual flag help-texts. `--help` now consolidates them under an
+    // `Environment:` block. Pin the heading and RUST_LOG (the one with
+    // behavioural precedence over --verbose/--quiet).
+    let out = bin().arg("--help").output().expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Environment:"),
+        "expected an `Environment:` block in --help, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("RUST_LOG"),
+        "expected RUST_LOG in the --help Environment block, got: {stdout}"
+    );
+}
+
+#[test]
+fn short_about_mentions_json_default() {
+    // CLI-UX info 1 / recommendation 2 (2026-05-25 review): JSON is the
+    // default wire format (ADR-0001), but the short `about` shown by `-h`
+    // did not say so — a user saw it only in the long `--help`. Pin the
+    // JSON-default mention in the at-a-glance summary.
+    let out = bin().arg("-h").output().expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("JSON by default"),
+        "expected the short -h about to mention JSON as the default, got: {stdout}"
+    );
+}
+
+#[test]
+fn completions_help_uses_user_local_path() {
+    // CLI-UX info 7 / recommendation 4 (2026-05-25 review): the per-arg help
+    // for --completions suggested a system-wide path (/etc/bash_completion.d,
+    // needs sudo) while the Examples block used a user-local one. A
+    // root-free CLI should not steer users toward sudo. The system-wide
+    // path is gone from --help; assert it does not reappear.
+    let out = bin().arg("--help").output().expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("/etc/bash_completion.d"),
+        "the --completions help must not steer users to a sudo-only system path, got: {stdout}"
+    );
+}
+
+#[test]
+fn completions_emit_elvish_and_powershell() {
+    // CLI-UX info 5 / recommendation 5 (2026-05-25 review): the ValueEnum
+    // accepts elvish and powershell, and the README lists them, but only
+    // bash/zsh/fish were exercised. Smoke-pin that these two also emit a
+    // non-trivial script and exit 0, so a clap_complete bump that drops one
+    // fails CI.
+    for shell in ["elvish", "powershell"] {
+        let out = bin().args(["--completions", shell]).output().expect("run");
+        assert!(
+            out.status.success(),
+            "--completions {shell} must succeed; stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            out.stdout.len() > 200,
+            "--completions {shell} should emit a non-trivial script, got {} bytes",
+            out.stdout.len()
+        );
+    }
+}
+
+#[test]
+fn version_flag_prints_semver() {
+    // CLI-UX info 6 / recommendation 6 (2026-05-25 review): `#[command(version)]`
+    // wires up --version, but nothing pinned it, so an accidental removal
+    // would go unnoticed. Pin the exact `markdown-org-extract <X.Y.Z>` line
+    // against the crate version.
+    let out = bin().arg("--version").output().expect("run");
+    assert!(
+        out.status.success(),
+        "--version must succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let expected = format!("markdown-org-extract {}", env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        stdout.trim(),
+        expected,
+        "--version output must be `{expected}`, got: {stdout}"
+    );
+}
+
+#[test]
 fn rejects_inverted_from_to_range() {
     // --from > --to should fail loudly with the DateRange variant; silently
     // accepting an empty range would produce a confusingly empty agenda. The

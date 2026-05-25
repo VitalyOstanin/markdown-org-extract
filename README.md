@@ -129,22 +129,16 @@ command that mirrors the CI configuration; running `cargo test` alone
 will not catch `rustfmt` or `yamllint` regressions that block CI on a
 subsequent push.
 
-#### Workday-handling test coverage
+#### Workday handling
 
-`holidays` module:
-- Loading the holiday calendar
-- Distinguishing regular weekends and working days
-- 2025 New Year holidays (1–8 January) and 2026 (1–9 January)
-- 2026 holiday shifts (8 March → 9 March, 9 May → 11 May)
-- Skipping weekends and holidays when locating the next working day
-
-`timestamp::repeater` module:
-- Parsing repeaters `+1wd`, `+2wd`, `++1wd`, `.+1wd`
-- Computing the next occurrence over working days
-- Skipping holidays in repeater arithmetic
-
-`timestamp::parser` module:
-- Parsing timestamps that carry `+1wd` and `+2wd`
+Workday-aware scheduling is exercised by tests across three modules:
+`holidays` (the RU calendar, weekend/holiday classification, and the
+next-working-day walk), `timestamp::repeater` (the `+Nwd` / `++Nwd` /
+`.+Nwd` repeater grammar and holiday-skipping occurrence arithmetic),
+and `timestamp::parser` (timestamps that carry a workday repeater).
+For the authoritative, always-current list of cases, read the
+`#[test]` functions in those modules (`cargo test -- --list` prints
+the names).
 
 ## For downstream packagers
 

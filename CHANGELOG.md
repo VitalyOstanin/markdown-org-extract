@@ -179,6 +179,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ADR-0016 pins the `RUST_LOG` overrides `--verbose` / `--quiet`
   precedence that 0.5.0 already ships. The contract is enforced
   by a regression test in `tests/cli.rs`.
+- The README's "Workday-handling test coverage" section, which
+  enumerated what each test module checks, is reformulated as a
+  short behaviour-level "Workday handling" note that points at the
+  test modules (`cargo test -- --list`) for the authoritative list.
+  The per-module checklist duplicated module structure and went
+  stale; describing coverage by behaviour follows ADR-0007 (MIN-10
+  in the 2026-05-25 review).
 - The `--verbose` help text now states that `-vvv` is the maximum
   level and that extra `-v` are ignored (with a one-off saturation
   warning), matching the runtime behaviour pinned by

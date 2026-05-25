@@ -587,11 +587,16 @@ Timestamps must be wrapped in backticks:
 
 **Planning markers:**
 ```markdown
-`CREATED: <2024-12-01 Mon>`
+`CREATED: [2024-12-01 Mon]`
 `DEADLINE: <2024-12-15 Sun>`
 `SCHEDULED: <2024-12-05 Wed>`
-`CLOSED: <2024-12-01 Mon>`
+`CLOSED: [2024-12-01 Mon]`
 ```
+
+The bracket form is per-keyword (see
+[ADR-0014](docs/adr/0014-active-and-inactive-timestamps.md)):
+`SCHEDULED:` and `DEADLINE:` carry active `<...>`; `CLOSED:` and
+`CREATED:` carry inactive `[...]`.
 
 **Date range:**
 ```markdown
@@ -611,10 +616,28 @@ documented scope and
 [ADR-0009](docs/adr/0009-unified-date-window-semantics.md) for the
 agenda window model.
 
-**Inactive timestamps (NOT extracted):**
-```markdown
-`[2024-12-10 Mon]` — square brackets denote an inactive timestamp
-```
+**Active and inactive timestamps:**
+
+Emacs Org-mode distinguishes two bracket forms — active `<...>`
+drives the agenda; inactive `[...]` is descriptive metadata that
+never feeds agenda windows. The accepted form is fixed per
+context:
+
+| Context        | Active `<...>` | Inactive `[...]` |
+| -------------- | -------------- | ---------------- |
+| `SCHEDULED:`   | yes            | no               |
+| `DEADLINE:`    | yes            | no               |
+| `CLOSED:`      | no             | yes              |
+| `CREATED:`     | no             | yes              |
+| Inline plain   | yes            | yes              |
+| `CLOCK:`       | yes            | yes              |
+
+Mixed pairs `<...]` and `[...>` are rejected. Inactive timestamps
+never drive day / week / month agenda windows; they are surfaced
+in the JSON output via the `timestamp_active` field
+(`true` for `<...>`, `false` for `[...]`). See
+[ADR-0014](docs/adr/0014-active-and-inactive-timestamps.md) for
+the upstream-Emacs sources and the breaking-change migration.
 
 **Note:** `CREATED` is extracted separately from the other timestamps and
 stored in the `created` field. This lets consumers track the task
@@ -745,11 +768,11 @@ The output format depends on the agenda mode.
 
 #### JSON
 
-Optional fields (`priority`, `created`, `timestamp_time`,
-`timestamp_end_time`, `clocks`, `total_clock_time`, `task_type`) are
-omitted when absent rather than serialised as `null`. This matches the
-`#[serde(skip_serializing_if = "Option::is_none")]` convention used in
-`src/types.rs`.
+Optional fields (`priority`, `created`, `timestamp_active`,
+`timestamp_time`, `timestamp_end_time`, `clocks`, `total_clock_time`,
+`task_type`) are omitted when absent rather than serialised as `null`.
+This matches the `#[serde(skip_serializing_if = "Option::is_none")]`
+convention used in `src/types.rs`.
 
 Example below is the actual output of
 `--dir examples --glob 'project-tasks.md' --tasks --max-tasks 1
@@ -766,6 +789,7 @@ Example below is the actual output of
     "priority": "A",
     "timestamp": "SCHEDULED: <2024-12-05 Wed>",
     "timestamp_type": "SCHEDULED",
+    "timestamp_active": true,
     "timestamp_date": "2024-12-05"
   }
 ]
@@ -818,6 +842,7 @@ in `--tasks` mode.
         "priority": "A",
         "timestamp": "SCHEDULED: <2024-12-05 Wed>",
         "timestamp_type": "SCHEDULED",
+        "timestamp_active": true,
         "timestamp_date": "2024-12-05",
         "days_offset": -365
       }
@@ -833,6 +858,7 @@ in `--tasks` mode.
         "task_type": "TODO",
         "timestamp": "DEADLINE: <2025-12-06 Sat>",
         "timestamp_type": "DEADLINE",
+        "timestamp_active": true,
         "timestamp_date": "2025-12-06",
         "days_offset": 1
       }
@@ -891,6 +917,10 @@ To let downstream consumers render agendas without re-parsing the
 `timestamp` string, the timestamp is split into structured fields:
 
 - `timestamp_type` — `SCHEDULED`, `DEADLINE`, `CLOSED`, or `PLAIN`
+- `timestamp_active` — bracket form: `true` for active `<...>`,
+  `false` for inactive `[...]`; omitted when no timestamp is
+  present (see
+  [ADR-0014](docs/adr/0014-active-and-inactive-timestamps.md))
 - `timestamp_date` — date as `YYYY-MM-DD`
 - `timestamp_time` — start time, e.g. `10:00` (when present)
 - `timestamp_end_time` — end time, e.g. `12:00` (when a range was given)
@@ -1001,8 +1031,10 @@ the binary, README, and LICENSE only (see "For downstream packagers"
 above).
 
 See also:
-- [docs/CLOCK_IMPLEMENTATION.md](docs/CLOCK_IMPLEMENTATION.md) — CLOCK marker implementation details
-- [docs/org-mode-keywords.md](docs/org-mode-keywords.md) — supported-keyword reference
+- [docs/adr/](docs/adr/) — architectural and policy decisions index
+- [docs/adr/0002-supported-org-mode-subset.md](docs/adr/0002-supported-org-mode-subset.md) — supported Org-mode subset
+- [docs/adr/0003-clock-metadata-support.md](docs/adr/0003-clock-metadata-support.md) — CLOCK marker implementation details
+- [docs/adr/0014-active-and-inactive-timestamps.md](docs/adr/0014-active-and-inactive-timestamps.md) — active vs inactive timestamp bracket policy
 - [CHANGELOG.md](CHANGELOG.md) — version history
 - [TODO.md](TODO.md) — deferred technical tasks
 

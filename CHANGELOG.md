@@ -22,7 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No user-visible changes yet._
+### Documentation
+
+- README aligned with 0.5.0 behaviour: `CLOSED:` / `CREATED:`
+  planning markers shown with inactive `[...]` brackets, a new
+  active-vs-inactive table documents the per-keyword policy from
+  ADR-0014, `timestamp_active` field added to the JSON examples
+  and to the Parsed timestamp fields list, and the broken
+  `docs/CLOCK_IMPLEMENTATION.md` / `docs/org-mode-keywords.md`
+  links in "See also" are replaced with pointers to ADR-0002,
+  ADR-0003, ADR-0014 and the `docs/adr/` index.
 
 ## [0.5.0] — 2026-05-25
 

@@ -33,6 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `vX.Y.Z[-pre+build]` SemVer-style format on both code paths
   (push-tag and workflow_dispatch).
 
+### Tests
+
+- New regression test `utf8_bom_prefix_does_not_swallow_first_heading`
+  pins the current behaviour for files saved as UTF-8 with a leading
+  byte-order mark (e.g. Windows Notepad, VS Code with the "UTF-8 with
+  BOM" option). The 2026-05-25 encoding review (point 1) suggested
+  this would silently drop the first task; comrak 0.52 already strips
+  the BOM cleanly. The test ensures any future comrak upgrade that
+  regresses this path fails CI rather than silently losing tasks.
+
 ### Performance
 
 - The default `--locale ru,en` path no longer rebuilds the

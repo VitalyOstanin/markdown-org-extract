@@ -1767,6 +1767,59 @@ fn holidays_stdout_ends_with_newline() {
 }
 
 #[test]
+fn utf8_bom_prefix_does_not_swallow_first_heading() {
+    // Files saved by editors such as Windows Notepad or VS Code with the
+    // "UTF-8 with BOM" option ship a leading EF BB BF byte sequence
+    // (U+FEFF). CommonMark does not strip the BOM, so without explicit
+    // handling the first heading line becomes "\u{FEFF}# TODO ..." and
+    // the heading downgrades to a paragraph -- silently losing the task.
+    // The encoding review (point 1) called this out as a real-world
+    // regression for vault files originating on Windows.
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("bom.md");
+    let body = "# TODO BOM-prefixed heading\n\n`SCHEDULED: <2025-12-05 Fri>`\n";
+    let mut content = Vec::with_capacity(3 + body.len());
+    content.extend_from_slice(b"\xEF\xBB\xBF");
+    content.extend_from_slice(body.as_bytes());
+    fs::write(&path, &content).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--format",
+            "json",
+            "--current-date",
+            "2025-12-05",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).expect("utf-8 stdout");
+    assert!(
+        stdout.contains("BOM-prefixed heading"),
+        "BOM-prefixed first heading must still be extracted; stdout: {stdout}"
+    );
+    assert!(
+        !stdout.contains('\u{FEFF}'),
+        "BOM must not leak into the output text; stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("\"task_type\""),
+        "task_type must survive BOM strip; stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("\"TODO\""),
+        "TODO marker must be parsed past the BOM; stdout: {stdout}"
+    );
+}
+
+#[test]
 fn rust_log_env_overrides_verbose_flag() {
     // ADR-0016 pins the precedence: `RUST_LOG` always wins over
     // `--verbose` / `--quiet`. With `-vv` the binary emits

@@ -2539,7 +2539,13 @@ fn rust_log_env_overrides_verbose_flag() {
     );
 }
 
-#[cfg(unix)]
+// Linux-only: the test must *create* a file whose name is not valid UTF-8,
+// which only Linux allows (filenames are arbitrary non-NUL bytes). macOS
+// APFS/HFS+ reject a non-Unicode filename at `fs::write`, so the scenario
+// cannot even be set up there — exactly the platform analysis ADR-0019
+// records (the lossy branch is unreachable on macOS). Windows is already
+// excluded by `unix`. Gating macOS out keeps the macOS CI matrix green.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn non_utf8_path_is_processed_and_warned() {
     // ADR-0019: a file whose name is not valid UTF-8 (legal on Linux, where

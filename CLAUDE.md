@@ -86,6 +86,14 @@ pointers to the full text and rationale.
   [ADR-0017](docs/adr/0017-no-branch-protection-on-master.md);
   a reviewer finding "branch protection is missing" closes with a
   pointer to it.
+- The warning-period cookie scanner (`WARNING_BODY_RE`) diverges
+  from upstream `org-get-wdays` on purpose: it requires a leading
+  whitespace separator and adds `]` to the terminator class. See
+  [ADR-0018](docs/adr/0018-warning-cookie-boundary.md); the
+  fail-closed reading is pinned by
+  `parser.rs::warning_cookie_requires_separator_and_terminator`. A
+  reviewer finding "WARNING_BODY_RE diverges from upstream" closes
+  with a pointer to it.
 
 ## Background
 

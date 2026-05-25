@@ -150,6 +150,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ADR-0016 pins the `RUST_LOG` overrides `--verbose` / `--quiet`
   precedence that 0.5.0 already ships. The contract is enforced
   by a regression test in `tests/cli.rs`.
+- ADR-0018 records the warning-period cookie scanner's deliberate
+  divergence from upstream `org-get-wdays`: a leading whitespace
+  separator is required and `]` is accepted as a terminator (for
+  inactive `[...]` timestamps). The fail-closed reading — `-3day`
+  and a glued `-3d-2d` match no cookie — is now pinned by
+  `parser.rs::warning_cookie_requires_separator_and_terminator`
+  and the regex comment cites the exact upstream regex. Satisfies
+  the ADR-0012 verify-and-record rule for F5 in the 2026-05-25
+  logic review.
 
 ## [0.5.0] — 2026-05-25
 

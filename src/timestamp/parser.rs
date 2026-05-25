@@ -52,12 +52,30 @@ static SINGLE_SQUARE_RE: LazyLock<Regex> = LazyLock::new(|| {
 static REPEATER_BODY_RE: LazyLock<Regex> =
     LazyLock::new(|| compile_bounded(r"([.+]+\d+(?:wd|[dwmyh]))"));
 
-// Scan the bracket body for a warning-period cookie `-N[hdwmy]`. The
-// trailing context `[\s>\]]|$` extends upstream `org-get-wdays`'s
-// `\\(\\'\\|>\\| \\)` to also recognise `]` as the bracket-close for
-// inactive timestamps, so a `[... -3d]` warning is read the same as in
-// `<... -3d>`. A substring like `-3day` (not a cookie) is still not
-// matched as `-3d` because `a` is not in the terminator class.
+// Scan the bracket body for a warning-period cookie `-N[hdwmy]`.
+//
+// Upstream Emacs Org-mode `org-get-wdays` (lisp/org.el L14937) uses
+// `-\([0-9]+\)\([hdwmy]\)\(\'\|>\| \)`: digits, a unit char, then a
+// terminator that is end-of-string, `>`, or a literal space. This
+// project's pattern keeps the same terminator idea with two
+// deliberate divergences from upstream, recorded in ADR-0018
+// ("Warning-cookie boundary divergence from upstream"):
+//   1. A leading `\s` is *required* before `-`. Upstream relies on the
+//      unit char + terminator alone to avoid matching the date's own
+//      `-MM` / `-DD` runs (a date component is never followed by
+//      `[hdwmy]`). Requiring a separator is stricter and fail-closed:
+//      a cookie glued to preceding text (`...d-3d`) is ignored rather
+//      than guessed at.
+//   2. The terminator class is `[\s>\]]|$` instead of upstream's
+//      ` |>|\'`. It adds `]` so an inactive `[... -3d]` cookie reads
+//      the same as the active `<... -3d>` form, and uses `\s` (any
+//      whitespace) rather than a single literal space.
+// Consequences of (1)+(2): `-3day` is not a cookie (`a` not in the
+// terminator class), and a pathological double cookie `-3d-2d` matches
+// nothing here (the `-` after `3d` is not a terminator, and `-2d` has
+// no leading `\s`), whereas upstream would extract the trailing `-2d`.
+// These bodies are not produced by Emacs; the fail-closed reading is
+// pinned by `warning_cookie_requires_separator_and_terminator`.
 static WARNING_BODY_RE: LazyLock<Regex> =
     LazyLock::new(|| compile_bounded(r"\s-(\d+)([hdwmy])(?:[\s>\]]|$)"));
 
@@ -287,6 +305,44 @@ mod tests {
         let with_warning_first = parse_org_timestamp("<2025-12-10 Wed -3d +1d>", None).unwrap();
         assert_eq!(with_warning_first.warning_days, Some(3));
         assert!(with_warning_first.repeater.is_some());
+    }
+
+    #[test]
+    fn warning_cookie_requires_separator_and_terminator() {
+        // Pins the two deliberate divergences from upstream `org-get-wdays`
+        // documented on WARNING_BODY_RE (ADR-0018, F5 in the 2026-05-25
+        // logic review). The parser is fail-closed: a cookie is read only
+        // when separated by whitespace and closed by whitespace / `>` /
+        // `]` / end-of-string.
+
+        // A well-formed, separated cookie is read (baseline).
+        assert_eq!(
+            parse_org_timestamp("<2025-12-10 Wed -3d>", None)
+                .unwrap()
+                .warning_days,
+            Some(3)
+        );
+
+        // No leading separator: `-2d` is glued to the preceding `d`, so it
+        // is NOT a cookie here. Upstream would extract the trailing `-2d`;
+        // we deliberately read nothing.
+        assert_eq!(
+            parse_org_timestamp("<2025-12-10 Wed -3d-2d>", None)
+                .unwrap()
+                .warning_days,
+            None,
+            "double cookie -3d-2d must be fail-closed (no leading separator on -2d)"
+        );
+
+        // Unit char not followed by a terminator: `-3day` is a word, not a
+        // cookie, because `a` is outside the terminator class.
+        assert_eq!(
+            parse_org_timestamp("<2025-12-10 Wed -3day>", None)
+                .unwrap()
+                .warning_days,
+            None,
+            "`-3day` is not a warning cookie"
+        );
     }
 
     // ADR-0014: bracket form is reported via `active`. `<...>` = active,

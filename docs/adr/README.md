@@ -48,6 +48,7 @@ was decided, and the trade-offs that came with it.
 | 0015 | [JSON schema evolution and consumer coordination](0015-json-schema-evolution.md)       | Accepted |
 | 0016 | [RUST_LOG overrides --verbose / --quiet](0016-rust-log-cli-precedence.md)              | Accepted |
 | 0017 | [No branch protection on master; pre-commit hook policy](0017-no-branch-protection-on-master.md) | Accepted |
+| 0018 | [Warning-cookie boundary divergence from upstream](0018-warning-cookie-boundary.md) | Accepted |
 
 ## Adding a new ADR
 

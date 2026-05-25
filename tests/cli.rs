@@ -1767,6 +1767,78 @@ fn holidays_stdout_ends_with_newline() {
 }
 
 #[test]
+fn print_summary_aggregates_failed_paths_into_single_warn() {
+    // The 2026-05-25 observability review (O5) flagged that
+    // `ProcessingStats::print_summary` emitted up to 22 warn-level
+    // records in a row (one summary, one header, and one per failed
+    // path up to MAX_DIAGNOSTIC_ITEMS=20). This drowned out real
+    // warnings on a noisy run. The aggregated form keeps everything
+    // in one structured record: jq / grep can still extract the list
+    // through a single field instead of stitching together multiple
+    // lines.
+    let dir = tempdir().unwrap();
+    // Two files that pass the grep-searcher pre-filter (they contain
+    // a `# TODO` keyword) but fail `std::str::from_utf8` because of an
+    // explicit lone 0xFF byte. Both paths land in
+    // `ProcessingStats::failed_paths` -> the previous code emitted three
+    // separate warn records per path.
+    for n in 0..2 {
+        let path = dir.path().join(format!("bad{n}.md"));
+        let mut bytes = b"# TODO test\n".to_vec();
+        bytes.push(0xFF);
+        bytes.extend_from_slice(b"\n");
+        fs::write(&path, &bytes).unwrap();
+    }
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--format",
+            "json",
+            "--current-date",
+            "2025-12-05",
+        ])
+        .output()
+        .expect("run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    let summary_lines: Vec<&str> = stderr
+        .lines()
+        .filter(|l| l.contains("processing summary"))
+        .collect();
+    assert_eq!(
+        summary_lines.len(),
+        1,
+        "exactly one 'processing summary' warn line expected; stderr was:\n{stderr}"
+    );
+
+    assert!(
+        !stderr.contains("failed paths (up to first"),
+        "the per-list header line must be folded into the summary; stderr:\n{stderr}"
+    );
+
+    // Each individual failed_path line in the old format had a literal
+    // `failed path` event message with a `path=...` field. The aggregated
+    // form uses the plural `failed_paths` field name and emits no
+    // standalone records.
+    let standalone_path_lines = stderr.matches("\"failed path\"").count()
+        + stderr
+            .lines()
+            .filter(|l| l.ends_with("failed path"))
+            .count();
+    assert_eq!(
+        standalone_path_lines, 0,
+        "no per-path 'failed path' records should remain; stderr:\n{stderr}"
+    );
+
+    assert!(
+        summary_lines[0].contains("bad0.md") || summary_lines[0].contains("bad1.md"),
+        "the aggregated summary must surface the failed paths; stderr:\n{stderr}"
+    );
+}
+
+#[test]
 fn utf8_bom_prefix_does_not_swallow_first_heading() {
     // Files saved by editors such as Windows Notepad or VS Code with the
     // "UTF-8 with BOM" option ship a leading EF BB BF byte sequence

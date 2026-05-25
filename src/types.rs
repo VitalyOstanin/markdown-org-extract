@@ -287,6 +287,15 @@ impl ProcessingStats {
         if !self.has_warnings() {
             return;
         }
+        // The 0.5.0 observability review (O5) merged the previous trio
+        // (one summary record, one `failed paths (up to first N)`
+        // header, and one record per path -- up to 22 warn lines in a
+        // row) into a single structured record. The `failed_paths`
+        // field carries the whole list (still capped to
+        // `MAX_DIAGNOSTIC_ITEMS` at insertion time) so that jq / grep
+        // can extract it without stitching together multiple lines,
+        // and so it no longer drowns out real per-file warnings on a
+        // noisy run.
         tracing::warn!(
             files_processed = self.files_processed,
             files_skipped_size = self.files_skipped_size,
@@ -296,17 +305,11 @@ impl ProcessingStats {
             max_tasks_reached = self.max_tasks_reached,
             max_tasks_limit = self.max_tasks_limit,
             interrupted = self.interrupted,
+            failed_paths_count = self.failed_paths.len(),
+            failed_paths_cap = MAX_DIAGNOSTIC_ITEMS,
+            failed_paths = ?self.failed_paths,
             "processing summary"
         );
-        if !self.failed_paths.is_empty() {
-            tracing::warn!(
-                count = self.failed_paths.len(),
-                "failed paths (up to first {MAX_DIAGNOSTIC_ITEMS}):"
-            );
-            for p in &self.failed_paths {
-                tracing::warn!(path = %p, "failed path");
-            }
-        }
     }
 }
 

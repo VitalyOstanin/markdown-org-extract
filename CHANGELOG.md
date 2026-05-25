@@ -33,6 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `vX.Y.Z[-pre+build]` SemVer-style format on both code paths
   (push-tag and workflow_dispatch).
 
+### Changed (diagnostics)
+
+- `ProcessingStats::print_summary` now emits one structured warn
+  record per run instead of up to 22 separate lines. The list of
+  failed paths is carried in a `failed_paths` field on the
+  summary record itself (capped to `MAX_DIAGNOSTIC_ITEMS=20` as
+  before); jq / grep can read it without stitching together
+  multiple consecutive warn lines, and a noisy summary no longer
+  drowns out genuine per-file warnings.
+
 ### Tests
 
 - New regression test `utf8_bom_prefix_does_not_swallow_first_heading`

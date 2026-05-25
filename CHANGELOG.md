@@ -131,6 +131,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   max_tasks)` wrapper is kept and now creates a per-call counter
   internally; existing callers see no behaviour change.
 
+### Changed (build)
+
+- `build.rs` resolves `holidays_ru.json` through
+  `CARGO_MANIFEST_DIR` instead of the current working directory.
+  Cargo runs the build script with cwd at the package root today,
+  but anchoring on the documented `CARGO_MANIFEST_DIR` contract
+  keeps the build correct if it is ever invoked from a packaged
+  tarball or a different cwd, and the read error now names the
+  absolute path it tried (build.rs minor in the 2026-05-25
+  security/DX review).
+
 ### Removed
 
 - The dead `AppError::Walk` variant and its

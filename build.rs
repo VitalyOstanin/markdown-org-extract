@@ -4,13 +4,23 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
-    println!("cargo:rerun-if-changed=holidays_ru.json");
+    // Resolve the calendar source relative to the crate root rather than the
+    // current working directory. Cargo runs build scripts with cwd at the
+    // package root today, but that is an implementation detail; anchoring on
+    // `CARGO_MANIFEST_DIR` (the documented contract) keeps the build correct
+    // if it is ever invoked from a packaged tarball or a different cwd, and
+    // lets the read error name the absolute path it actually tried.
+    let manifest_dir =
+        env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set by cargo");
+    let holidays_path = Path::new(&manifest_dir).join("holidays_ru.json");
+
+    println!("cargo:rerun-if-changed={}", holidays_path.display());
 
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR must be set by cargo");
     let dest_path = Path::new(&out_dir).join("holidays_data.rs");
 
-    let json =
-        fs::read_to_string("holidays_ru.json").expect("build.rs: failed to read holidays_ru.json");
+    let json = fs::read_to_string(&holidays_path)
+        .unwrap_or_else(|e| panic!("build.rs: failed to read {}: {e}", holidays_path.display()));
     let data: serde_json::Value =
         serde_json::from_str(&json).expect("build.rs: holidays_ru.json is not valid JSON");
     let root = data

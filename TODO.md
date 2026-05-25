@@ -10,6 +10,7 @@ package.
 - [Property-based and fuzz tests](#property-based-and-fuzz-tests)
 - [Localising CLI messages](#localising-cli-messages)
 - [Benchmarks (criterion)](#benchmarks-criterion)
+- [Deferred performance optimisations](#deferred-performance-optimisations)
 - [Open info-level review notes](#open-info-level-review-notes)
 
 ## Switch to edition 2024
@@ -76,6 +77,51 @@ Areas:
 - `closest_date` across different `unit` values.
 
 Directory `benches/`, with `criterion` as a dev-dependency.
+
+## Deferred performance optimisations
+
+Remaining micro-optimisations from the performance review in
+`docs/reviews/2026-05-25-1450-review.md` (INFO-4). The two highest-value
+items it listed — caching the Aho-Corasick weekday engine and removing
+the double weekday normalisation in `finalize_task` — already shipped
+(see the `### Performance` block in the `[Unreleased]` CHANGELOG). The
+review's own guidance applies to everything below: **benchmark a typical
+notes tree first** (`--agenda month` over ~1000 timestamped files,
+wall-time + `perf record`); without numbers the ordering is a guess, and
+none of these is worth a behavioural or API risk taken blind.
+
+- **Single-regex dispatch in `parse_org_timestamp` (priority 3)** —
+  `parse_org_timestamp` runs both the `<…>` and `[…]` single-timestamp
+  regexes. A `memchr`/`find` probe for the first `<` vs `[` could pick
+  one. Medium expected benefit, but it sits in the hot parse path and
+  changing it touches org-bracket semantics (ADR-0012), so it needs a
+  benchmark and full timestamp-matrix tests before it is worth the risk.
+- **`Arc<Task>` (or index refactor) in `TaskWithOffset` (priority 4)** —
+  week / month agendas clone `Task` into per-day buckets. Sharing via
+  `Arc<Task>` would cut clones on large trees but changes the internal
+  `TaskWithOffset` API and the agenda builders. Defer until a benchmark
+  shows the clone cost matters.
+- **`String::with_capacity` for render outputs (priority 5)** —
+  `render_days` / `render_tasks` (`src/render.rs`) grow the output
+  string from empty. Pre-sizing from a task-count estimate would save
+  reallocations on a busy month agenda. Behaviour-neutral but small;
+  fold into the first render-path benchmark.
+- **`get_holidays_for_year` via `partition_point` (priority 6)** —
+  `src/holidays.rs` filters the sorted holiday list linearly. A
+  `partition_point` on the year would make it O(log N + range). Called
+  once per `--holidays`, so the practical win is negligible; listed for
+  completeness.
+- **`extract_clocks` owned-string allocations (perf 3.6)** — each
+  `ClockEntry` field is an owned `String`. Lowering to `Cow<str>` or
+  source-text indices would cut allocations on clock-heavy files, but
+  the whole `Task -> JSON` pipeline is built on owned strings, so this
+  is a redesign, not a tweak.
+- **Compact JSON for machine consumers (perf 4.5)** — output is always
+  `to_string_pretty`. A compact `to_string` would be smaller/faster for
+  a pure machine parser, but pretty output is read by humans and is what
+  the JSON wire-contract snapshot tests pin, so switching the default is
+  a UX trade-off that needs sign-off, not a free win. A `--compact`
+  opt-in flag would be the non-breaking route if a consumer asks.
 
 ## Open info-level review notes
 

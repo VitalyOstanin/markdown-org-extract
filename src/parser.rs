@@ -8,7 +8,7 @@ use crate::clock::{calculate_total_minutes, extract_clocks, format_duration};
 use crate::regex_limits::compile_bounded;
 use crate::timestamp::{
     extract_created_normalized, extract_timestamp_normalized, normalize_weekdays,
-    parse_timestamp_fields,
+    parse_timestamp_fields_normalized,
 };
 use crate::types::{Priority, Task, TaskType, MAX_DIAGNOSTIC_ITEMS};
 
@@ -108,7 +108,7 @@ pub fn extract_tasks_with_counter(
 
     // Flush remaining heading
     if let Some(info) = current_heading.take() {
-        if let Some(task) = finalize_task(path, info, mappings, ts_warning_counter) {
+        if let Some(task) = finalize_task(path, info, ts_warning_counter) {
             tasks.push(task);
         }
     }
@@ -188,7 +188,7 @@ fn process_node<'a>(
         NodeValue::Heading(_) => {
             // Finalize previous heading first
             if let Some(info) = current_heading.take() {
-                if let Some(task) = finalize_task(path, info, mappings, ts_warning_counter) {
+                if let Some(task) = finalize_task(path, info, ts_warning_counter) {
                     tasks.push(task);
                 }
             }
@@ -262,19 +262,18 @@ fn process_node<'a>(
     }
 }
 
-fn finalize_task(
-    path: &Path,
-    info: HeadingInfo,
-    mappings: &[(&str, &str)],
-    ts_warning_counter: &mut usize,
-) -> Option<Task> {
+fn finalize_task(path: &Path, info: HeadingInfo, ts_warning_counter: &mut usize) -> Option<Task> {
     if info.task_type.is_none() && info.created.is_none() && info.timestamp.is_none() {
         return None;
     }
 
     let line = info.line;
     let (ts_type, ts_date, ts_time, ts_end_time, ts_active) = if let Some(ref ts) = info.timestamp {
-        let parsed = parse_timestamp_fields(ts, mappings);
+        // `info.timestamp` is assembled from `extract_timestamp_normalized`
+        // regex captures over an already-`normalize_weekdays`d string in
+        // both `process_node` branches, so a second normalisation here
+        // would be redundant work on every task.
+        let parsed = parse_timestamp_fields_normalized(ts);
         if parsed.1.is_none() {
             warn_invalid_timestamp(ts_warning_counter, path, line, ts);
         }

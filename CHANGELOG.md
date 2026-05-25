@@ -33,6 +33,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `vX.Y.Z[-pre+build]` SemVer-style format on both code paths
   (push-tag and workflow_dispatch).
 
+### Performance
+
+- The default `--locale ru,en` path no longer rebuilds the
+  Aho-Corasick weekday-substitution engine on every
+  `normalize_weekdays` call. The engine is now constructed once
+  per process for the canonical `RU_WEEKDAY_MAPPINGS` table and
+  reused across files and tasks. Non-default mappings (tests,
+  ad-hoc tables) keep the previous per-call build.
+- `parser::finalize_task` calls the new
+  `parse_timestamp_fields_normalized` directly. The previous code
+  ran `normalize_weekdays` a second time on a substring that was
+  already weekday-normalised at extraction time; the redundant
+  scan is removed.
+
 ### Changed
 
 - `parser::extract_tasks` no longer owns a process-global

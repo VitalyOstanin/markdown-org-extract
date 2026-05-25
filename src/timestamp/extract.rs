@@ -146,6 +146,12 @@ pub fn extract_timestamp_normalized(text: &str) -> Option<String> {
 // already destructure it. A struct refactor is tracked separately and does
 // not block the active-flag addition (ADR-0014).
 #[allow(clippy::type_complexity)]
+/// Convenience wrapper that runs `normalize_weekdays` before delegating to
+/// [`parse_timestamp_fields_normalized`]. Production callers in
+/// `parser::finalize_task` skip this hop because `info.timestamp` is already
+/// weekday-normalised by `extract_timestamp_normalized`; the wrapper is kept
+/// for unit tests that feed Cyrillic input directly.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn parse_timestamp_fields(
     timestamp: &str,
     mappings: &[(&str, &str)],
@@ -156,12 +162,31 @@ pub fn parse_timestamp_fields(
     Option<String>,
     Option<bool>,
 ) {
+    let normalized = normalize_weekdays(timestamp, mappings);
+    parse_timestamp_fields_normalized(&normalized)
+}
+
+/// Fast-path companion to [`parse_timestamp_fields`] for callers that have
+/// already weekday-normalised the input (e.g. `parser::finalize_task`, where
+/// `info.timestamp` was assembled from `extract_timestamp_normalized`'s
+/// regex captures over a `normalize_weekdays` output). Skipping the second
+/// normalisation removes a per-task Aho-Corasick scan on the timestamp
+/// substring.
+#[allow(clippy::type_complexity)]
+pub fn parse_timestamp_fields_normalized(
+    timestamp: &str,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<bool>,
+) {
     let ts_type = detect_ts_type(timestamp);
     let active = detect_active(timestamp);
-    let normalized = normalize_weekdays(timestamp, mappings);
 
     // Handle ranges: <...>--<...>
-    if let Some((first, second)) = split_range(&normalized) {
+    if let Some((first, second)) = split_range(timestamp) {
         let date = DATE_RE.captures(first).map(|c| c[1].to_string());
         let (time, end_from_first) = extract_time_pair(first);
         // If the first bracket already has a range like 10:00-12:00 — keep it.
@@ -174,8 +199,8 @@ pub fn parse_timestamp_fields(
         return (ts_type, date, time, end_time, active);
     }
 
-    let date = DATE_RE.captures(&normalized).map(|c| c[1].to_string());
-    let (time, end_time) = extract_time_pair(&normalized);
+    let date = DATE_RE.captures(timestamp).map(|c| c[1].to_string());
+    let (time, end_time) = extract_time_pair(timestamp);
     (ts_type, date, time, end_time, active)
 }
 
@@ -578,5 +603,34 @@ mod tests {
             extract_timestamp(&input, &[]).is_none(),
             "body of TS_BODY_MAX+1 chars must not match"
         );
+    }
+
+    #[test]
+    fn parse_timestamp_fields_normalized_matches_full_for_already_normalised_input() {
+        // `parse_timestamp_fields_normalized` is the fast-path entry point
+        // used by `parser::finalize_task`, where the input was already
+        // weekday-normalised at extraction time (see `process_node` and
+        // `extract_timestamps_from_node`). Calling the full
+        // `parse_timestamp_fields` on the same input would re-run
+        // `normalize_weekdays`; pinning the equivalence here guards the
+        // refactor against silent semantic drift between the two entry
+        // points.
+        let cases = [
+            "SCHEDULED: <2024-12-05 Thu>",
+            "DEADLINE: <2024-12-05 Thu 10:00>",
+            "<2024-12-05 Thu 10:00-12:00>",
+            "<2024-12-05 Thu 10:00>--<2024-12-06 Fri 14:00>",
+            "CLOSED: [2024-12-05 Thu]",
+            "[2024-12-05 Thu]",
+            "not a timestamp",
+        ];
+        for input in cases {
+            let full = parse_timestamp_fields(input, &[]);
+            let normalised = parse_timestamp_fields_normalized(input);
+            assert_eq!(
+                full, normalised,
+                "_normalized fast path must equal the full variant for already-English input `{input}`"
+            );
+        }
     }
 }

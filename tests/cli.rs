@@ -1469,6 +1469,337 @@ fn json_snapshot_agenda_day_minimal_fixture() {
     );
 }
 
+#[test]
+fn json_snapshot_tasks_mode_clock_entry() {
+    // MIN-12 (2026-05-25 tests review): the existing snapshots never
+    // exercised the CLOCK fields. Pin the `clocks` array element shape
+    // (start / end / duration) and the derived `total_clock_time` so a
+    // rename or reordering of those keys -- a breaking change under
+    // ADR-0015 -- cannot slip past the suite. CLOCK bracket forms are
+    // governed by ADR-0003.
+    let tmp = tempdir().expect("tmpdir");
+    fs::write(
+        tmp.path().join("clock.md"),
+        "# Notes\n\n### TODO Clocked task\n`SCHEDULED: <2026-05-21 Thu>`\n\
+         `CLOCK: [2026-05-21 Thu 10:00]--[2026-05-21 Thu 11:30] => 1:30`\n",
+    )
+    .expect("write clock.md");
+
+    let out = bin()
+        .args([
+            "--dir",
+            tmp.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).expect("stdout is UTF-8");
+    let expected = "\
+[
+  {
+    \"file\": \"clock.md\",
+    \"line\": 3,
+    \"heading\": \"Clocked task\",
+    \"content\": \"\",
+    \"task_type\": \"TODO\",
+    \"timestamp\": \"SCHEDULED: <2026-05-21 Thu>\",
+    \"timestamp_type\": \"SCHEDULED\",
+    \"timestamp_active\": true,
+    \"timestamp_date\": \"2026-05-21\",
+    \"clocks\": [
+      {
+        \"start\": \"2026-05-21 Thu 10:00\",
+        \"end\": \"2026-05-21 Thu 11:30\",
+        \"duration\": \"1:30\"
+      }
+    ],
+    \"total_clock_time\": \"1:30\"
+  }
+]
+";
+    assert_eq!(
+        stdout, expected,
+        "JSON CLOCK snapshot must be byte-exact; got:\n{stdout}"
+    );
+}
+
+#[test]
+fn json_snapshot_tasks_mode_inactive_timestamp() {
+    // MIN-12: pin `timestamp_active: false` for an inactive `[...]`
+    // timestamp. The active/inactive marker is the ADR-0014 contract that
+    // markdown-org-vscode relies on to round-trip the bracket form; a
+    // regression that dropped or inverted it would be a silent breaking
+    // change.
+    let tmp = tempdir().expect("tmpdir");
+    fs::write(
+        tmp.path().join("inactive.md"),
+        "# Notes\n\n### TODO Inactive stamp\n`[2026-05-21 Thu]`\n",
+    )
+    .expect("write inactive.md");
+
+    let out = bin()
+        .args([
+            "--dir",
+            tmp.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).expect("stdout is UTF-8");
+    let expected = "\
+[
+  {
+    \"file\": \"inactive.md\",
+    \"line\": 3,
+    \"heading\": \"Inactive stamp\",
+    \"content\": \"\",
+    \"task_type\": \"TODO\",
+    \"timestamp\": \"[2026-05-21 Thu]\",
+    \"timestamp_type\": \"PLAIN\",
+    \"timestamp_active\": false,
+    \"timestamp_date\": \"2026-05-21\"
+  }
+]
+";
+    assert_eq!(
+        stdout, expected,
+        "JSON inactive-timestamp snapshot must be byte-exact; got:\n{stdout}"
+    );
+}
+
+#[test]
+fn json_snapshot_tasks_mode_repeater_and_warning_preserved() {
+    // MIN-12: the repeater (`+1m`) and warning cookie (`-3d`) are not
+    // separate JSON fields -- they live verbatim inside the `timestamp`
+    // string, which downstream tooling re-parses. Pin that the string is
+    // surfaced byte-for-byte so a future "helpful" normalisation of the
+    // timestamp cannot silently drop the cookies.
+    let tmp = tempdir().expect("tmpdir");
+    fs::write(
+        tmp.path().join("rep.md"),
+        "# Notes\n\n### TODO Repeating with warning\n`DEADLINE: <2026-05-21 Thu +1m -3d>`\n",
+    )
+    .expect("write rep.md");
+
+    let out = bin()
+        .args([
+            "--dir",
+            tmp.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).expect("stdout is UTF-8");
+    let expected = "\
+[
+  {
+    \"file\": \"rep.md\",
+    \"line\": 3,
+    \"heading\": \"Repeating with warning\",
+    \"content\": \"\",
+    \"task_type\": \"TODO\",
+    \"timestamp\": \"DEADLINE: <2026-05-21 Thu +1m -3d>\",
+    \"timestamp_type\": \"DEADLINE\",
+    \"timestamp_active\": true,
+    \"timestamp_date\": \"2026-05-21\"
+  }
+]
+";
+    assert_eq!(
+        stdout, expected,
+        "JSON repeater/warning snapshot must be byte-exact; got:\n{stdout}"
+    );
+}
+
+#[test]
+fn json_snapshot_agenda_week_envelope() {
+    // MIN-12: pin the week envelope. It is an array of seven day objects
+    // (date / scheduled_timed / scheduled_no_time / upcoming) starting on
+    // the Monday of the --current-date's ISO week (2026-05-18). The single
+    // task lands on 2026-05-21 under scheduled_no_time; the other six days
+    // are empty buckets, which pins both the day count and the per-day
+    // shape against an array-key rename.
+    let tmp = tempdir().expect("tmpdir");
+    fs::write(
+        tmp.path().join("wk.md"),
+        "# Notes\n\n### TODO Week task\n`SCHEDULED: <2026-05-21 Thu>`\n",
+    )
+    .expect("write wk.md");
+
+    let out = bin()
+        .args([
+            "--dir",
+            tmp.path().to_str().unwrap(),
+            "--agenda",
+            "week",
+            "--current-date",
+            "2026-05-21",
+            "--tz",
+            "UTC",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).expect("stdout is UTF-8");
+    let expected = "\
+[
+  {
+    \"date\": \"2026-05-18\",
+    \"scheduled_timed\": [],
+    \"scheduled_no_time\": [],
+    \"upcoming\": []
+  },
+  {
+    \"date\": \"2026-05-19\",
+    \"scheduled_timed\": [],
+    \"scheduled_no_time\": [],
+    \"upcoming\": []
+  },
+  {
+    \"date\": \"2026-05-20\",
+    \"scheduled_timed\": [],
+    \"scheduled_no_time\": [],
+    \"upcoming\": []
+  },
+  {
+    \"date\": \"2026-05-21\",
+    \"scheduled_timed\": [],
+    \"scheduled_no_time\": [
+      {
+        \"file\": \"wk.md\",
+        \"line\": 3,
+        \"heading\": \"Week task\",
+        \"content\": \"\",
+        \"task_type\": \"TODO\",
+        \"timestamp\": \"SCHEDULED: <2026-05-21 Thu>\",
+        \"timestamp_type\": \"SCHEDULED\",
+        \"timestamp_active\": true,
+        \"timestamp_date\": \"2026-05-21\"
+      }
+    ],
+    \"upcoming\": []
+  },
+  {
+    \"date\": \"2026-05-22\",
+    \"scheduled_timed\": [],
+    \"scheduled_no_time\": [],
+    \"upcoming\": []
+  },
+  {
+    \"date\": \"2026-05-23\",
+    \"scheduled_timed\": [],
+    \"scheduled_no_time\": [],
+    \"upcoming\": []
+  },
+  {
+    \"date\": \"2026-05-24\",
+    \"scheduled_timed\": [],
+    \"scheduled_no_time\": [],
+    \"upcoming\": []
+  }
+]
+";
+    assert_eq!(
+        stdout, expected,
+        "JSON agenda-week snapshot must be byte-exact; got:\n{stdout}"
+    );
+}
+
+#[test]
+fn json_snapshot_agenda_month_envelope_shape() {
+    // MIN-12: the month envelope reuses the same per-day object the week
+    // snapshot pins byte-exactly, so rather than freeze a ~190-line
+    // literal that breaks on every intentional edit, pin the month-window
+    // contract structurally: 31 day objects for May 2026, spanning
+    // 2026-05-01..2026-05-31, with the single task on the 21st. The
+    // per-day key shape is already pinned by the week snapshot.
+    let tmp = tempdir().expect("tmpdir");
+    fs::write(
+        tmp.path().join("mo.md"),
+        "# Notes\n\n### TODO Month task\n`SCHEDULED: <2026-05-21 Thu>`\n",
+    )
+    .expect("write mo.md");
+
+    let out = bin()
+        .args([
+            "--dir",
+            tmp.path().to_str().unwrap(),
+            "--agenda",
+            "month",
+            "--current-date",
+            "2026-05-21",
+            "--tz",
+            "UTC",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).expect("stdout is UTF-8");
+    let days: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON array");
+    assert_eq!(days.len(), 31, "May 2026 has 31 day buckets");
+    assert_eq!(days[0]["date"], "2026-05-01", "first bucket is the 1st");
+    assert_eq!(days[30]["date"], "2026-05-31", "last bucket is the 31st");
+    // Every bucket carries the four envelope keys.
+    for (i, day) in days.iter().enumerate() {
+        for key in ["date", "scheduled_timed", "scheduled_no_time", "upcoming"] {
+            assert!(
+                day.get(key).is_some(),
+                "day {i} is missing the `{key}` envelope key: {day}"
+            );
+        }
+    }
+    // The task lands on the 21st under scheduled_no_time and nowhere else.
+    let on_21 = &days[20];
+    assert_eq!(on_21["date"], "2026-05-21");
+    assert_eq!(
+        on_21["scheduled_no_time"][0]["heading"], "Month task",
+        "the task must sit on the 21st: {on_21}"
+    );
+    let total_tasks: usize = days
+        .iter()
+        .map(|d| d["scheduled_no_time"].as_array().map_or(0, |a| a.len()))
+        .sum();
+    assert_eq!(total_tasks, 1, "the task must appear on exactly one day");
+}
+
 // Output ends with a trailing newline regardless of format and destination.
 // Rationale: POSIX defines a "text file" as ending in `\n`; without it the
 // shell prompt is rendered on the same line as the last JSON `]`/HTML

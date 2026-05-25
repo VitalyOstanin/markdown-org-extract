@@ -108,6 +108,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
+- The byte-exact JSON wire-contract snapshots now cover CLOCK
+  output (`clocks[]` element shape plus `total_clock_time`), an
+  inactive `[...]` timestamp (`timestamp_active: false`), a
+  repeater + warning cookie preserved verbatim in the `timestamp`
+  string, and the week agenda envelope; the month envelope is
+  pinned structurally (31 buckets spanning the calendar month, the
+  four per-day keys, the task on the 21st) rather than as a
+  ~190-line literal. Previously only the tasks-mode and day-agenda
+  shapes were snapshotted, leaving the ADR-0015 external contract
+  for week / month / CLOCK / inactive / repeater under-pinned
+  (MIN-12 in the 2026-05-25 review).
 - New regression test `utf8_bom_prefix_does_not_swallow_first_heading`
   pins the current behaviour for files saved as UTF-8 with a leading
   byte-order mark (e.g. Windows Notepad, VS Code with the "UTF-8 with

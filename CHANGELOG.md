@@ -168,6 +168,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ADR-0016 pins the `RUST_LOG` overrides `--verbose` / `--quiet`
   precedence that 0.5.0 already ships. The contract is enforced
   by a regression test in `tests/cli.rs`.
+- The `--verbose` help text now states that `-vvv` is the maximum
+  level and that extra `-v` are ignored (with a one-off saturation
+  warning), matching the runtime behaviour pinned by
+  `verbose_saturation_warns_on_vvvv_and_beyond` (MIN-8 in the
+  2026-05-25 review).
 - ADR-0018 records the warning-period cookie scanner's deliberate
   divergence from upstream `org-get-wdays`: a leading whitespace
   separator is required and `]` is accepted as a terminator (for

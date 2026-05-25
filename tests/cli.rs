@@ -695,6 +695,23 @@ fn help_no_color_mentions_env_var_equivalence() {
 }
 
 #[test]
+fn help_verbose_documents_the_trace_ceiling() {
+    // MIN-8 (2026-05-25 review): the --verbose help promised
+    // info/debug/trace but said nothing about `-vvvv+` saturating at
+    // trace. A user who escalated past `-vvv` expecting "more than trace"
+    // got a runtime saturation warning with no documentation behind it.
+    // The help now states the ceiling; pin the wording so it cannot
+    // silently regress while `verbose_saturation_warns_on_vvvv_and_beyond`
+    // keeps pinning the runtime side.
+    let out = bin().arg("--help").output().expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("-vvv` is the maximum") || stdout.contains("-vvv is the maximum"),
+        "expected the --verbose help to document the trace ceiling, got: {stdout}"
+    );
+}
+
+#[test]
 fn help_groups_arguments_into_named_sections() {
     // The flag count has grown to the point where a flat list is hard to
     // scan. clap's `help_heading` puts related flags under labelled sections

@@ -152,6 +152,8 @@ pub struct Cli {
     pub max_tasks: usize,
 
     /// Increase logging verbosity. Repeat for more (-v = info, -vv = debug, -vvv = trace).
+    /// `-vvv` is the maximum; extra `-v` are ignored and trigger a one-off
+    /// saturation warning rather than unlocking a deeper level.
     /// Overridden by the `RUST_LOG` environment variable when set, regardless
     /// of `--verbose` / `--quiet` (e.g. `RUST_LOG=error` mutes `-vv`).
     #[arg(long, short = 'v', action = clap::ArgAction::Count, conflicts_with = "quiet", help_heading = "Diagnostics")]

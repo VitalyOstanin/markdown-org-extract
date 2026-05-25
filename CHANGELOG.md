@@ -39,6 +39,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by the agenda overdue filter (F1 in the 2026-05-25 logic
   review). Day truncation itself is unchanged (a deliberate
   divergence from upstream's day-overflow semantics).
+- A timestamp whose body is longer than 80 characters but within
+  the extractor's `TS_BODY_MAX` (256) ceiling no longer parses to
+  `None` after passing extraction. `parse_org_timestamp` bounded
+  its single-bracket regexes with a literal `80` while the
+  extractor in `extract.rs` used `TS_BODY_MAX`, so such a task was
+  extracted into `--tasks` yet silently dropped from every agenda
+  bucket. Both sides now share `TS_BODY_MAX` (F2 in the
+  2026-05-25 logic review).
 
 ### Security
 

@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 
 use super::repeater::{parse_repeater, Repeater};
 use super::weekdays::normalize_weekdays;
-use crate::regex_limits::compile_bounded;
+use crate::regex_limits::{compile_bounded, TS_BODY_MAX};
 
 // Main bracket regexes (one per family, ADR-0014): anchor the
 // `<YYYY-MM-DD ...>` (active) or `[YYYY-MM-DD ...]` (inactive) form and
@@ -25,16 +25,25 @@ use crate::regex_limits::compile_bounded;
 // (no `[<\[]...[>\]]` shortcut) keeps mixed pairs `<...]` / `[...>` from
 // matching by construction.
 static SINGLE_ANGLE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    // `[^<>]{0,80}` bounds the body so a stray `<` or pathological input
-    // cannot blow up the regex engine. 80 chars accommodates the longest
-    // realistic timestamp body (full weekday name + HH:MM-HH:MM range +
-    // repeater + warning cookie). The square-bracket variant uses
-    // `[^\[\]]{0,80}` with the same upper bound.
-    compile_bounded(r"<(\d{4}-\d{2}-\d{2})[^<>]{0,80}>")
+    // The body quantifier shares `TS_BODY_MAX` with the extractor patterns
+    // in `extract.rs`. Using the same bound on both sides guarantees that
+    // every timestamp the extractor accepts also parses here: a literal
+    // `80` once let bodies in the 81..=256 range pass extraction yet fail
+    // to parse, silently dropping the task from every agenda bucket (F2 in
+    // the 2026-05-25 logic review). `TS_BODY_MAX` is a defense-in-depth
+    // ceiling, not a semantic limit; realistic bodies (full weekday name +
+    // HH:MM-HH:MM range + repeater + warning cookie) stay well under it.
+    // The square-bracket variant uses `[^\[\]]{0,TS_BODY_MAX}` identically.
+    compile_bounded(&format!(
+        r"<(\d{{4}}-\d{{2}}-\d{{2}})[^<>]{{0,{TS_BODY_MAX}}}>"
+    ))
 });
 
-static SINGLE_SQUARE_RE: LazyLock<Regex> =
-    LazyLock::new(|| compile_bounded(r"\[(\d{4}-\d{2}-\d{2})[^\[\]]{0,80}\]"));
+static SINGLE_SQUARE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    compile_bounded(&format!(
+        r"\[(\d{{4}}-\d{{2}}-\d{{2}})[^\[\]]{{0,{TS_BODY_MAX}}}\]"
+    ))
+});
 
 // Scan the bracket body for a repeater token. Matches upstream Org-mode
 // `org-repeater-regexp-base` shape: a `+`, `++`, or `.+` prefix, followed
@@ -190,6 +199,31 @@ mod tests {
                 "start date must be the first bracket for separator {sep:?}"
             );
         }
+    }
+
+    #[test]
+    fn parse_org_timestamp_accepts_body_up_to_extractor_limit() {
+        // Regression for F2 (2026-05-25 logic review). The extractor in
+        // extract.rs bounds the timestamp body with TS_BODY_MAX (256), while
+        // parse_org_timestamp used a literal 80. A body longer than 80 but
+        // within TS_BODY_MAX was accepted on extraction yet failed to parse
+        // here, so the task silently dropped out of every agenda bucket
+        // (it stayed in `--tasks`). Both sides now share TS_BODY_MAX, so
+        // "what passed extraction passes parsing" holds.
+        let filler = " ".repeat(120); // after the date: > 80, < TS_BODY_MAX
+        let ts = format!("<2024-12-09 Mon{filler}+1m>");
+        assert!(
+            ts.len() > 80 + 12,
+            "test fixture must exceed the old 80-char body bound"
+        );
+        let parsed =
+            parse_org_timestamp(&ts, None).expect("body within TS_BODY_MAX must still parse");
+        assert_eq!(parsed.date, NaiveDate::from_ymd_opt(2024, 12, 9).unwrap());
+        assert!(
+            parsed.repeater.is_some(),
+            "a repeater after a long body must still be found"
+        );
+        assert!(parsed.active);
     }
 
     // Warning-period cookie semantics mirror upstream Emacs Org-mode's

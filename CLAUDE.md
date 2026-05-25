@@ -79,6 +79,13 @@ pointers to the full text and rationale.
   [ADR-0016](docs/adr/0016-rust-log-cli-precedence.md). The status
   quo is pinned by `tests/cli.rs::rust_log_env_overrides_verbose_flag`;
   reverse the precedence only by superseding the ADR.
+- `master` has no branch-protection rule. The pre-commit hook
+  installed by `scripts/install-hooks.sh` (delegating to
+  `scripts/check.sh`) is the canonical defence against fmt /
+  clippy / test regressions reaching `master`. See
+  [ADR-0017](docs/adr/0017-no-branch-protection-on-master.md);
+  a reviewer finding "branch protection is missing" closes with a
+  pointer to it.
 
 ## Background
 

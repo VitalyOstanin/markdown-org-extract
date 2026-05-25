@@ -35,6 +35,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation (developer)
 
+- ADR-0017 records the decision not to configure branch
+  protection on `master`. For a single-maintainer repository,
+  the pre-commit hook installed by `scripts/install-hooks.sh`
+  (delegating to `scripts/check.sh`) is the canonical safety net
+  against fmt / clippy / test regressions; GitHub branch
+  protection with `enforce_admins=false` is mostly cosmetic and
+  with `enforce_admins=true` imposes a multi-minute PR ceremony
+  on every change. The 0.5.0 fmt-fail precedent is addressed by
+  the local hook, not by remote enforcement.
 - README now documents `scripts/check.sh` as the single command
   that mirrors CI locally (fmt + yamllint + clippy + doc + test).
   Running `cargo test` alone does not catch `rustfmt` or

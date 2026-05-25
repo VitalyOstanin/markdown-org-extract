@@ -47,6 +47,7 @@ was decided, and the trade-offs that came with it.
 | 0014 | [Active and inactive timestamps](0014-active-and-inactive-timestamps.md)               | Accepted |
 | 0015 | [JSON schema evolution and consumer coordination](0015-json-schema-evolution.md)       | Accepted |
 | 0016 | [RUST_LOG overrides --verbose / --quiet](0016-rust-log-cli-precedence.md)              | Accepted |
+| 0017 | [No branch protection on master; pre-commit hook policy](0017-no-branch-protection-on-master.md) | Accepted |
 
 ## Adding a new ADR
 

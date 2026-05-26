@@ -826,7 +826,8 @@ The output format depends on the agenda mode.
 
 Optional fields (`priority`, `created`, `timestamp_active`,
 `timestamp_time`, `timestamp_end_time`, `clocks`, `total_clock_time`,
-`task_type`) are omitted when absent rather than serialised as `null`.
+`properties`, `task_type`) are omitted when absent rather than
+serialised as `null`.
 This matches the `#[serde(skip_serializing_if = "Option::is_none")]`
 convention used in `src/types.rs`.
 
@@ -980,6 +981,24 @@ To let downstream consumers render agendas without re-parsing the
 - `timestamp_date` — date as `YYYY-MM-DD`
 - `timestamp_time` — start time, e.g. `10:00` (when present)
 - `timestamp_end_time` — end time, e.g. `12:00` (when a range was given)
+
+#### Task properties
+
+- `properties` (object, optional): per-task key/value pairs parsed from an
+  `org-properties` fenced code block placed under the heading and its
+  planning lines. Bare `UPPER_SNAKE: value` lines; absent when a task has
+  no such block. See
+  [ADR-0020](docs/adr/0020-task-properties-org-properties-block.md).
+
+On disk the block sits under the heading and planning lines:
+
+````markdown
+### TODO Ship release
+`SCHEDULED: <2026-06-01 Mon 10:00>`
+```org-properties
+GCAL_EVENT_ID: abc123/primary
+```
+````
 
 ## Repeating tasks
 

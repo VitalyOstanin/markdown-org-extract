@@ -23,7 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No user-visible changes yet._
+### Added
+
+- Task properties via an `org-properties` fenced code block. A block of
+  bare `KEY: value` lines placed under a task's heading and planning
+  lines is parsed into a new optional `properties` object on each task in
+  the JSON output (absent when a task has none; duplicate keys resolve
+  last-wins; a line without `:` is skipped with a warning). Non-breaking
+  addition under ADR-0015. See ADR-0020.
 
 ## [0.6.0] — 2026-05-25
 

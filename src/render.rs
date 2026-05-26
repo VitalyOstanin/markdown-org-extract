@@ -371,6 +371,7 @@ mod tests {
             timestamp_end_time: None,
             clocks: None,
             total_clock_time: None,
+            properties: None,
         }];
 
         let output = render_markdown(&tasks);
@@ -411,6 +412,7 @@ mod tests {
             timestamp_end_time: None,
             clocks: None,
             total_clock_time: None,
+            properties: None,
         }];
         let out = render_markdown(&tasks);
         assert!(
@@ -436,6 +438,7 @@ mod tests {
             timestamp_end_time: None,
             clocks: None,
             total_clock_time: None,
+            properties: None,
         }
     }
 
@@ -487,6 +490,7 @@ Body text.\n\n";
             timestamp_end_time: None,
             clocks: None,
             total_clock_time: None,
+            properties: None,
         }];
 
         let output = render_html(&tasks);

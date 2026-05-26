@@ -670,6 +670,7 @@ mod tests {
             timestamp_end_time: None,
             clocks: None,
             total_clock_time: None,
+            properties: None,
         }
     }
 
@@ -699,6 +700,7 @@ mod tests {
             timestamp_end_time: None,
             clocks: None,
             total_clock_time: None,
+            properties: None,
         }
     }
 
@@ -762,6 +764,7 @@ mod tests {
             timestamp_end_time: None,
             clocks: None,
             total_clock_time: None,
+            properties: None,
         };
 
         // Deliberately scrambled input order: highest priority arrives second,
@@ -1034,6 +1037,7 @@ mod tests {
             timestamp_end_time: None,
             clocks: None,
             total_clock_time: None,
+            properties: None,
         }
     }
 
@@ -1065,6 +1069,7 @@ mod tests {
             timestamp_end_time: None,
             clocks: None,
             total_clock_time: None,
+            properties: None,
         }
     }
 
@@ -1880,6 +1885,7 @@ mod tests {
             timestamp_end_time: None,
             clocks: None,
             total_clock_time: None,
+            properties: None,
         }
     }
 

@@ -1,6 +1,7 @@
 use chrono::NaiveDate;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -216,6 +217,13 @@ pub struct Task {
     pub clocks: Option<Vec<ClockEntry>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_clock_time: Option<String>,
+    /// Per-task properties parsed from an `org-properties` fenced code
+    /// block (bare `KEY: value` lines). `None` when the task has no such
+    /// block. Added as a non-breaking optional field under ADR-0015; the
+    /// on-disk format and parsing rules are ADR-0020. `BTreeMap` gives a
+    /// deterministic key order for snapshot/JSON assertions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub properties: Option<BTreeMap<String, String>>,
 }
 
 /// Maximum file size to process (10 MB)
@@ -261,6 +269,11 @@ pub struct ProcessingStats {
     /// silent. Owned by `ProcessingStats` so the budget spans every file in
     /// the run without resorting to process-global state.
     pub ts_warnings_emitted: usize,
+    /// Cumulative count of malformed `org-properties` lines (a line with
+    /// no `:`) encountered during the scan. Gated by `MAX_DIAGNOSTIC_ITEMS`
+    /// exactly like `ts_warnings_emitted`, and owned here so the budget
+    /// spans every file in the run. See ADR-0020.
+    pub prop_warnings_emitted: usize,
     /// Scan was aborted by SIGINT/SIGTERM before all entries were visited.
     /// Surfaced in the summary so the user knows the output reflects only the
     /// portion processed up to the signal.
@@ -524,6 +537,7 @@ mod tests {
             timestamp_end_time: None,
             clocks: None,
             total_clock_time: None,
+            properties: None,
         }
     }
 
@@ -571,6 +585,39 @@ mod tests {
         let json = serde_json::to_string(&t).unwrap();
         let back: Task = serde_json::from_str(&json).unwrap();
         assert_eq!(back.timestamp_active, Some(false));
+    }
+
+    #[test]
+    fn task_serializes_properties_when_present() {
+        let mut t = empty_task();
+        let mut props = std::collections::BTreeMap::new();
+        props.insert("GCAL_EVENT_ID".to_string(), "abc123/primary".to_string());
+        t.properties = Some(props);
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(
+            json.contains("\"properties\":{\"GCAL_EVENT_ID\":\"abc123/primary\"}"),
+            "JSON must surface properties map: {json}"
+        );
+    }
+
+    #[test]
+    fn task_omits_properties_when_none() {
+        let json = serde_json::to_string(&empty_task()).unwrap();
+        assert!(
+            !json.contains("properties"),
+            "absent properties must not emit the field: {json}"
+        );
+    }
+
+    #[test]
+    fn task_round_trips_properties_through_serde() {
+        let mut t = empty_task();
+        let mut props = std::collections::BTreeMap::new();
+        props.insert("K".to_string(), "v".to_string());
+        t.properties = Some(props.clone());
+        let json = serde_json::to_string(&t).unwrap();
+        let back: Task = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.properties, Some(props));
     }
 
     #[test]

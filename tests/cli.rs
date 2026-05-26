@@ -2594,3 +2594,60 @@ fn non_utf8_path_is_processed_and_warned() {
         "a non-UTF-8 path must trigger a warning; stderr: {stderr}"
     );
 }
+
+#[test]
+fn tasks_json_includes_properties_from_org_properties_block() {
+    let dir = tempdir().unwrap();
+    let content = "### TODO Ship release\n`SCHEDULED: <2026-06-01 Mon 10:00>`\n```org-properties\nGCAL_EVENT_ID: abc123/primary\nID: 11111111-2222-3333-4444-555555555555\n```\n\nBody.\n";
+    fs::write(dir.path().join("t.md"), content).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let task = &parsed.as_array().expect("array of tasks")[0];
+    assert_eq!(
+        task["properties"]["GCAL_EVENT_ID"], "abc123/primary",
+        "properties.GCAL_EVENT_ID must be in the JSON: {stdout}"
+    );
+    assert_eq!(
+        task["properties"]["ID"], "11111111-2222-3333-4444-555555555555",
+        "properties.ID must be in the JSON: {stdout}"
+    );
+}
+
+#[test]
+fn tasks_json_omits_properties_when_absent() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("t.md"),
+        "### TODO No props\n`SCHEDULED: <2026-06-01 Mon>`\n",
+    )
+    .unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(
+        !stdout.contains("properties"),
+        "absent properties must not appear in JSON: {stdout}"
+    );
+}

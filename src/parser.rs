@@ -37,6 +37,29 @@ fn warn_invalid_timestamp(counter: &mut usize, path: &Path, line: u32, ts: &str)
     }
 }
 
+// Mirror of `warn_invalid_timestamp` for malformed `org-properties` lines
+// (a line that has no `:`). The counter is owned by the caller -- typically
+// `ProcessingStats::prop_warnings_emitted` for a CLI run -- so the
+// per-`MAX_DIAGNOSTIC_ITEMS` cap spans the whole scan and parallel/library
+// uses do not pollute each other's budget. See ADR-0020.
+fn warn_invalid_property_line(counter: &mut usize, path: &Path, line: u32, raw: &str) {
+    let n = *counter;
+    *counter = counter.saturating_add(1);
+    if n < MAX_DIAGNOSTIC_ITEMS {
+        tracing::warn!(
+            file = %path.display(),
+            line,
+            content = raw.trim(),
+            "org-properties line has no ':'; skipping"
+        );
+    } else if n == MAX_DIAGNOSTIC_ITEMS {
+        tracing::warn!(
+            limit = MAX_DIAGNOSTIC_ITEMS,
+            "more malformed org-properties lines suppressed (showed first {MAX_DIAGNOSTIC_ITEMS})"
+        );
+    }
+}
+
 /// Optional TODO/DONE keyword anchored to the start of a heading.
 ///
 /// Matches `TODO` or `DONE` followed by at least one whitespace character.
@@ -450,6 +473,19 @@ mod tests {
         let path = Path::new("t.md");
         for i in 1..=25 {
             warn_invalid_timestamp(&mut counter, path, i, "<bad>");
+        }
+        assert_eq!(counter, 25);
+    }
+
+    #[test]
+    fn warn_invalid_property_line_advances_per_call_counter() {
+        // Same per-call advance contract as warn_invalid_timestamp: each
+        // call bumps the caller-owned counter by exactly one, so the
+        // MAX_DIAGNOSTIC_ITEMS cap spans the whole run (ADR-0020).
+        let mut counter = 0_usize;
+        let path = Path::new("t.md");
+        for i in 1..=25 {
+            warn_invalid_property_line(&mut counter, path, i, "no-colon-here");
         }
         assert_eq!(counter, 25);
     }

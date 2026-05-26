@@ -13,7 +13,11 @@
 Accepted. Amended by [ADR-0014](0014-active-and-inactive-timestamps.md)
 on 2026-05-24: the per-keyword bracket policy below is superseded by
 the table in ADR-0014, and the out-of-scope bullet on inactive
-timestamps is partly removed.
+timestamps is partly removed. Amended by
+[ADR-0020](0020-task-properties-org-properties-block.md) on 2026-05-27:
+the "properties drawers" out-of-scope item is superseded by a
+markdown-native per-task properties mechanism (an `org-properties`
+fenced code block).
 
 ## Context
 
@@ -94,8 +98,10 @@ The following Org-mode features are deliberately **out of scope**:
   `org-tr-regexp`), and the start date and start / end times are
   surfaced; the end **date** is not exposed and the task is shown
   only on the start day. Multi-day spanning is a separate concern.
-- Properties drawers, tag inheritance, agenda categories, habit
-  graphs.
+- ~~Properties drawers~~ (superseded for a markdown-native equivalent by
+  [ADR-0020](0020-task-properties-org-properties-block.md), 2026-05-27:
+  per-task properties are supported via an `org-properties` fenced code
+  block), tag inheritance, agenda categories, habit graphs.
 
 The following non-Org formats are **not** parsed:
 

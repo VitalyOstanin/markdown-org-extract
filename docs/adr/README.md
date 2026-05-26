@@ -32,7 +32,7 @@ was decided, and the trade-offs that came with it.
 | #    | Title                                                                                  | Status   |
 | ---- | -------------------------------------------------------------------------------------- | -------- |
 | 0001 | [Standalone CLI for org-mode in markdown](0001-standalone-cli-for-org-in-markdown.md)  | Accepted |
-| 0002 | [Supported subset of org-mode keywords](0002-supported-org-mode-subset.md)             | Accepted, amended by 0014 |
+| 0002 | [Supported subset of org-mode keywords](0002-supported-org-mode-subset.md)             | Accepted, amended by 0014, 0020 |
 | 0003 | [CLOCK metadata support](0003-clock-metadata-support.md)                               | Accepted |
 | 0004 | [TDD is mandatory for code changes](0004-tdd-mandatory.md)                             | Accepted |
 | 0005 | [No community meta-docs until a community exists](0005-no-community-meta-docs.md)      | Accepted |
@@ -50,6 +50,7 @@ was decided, and the trade-offs that came with it.
 | 0017 | [No branch protection on master; pre-commit hook policy](0017-no-branch-protection-on-master.md) | Accepted |
 | 0018 | [Warning-cookie boundary divergence from upstream](0018-warning-cookie-boundary.md) | Accepted |
 | 0019 | [Input encoding expectations](0019-input-encoding-expectations.md)                     | Accepted |
+| 0020 | [Task properties via an org-properties fenced code block](0020-task-properties-org-properties-block.md) | Accepted |
 
 ## Adding a new ADR
 

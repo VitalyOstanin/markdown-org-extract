@@ -1,6 +1,7 @@
 use comrak::nodes::{AstNode, NodeValue};
 use comrak::{parse_document, Arena, Options};
 use regex::Regex;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -102,6 +103,7 @@ pub fn extract_tasks_with_counter(
     mappings: &[(&str, &str)],
     max_tasks: usize,
     ts_warning_counter: &mut usize,
+    prop_warning_counter: &mut usize,
 ) -> Vec<Task> {
     let arena = Arena::new();
     let root = parse_document(&arena, content, &safe_comrak_options());
@@ -117,6 +119,7 @@ pub fn extract_tasks_with_counter(
             &mut current_heading,
             mappings,
             ts_warning_counter,
+            prop_warning_counter,
         );
 
         if tasks.len() >= max_tasks {
@@ -161,7 +164,15 @@ pub fn extract_tasks(
     max_tasks: usize,
 ) -> Vec<Task> {
     let mut counter = 0_usize;
-    extract_tasks_with_counter(path, content, mappings, max_tasks, &mut counter)
+    let mut prop_counter = 0_usize;
+    extract_tasks_with_counter(
+        path,
+        content,
+        mappings,
+        max_tasks,
+        &mut counter,
+        &mut prop_counter,
+    )
 }
 
 /// Comrak parsing options.
@@ -189,6 +200,7 @@ struct HeadingInfo {
     created: Option<String>,
     timestamp: Option<String>,
     clocks: Vec<crate::types::ClockEntry>,
+    properties: BTreeMap<String, String>,
 }
 
 /// Process a single markdown node
@@ -199,6 +211,7 @@ fn process_node<'a>(
     current_heading: &mut Option<HeadingInfo>,
     mappings: &[(&str, &str)],
     ts_warning_counter: &mut usize,
+    prop_warning_counter: &mut usize,
 ) {
     // Snapshot the borrow once — clone the value (cheap for Heading/Paragraph) and
     // read the sourcepos line in the same scope; drop before any code that
@@ -227,6 +240,7 @@ fn process_node<'a>(
                 created: None,
                 timestamp: None,
                 clocks: Vec::new(),
+                properties: BTreeMap::new(),
             });
         }
         NodeValue::Paragraph => {
@@ -258,26 +272,42 @@ fn process_node<'a>(
         }
         NodeValue::CodeBlock(code) => {
             if let Some(ref mut info) = current_heading {
-                let raw = code.literal.trim();
-                // An indented code block (4-space indent) reaches us with
-                // the planning line still wrapped in inline-code backticks
-                // (`    \`DEADLINE: <...>\``). Comrak strips the indent but
-                // leaves the wrapping backticks in `code.literal`, which
-                // would otherwise prevent the DEADLINE/SCHEDULED/CREATED
-                // regex from anchoring on the keyword. Drop a matched
-                // backtick pair before regex matching.
-                let literal = strip_wrapping_backticks(raw);
-                let normalized = normalize_weekdays(literal, mappings);
-                let created = extract_created_normalized(&normalized);
-                let timestamp = extract_timestamp_normalized(&normalized);
+                // Performance: check the property-block info string first and
+                // return early on a match, so an org-properties block skips the
+                // backtick-strip / weekday-normalise / clock-extract work below.
+                // For every other code block the only added cost is this one
+                // `&str` comparison. The grep pre-filter (main.rs) is NOT widened
+                // for `org-properties`, so the set of scanned files is unchanged.
+                if code.info.trim() == "org-properties" {
+                    parse_org_properties(
+                        &code.literal,
+                        &mut info.properties,
+                        path,
+                        line,
+                        prop_warning_counter,
+                    );
+                } else {
+                    let raw = code.literal.trim();
+                    // An indented code block (4-space indent) reaches us with
+                    // the planning line still wrapped in inline-code backticks
+                    // (`    \`DEADLINE: <...>\``). Comrak strips the indent but
+                    // leaves the wrapping backticks in `code.literal`, which
+                    // would otherwise prevent the DEADLINE/SCHEDULED/CREATED
+                    // regex from anchoring on the keyword. Drop a matched
+                    // backtick pair before regex matching.
+                    let literal = strip_wrapping_backticks(raw);
+                    let normalized = normalize_weekdays(literal, mappings);
+                    let created = extract_created_normalized(&normalized);
+                    let timestamp = extract_timestamp_normalized(&normalized);
 
-                info.clocks.extend(extract_clocks(literal));
+                    info.clocks.extend(extract_clocks(literal));
 
-                if created.is_some() {
-                    info.created = created;
-                }
-                if timestamp.is_some() {
-                    info.timestamp = timestamp;
+                    if created.is_some() {
+                        info.created = created;
+                    }
+                    if timestamp.is_some() {
+                        info.timestamp = timestamp;
+                    }
                 }
             }
         }
@@ -312,6 +342,12 @@ fn finalize_task(path: &Path, info: HeadingInfo, ts_warning_counter: &mut usize)
         (None, None)
     };
 
+    let properties = if info.properties.is_empty() {
+        None
+    } else {
+        Some(info.properties)
+    };
+
     Some(Task {
         file: path.display().to_string(),
         line,
@@ -328,7 +364,7 @@ fn finalize_task(path: &Path, info: HeadingInfo, ts_warning_counter: &mut usize)
         timestamp_end_time: ts_end_time,
         clocks: clocks_opt,
         total_clock_time: total_time,
-        properties: None,
+        properties,
     })
 }
 
@@ -399,6 +435,47 @@ fn strip_wrapping_backticks(s: &str) -> &str {
         return s;
     }
     s[n_leading..bytes.len() - n_leading].trim()
+}
+
+/// Parse the literal of an `org-properties` fenced code block into `props`,
+/// merging into any existing entries with last-wins on duplicate keys.
+///
+/// Each non-blank line is split on its first `:`: the key is the text
+/// before it (trimmed, case preserved), the value is the remainder
+/// (trimmed). An empty key or a line with no `:` is skipped and reported
+/// via `warn_invalid_property_line`, gated by the caller-owned counter so
+/// the `MAX_DIAGNOSTIC_ITEMS` budget spans the whole run. `block_start_line`
+/// is the source line of the opening fence; the per-line offset is added so
+/// warnings point near the offending line. See ADR-0020.
+fn parse_org_properties(
+    literal: &str,
+    props: &mut BTreeMap<String, String>,
+    path: &Path,
+    block_start_line: u32,
+    prop_warning_counter: &mut usize,
+) {
+    for (offset, line) in literal.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        // Source line of this content line: opening fence + 1 + offset.
+        let src_line = block_start_line
+            .saturating_add(1)
+            .saturating_add(offset as u32);
+        match line.split_once(':') {
+            Some((key, value)) => {
+                let key = key.trim();
+                if key.is_empty() {
+                    warn_invalid_property_line(prop_warning_counter, path, src_line, line);
+                    continue;
+                }
+                props.insert(key.to_string(), value.trim().to_string());
+            }
+            None => {
+                warn_invalid_property_line(prop_warning_counter, path, src_line, line);
+            }
+        }
+    }
 }
 
 /// Extract timestamps (CREATED and others) from paragraph node
@@ -919,5 +996,113 @@ Second paragraph.\n\
         assert_eq!(tasks.len(), 1);
         let t = &tasks[0];
         assert_eq!(t.created.as_deref(), Some("CREATED: [2025-09-01 Mon]"));
+    }
+
+    #[test]
+    fn extract_tasks_parses_single_property() {
+        let content = "### TODO Ship release\n`SCHEDULED: <2026-06-01 Mon 10:00>`\n```org-properties\nGCAL_EVENT_ID: abc123/primary\n```\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        assert_eq!(tasks.len(), 1);
+        let props = tasks[0].properties.as_ref().expect("properties present");
+        assert_eq!(
+            props.get("GCAL_EVENT_ID").map(String::as_str),
+            Some("abc123/primary")
+        );
+        // The block must not leak into the task body content.
+        assert!(!tasks[0].content.contains("GCAL_EVENT_ID"));
+        assert!(!tasks[0].content.contains("org-properties"));
+    }
+
+    #[test]
+    fn extract_tasks_parses_multiple_properties() {
+        let content =
+            "### TODO T\n`SCHEDULED: <2026-06-01 Mon>`\n```org-properties\nA: 1\nB: 2\n```\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        let props = tasks[0].properties.as_ref().unwrap();
+        assert_eq!(props.get("A").map(String::as_str), Some("1"));
+        assert_eq!(props.get("B").map(String::as_str), Some("2"));
+    }
+
+    #[test]
+    fn extract_tasks_property_duplicate_keys_last_wins() {
+        let content = "### TODO T\n`SCHEDULED: <2026-06-01 Mon>`\n```org-properties\nK: first\nK: second\n```\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        assert_eq!(
+            tasks[0]
+                .properties
+                .as_ref()
+                .unwrap()
+                .get("K")
+                .map(String::as_str),
+            Some("second")
+        );
+    }
+
+    #[test]
+    fn extract_tasks_property_empty_value_allowed() {
+        let content = "### TODO T\n`SCHEDULED: <2026-06-01 Mon>`\n```org-properties\nK:\n```\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        assert_eq!(
+            tasks[0]
+                .properties
+                .as_ref()
+                .unwrap()
+                .get("K")
+                .map(String::as_str),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn extract_tasks_property_malformed_line_skipped() {
+        let content = "### TODO T\n`SCHEDULED: <2026-06-01 Mon>`\n```org-properties\nGOOD: x\nno colon here\n```\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        let props = tasks[0].properties.as_ref().unwrap();
+        assert_eq!(props.get("GOOD").map(String::as_str), Some("x"));
+        assert_eq!(props.len(), 1, "malformed line must be skipped");
+    }
+
+    #[test]
+    fn extract_tasks_empty_property_block_yields_none() {
+        let content = "### TODO T\n`SCHEDULED: <2026-06-01 Mon>`\n```org-properties\n\n```\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        assert_eq!(tasks[0].properties, None);
+    }
+
+    #[test]
+    fn extract_tasks_property_info_with_extra_attrs_not_recognised() {
+        // Info string must be exactly "org-properties"; extra attributes
+        // mean it is a plain code block, not a property block.
+        let content =
+            "### TODO T\n`SCHEDULED: <2026-06-01 Mon>`\n```org-properties extra\nK: v\n```\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        assert_eq!(tasks[0].properties, None);
+    }
+
+    #[test]
+    fn extract_tasks_clock_code_block_unaffected_by_properties() {
+        // A CLOCK-bearing code block on the same task is still parsed for
+        // clocks; the org-properties block is parsed for properties.
+        let content = "### TODO T\n```org-properties\nK: v\n```\n`CLOCK: [2025-09-01 Mon 10:00]--[2025-09-01 Mon 11:30] => 1:30`\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        assert_eq!(
+            tasks[0]
+                .properties
+                .as_ref()
+                .unwrap()
+                .get("K")
+                .map(String::as_str),
+            Some("v")
+        );
+        assert_eq!(tasks[0].total_clock_time.as_deref(), Some("1:30"));
+    }
+
+    #[test]
+    fn extract_tasks_merges_multiple_property_blocks_last_wins() {
+        let content = "### TODO T\n`SCHEDULED: <2026-06-01 Mon>`\n```org-properties\nK: one\n```\n```org-properties\nK: two\nL: three\n```\n";
+        let tasks = extract_tasks(Path::new("t.md"), content, &[], DEFAULT_MAX_TASKS);
+        let props = tasks[0].properties.as_ref().unwrap();
+        assert_eq!(props.get("K").map(String::as_str), Some("two"));
+        assert_eq!(props.get("L").map(String::as_str), Some("three"));
     }
 }

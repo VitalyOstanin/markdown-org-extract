@@ -392,6 +392,7 @@ fn scan_files(
                 mappings,
                 cli.max_tasks,
                 &mut stats.ts_warnings_emitted,
+                &mut stats.prop_warnings_emitted,
             )
         });
         tasks.extend(extracted);

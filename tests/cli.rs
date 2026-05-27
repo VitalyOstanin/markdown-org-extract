@@ -2651,3 +2651,58 @@ fn tasks_json_omits_properties_when_absent() {
         "absent properties must not appear in JSON: {stdout}"
     );
 }
+
+#[test]
+fn tasks_json_emits_fields_required_by_calendar_sync() {
+    // Wire-contract guard for the Google Calendar sync consumer
+    // (markdown-org-vscode). These fields must stay present in
+    // `--tasks --format json`; dropping any of them is a breaking change
+    // under ADR-0015. See the coordinator spec
+    // 2026-05-27-google-calendar-sync-design.md.
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("t.md"),
+        "### TODO Sync me\n`SCHEDULED: <2026-06-01 Mon 10:00-11:00>`\n```org-properties\nID: 11111111-2222-3333-4444-555555555555\n```\n\nBody.\n",
+    )
+    .unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let task = &parsed.as_array().expect("array of tasks")[0];
+
+    assert_eq!(
+        task["task_type"], "TODO",
+        "task_type must be emitted: {stdout}"
+    );
+    assert_eq!(
+        task["timestamp_active"], true,
+        "timestamp_active must be emitted for active SCHEDULED: {stdout}"
+    );
+    assert_eq!(
+        task["timestamp_date"], "2026-06-01",
+        "timestamp_date must be emitted: {stdout}"
+    );
+    assert_eq!(
+        task["timestamp_time"], "10:00",
+        "timestamp_time must be emitted for a timed task: {stdout}"
+    );
+    assert_eq!(
+        task["timestamp_end_time"], "11:00",
+        "timestamp_end_time must be emitted for a time range: {stdout}"
+    );
+    assert_eq!(
+        task["properties"]["ID"], "11111111-2222-3333-4444-555555555555",
+        "properties.ID must be emitted (sync matching key): {stdout}"
+    );
+}

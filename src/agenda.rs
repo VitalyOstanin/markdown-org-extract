@@ -72,6 +72,31 @@ pub enum AgendaScope {
     Tasks,
 }
 
+/// The CLI date-window arguments for [`filter_agenda`], grouped into one
+/// value so the function signature stays within a sane arity. Each field is
+/// the raw `Option<&str>` from the corresponding CLI flag; their interplay
+/// (priority, edge filling, `Tasks`-scope rejection) is the unified
+/// date-window model described in
+/// [ADR-0009](../docs/adr/0009-unified-date-window-semantics.md).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AgendaDates<'a> {
+    /// Value of `--date`. Selects the window's pivot day; in `Day` scope this
+    /// is the only day, in `Week` / `Month` scope it picks the containing
+    /// week / month. Ignored if `from`/`to` is set. Rejected under `Tasks`
+    /// scope.
+    pub date: Option<&'a str>,
+    /// Value of `--from`. A single edge is filled from `current_date` (or
+    /// today). `from > to` returns `AppError::DateRange`.
+    pub from: Option<&'a str>,
+    /// Value of `--to`. A single edge is filled from `current_date` (or
+    /// today).
+    pub to: Option<&'a str>,
+    /// Value of `--current-date`. Overrides the notion of "today" for
+    /// deterministic testing and for rendering the agenda as it would look on
+    /// a different day. Also the default for a missing `--from`/`--to` edge.
+    pub current_date: Option<&'a str>,
+}
+
 fn parse_date_arg(label: &str, value: &str) -> Result<NaiveDate, AppError> {
     NaiveDate::parse_from_str(value, "%Y-%m-%d")
         .map_err(|e| AppError::InvalidDate(format!("{label} '{value}': {e}")))
@@ -129,18 +154,17 @@ fn parse_range(
 ///   every input file.
 /// - `scope` — what shape of output to produce; see [`AgendaScope`] /
 ///   [`AgendaOutput`].
-/// - `date` — value of `--date`. Selects the window's pivot day; in
-///   `Day` scope this is the only day, in `Week` / `Month` scope it
-///   picks the containing week / month. Ignored if `from`/`to` is set.
-///   Rejected (with `InvalidDate`) under `Tasks` scope — see ADR-0009.
-/// - `from` / `to` — values of `--from` / `--to`. A single edge is
-///   filled from `current_date_override` (or today). `from > to`
-///   returns `AppError::DateRange`.
+/// - `dates` — the `--date` / `--from` / `--to` / `--current-date`
+///   window arguments, grouped in [`AgendaDates`]. See ADR-0009 for the
+///   priorities between them and the `Tasks`-scope rejection rule.
 /// - `tz` — IANA time zone name used to compute "today" when
-///   `current_date_override` is `None`.
-/// - `current_date_override` — value of `--current-date`. Overrides the
-///   notion of "today" for deterministic testing and for users who want
-///   to render the agenda as it would look on a different day.
+///   `dates.current_date` is `None`.
+/// - `include_done` — value of `--tasks-include-done`. Only affects
+///   [`AgendaScope::Tasks`]: when `true` the flat list additionally
+///   surfaces `DONE` tasks (otherwise it is TODO-only, the documented
+///   default). A no-op for day / week / month scope, which keep their
+///   Org-faithful `DONE` handling (shown on the occurrence day, hidden
+///   from overdue / upcoming).
 ///
 /// Errors:
 /// - `AppError::InvalidDate` — any of `date`/`from`/`to`/`current-date`
@@ -151,12 +175,17 @@ fn parse_range(
 pub fn filter_agenda(
     tasks: Vec<Task>,
     scope: AgendaScope,
-    date: Option<&str>,
-    from: Option<&str>,
-    to: Option<&str>,
+    dates: AgendaDates<'_>,
     tz: &str,
-    current_date_override: Option<&str>,
+    include_done: bool,
 ) -> Result<AgendaOutput, AppError> {
+    let AgendaDates {
+        date,
+        from,
+        to,
+        current_date: current_date_override,
+    } = dates;
+
     let tz: Tz = tz
         .parse()
         .map_err(|_| AppError::InvalidTimezone(tz.to_string()))?;
@@ -236,9 +265,18 @@ pub fn filter_agenda(
             )))
         }
         AgendaScope::Tasks => {
+            // Default: TODO only — the documented contract, pinned by the JSON
+            // wire-contract snapshot tests and grepped for by existing
+            // pipelines. The opt-in `--tasks-include-done` (`include_done`)
+            // additionally surfaces `DONE` tasks so a consumer can act on
+            // completion (e.g. a calendar sync deleting the event for a
+            // finished task). `DONE` is never auto-included.
             let mut filtered: Vec<Task> = tasks
                 .into_iter()
-                .filter(|t| matches!(t.task_type, Some(TaskType::Todo)))
+                .filter(|t| {
+                    matches!(t.task_type, Some(TaskType::Todo))
+                        || (include_done && matches!(t.task_type, Some(TaskType::Done)))
+                })
                 .collect();
             filtered.sort_by_key(|t| {
                 t.priority
@@ -1606,8 +1644,14 @@ mod tests {
         // about overdue baseline, which tasks mode does not use (see
         // ADR-0009). The fixed task dates inside the input still make the
         // test deterministic without it.
-        let result = filter_agenda(input, AgendaScope::Tasks, None, None, None, "UTC", None)
-            .expect("filter_agenda");
+        let result = filter_agenda(
+            input,
+            AgendaScope::Tasks,
+            AgendaDates::default(),
+            "UTC",
+            false,
+        )
+        .expect("filter_agenda");
 
         let tasks = match result {
             AgendaOutput::Tasks(tasks) => tasks,
@@ -1618,6 +1662,73 @@ mod tests {
             headings,
             vec!["numeric-0", "A-priority", "Z-priority", "no-priority"],
             "no-priority must sort strictly after every defined priority"
+        );
+    }
+
+    #[test]
+    fn tasks_scope_excludes_done_by_default() {
+        // The flat `--tasks` list is TODO-only by default — the documented
+        // contract pinned by the JSON wire-contract snapshot tests. A DONE
+        // task must never leak in when `include_done` is false.
+        let input = vec![
+            create_test_task("2024-12-05 Wed", None, TaskType::Todo),
+            create_test_task("2024-12-06 Thu", None, TaskType::Done),
+        ];
+
+        let result = filter_agenda(
+            input,
+            AgendaScope::Tasks,
+            AgendaDates::default(),
+            "UTC",
+            false,
+        )
+        .expect("filter_agenda");
+
+        let tasks = match result {
+            AgendaOutput::Tasks(tasks) => tasks,
+            other => panic!("expected AgendaOutput::Tasks, got {other:?}"),
+        };
+        assert_eq!(tasks.len(), 1, "only the TODO task must remain");
+        assert_eq!(tasks[0].task_type, Some(TaskType::Todo));
+    }
+
+    #[test]
+    fn tasks_scope_includes_done_when_requested() {
+        // With `include_done` set (the opt-in `--tasks-include-done` flag),
+        // the flat `--tasks` list surfaces DONE tasks alongside TODO ones so
+        // a consumer can act on completion (e.g. a calendar sync deleting the
+        // event for a finished task). The default TODO-only behaviour is left
+        // intact; this branch only relaxes the filter.
+        let input = vec![
+            create_test_task("2024-12-05 Wed", None, TaskType::Todo),
+            create_test_task("2024-12-06 Thu", None, TaskType::Done),
+        ];
+
+        let result = filter_agenda(
+            input,
+            AgendaScope::Tasks,
+            AgendaDates::default(),
+            "UTC",
+            true,
+        )
+        .expect("filter_agenda");
+
+        let tasks = match result {
+            AgendaOutput::Tasks(tasks) => tasks,
+            other => panic!("expected AgendaOutput::Tasks, got {other:?}"),
+        };
+        assert_eq!(tasks.len(), 2, "both TODO and DONE must be present");
+        assert!(
+            tasks
+                .iter()
+                .any(|t| matches!(t.task_type, Some(TaskType::Todo))),
+            "TODO task must be present"
+        );
+        assert!(
+            tasks
+                .iter()
+                .any(|t| matches!(t.task_type, Some(TaskType::Done))),
+            "DONE task must be present when include_done is set"
         );
     }
 

@@ -280,6 +280,7 @@ markdown-org-extract [OPTIONS]
 - `--locale <LOCALE>` — weekday locales, comma-separated (default: `ru,en`)
 - `--agenda <MODE>` — agenda mode: `day`, `week`, `month`, `tasks` (default: `day`)
 - `--tasks` — show all TODO tasks sorted by priority (alias for `--agenda tasks`)
+- `--tasks-include-done` — also include DONE tasks in the flat `--tasks` / `--agenda tasks` list (default: TODO only). No effect in `day`/`week`/`month` mode
 - `--date <DATE>` — window anchor for `day`/`week`/`month` mode in `YYYY-MM-DD`. In `day` mode the window is exactly this date; in `week`/`month` it is the week / month containing this date. Overridden by `--from`/`--to`. Not allowed in `tasks` mode. Default: `--current-date` (or today)
 - `--from <DATE>` — window start (`YYYY-MM-DD`) for `day`/`week`/`month` mode. Together with `--to`, an explicit range that overrides `--date`. If `--to` is omitted, the window ends at `--current-date` (or today). Not allowed in `tasks` mode
 - `--to <DATE>` — window end (`YYYY-MM-DD`) for `day`/`week`/`month` mode. Together with `--from`, an explicit range that overrides `--date`. If `--from` is omitted, the window starts at `--current-date` (or today). Not allowed in `tasks` mode
@@ -579,11 +580,17 @@ markdown-org-extract --agenda month --from 2025-12-01 --to 2025-12-31
 ### tasks — all TODO tasks
 
 Lists every task whose state is TODO, sorted by priority
-(A → B → C → no priority). Timestamps are ignored.
+(A → B → C → no priority). Timestamps are ignored. Add
+`--tasks-include-done` to additionally surface DONE tasks (off by
+default), e.g. for a consumer that needs completed tasks to remove a
+linked calendar event.
 
 ```bash
 # All TODO tasks by priority
 markdown-org-extract --tasks
+
+# TODO tasks plus completed (DONE) ones
+markdown-org-extract --tasks --tasks-include-done
 ```
 
 ### Timezones

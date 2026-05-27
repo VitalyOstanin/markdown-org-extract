@@ -2706,3 +2706,93 @@ fn tasks_json_emits_fields_required_by_calendar_sync() {
         "properties.ID must be emitted (sync matching key): {stdout}"
     );
 }
+
+/// Markdown fixture with one TODO and one DONE task, each carrying an active
+/// SCHEDULED timestamp and an `org-properties` ID. Shared by the two
+/// `--tasks-include-done` tests below.
+const TODO_AND_DONE_FIXTURE: &str = "\
+### TODO Keep me
+`SCHEDULED: <2026-06-01 Mon>`
+```org-properties
+ID: aaaaaaaa-1111-2222-3333-444444444444
+```
+
+### DONE Finished
+`SCHEDULED: <2026-06-02 Tue>`
+```org-properties
+ID: bbbbbbbb-5555-6666-7777-888888888888
+```
+";
+
+#[test]
+fn tasks_flat_list_excludes_done_by_default() {
+    // The flat `--tasks` list is TODO-only by default — the documented
+    // contract pinned by the wire-contract snapshot tests. A DONE task, even
+    // with an active SCHEDULED and an ID, must not appear unless opted in.
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("t.md"), TODO_AND_DONE_FIXTURE).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let arr = parsed.as_array().expect("array of tasks");
+    let types: Vec<&str> = arr.iter().filter_map(|t| t["task_type"].as_str()).collect();
+
+    assert!(
+        types.contains(&"TODO"),
+        "TODO task must be present: {stdout}"
+    );
+    assert!(
+        !types.contains(&"DONE"),
+        "DONE task must be absent from --tasks by default: {stdout}"
+    );
+}
+
+#[test]
+fn tasks_include_done_surfaces_done_with_properties() {
+    // `--tasks --tasks-include-done` additionally emits DONE tasks, with
+    // their `properties` intact, so a consumer (e.g. the Google Calendar sync
+    // in markdown-org-vscode) can delete the event for a completed task keyed
+    // by its ID. The TODO task stays present too.
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("t.md"), TODO_AND_DONE_FIXTURE).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--tasks",
+            "--tasks-include-done",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let arr = parsed.as_array().expect("array of tasks");
+
+    let done = arr
+        .iter()
+        .find(|t| t["task_type"] == "DONE")
+        .unwrap_or_else(|| panic!("DONE task must be present with the flag: {stdout}"));
+    assert_eq!(
+        done["properties"]["ID"], "bbbbbbbb-5555-6666-7777-888888888888",
+        "DONE task must carry its org-properties: {stdout}"
+    );
+    assert!(
+        arr.iter().any(|t| t["task_type"] == "TODO"),
+        "TODO task must still be present alongside DONE: {stdout}"
+    );
+}

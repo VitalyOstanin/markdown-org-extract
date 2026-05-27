@@ -129,6 +129,14 @@ pub struct Cli {
     #[arg(long, help_heading = "Agenda")]
     pub tasks: bool,
 
+    /// Also include DONE tasks in the flat list (`--tasks` / `--agenda tasks`).
+    /// Off by default: the flat list is TODO-only. Has no effect in
+    /// `--agenda day/week/month`, which keep their Org-faithful DONE handling.
+    /// Intended for consumers that need completed tasks surfaced — e.g. a
+    /// calendar sync that deletes an event once its task is marked DONE.
+    #[arg(long, help_heading = "Agenda")]
+    pub tasks_include_done: bool,
+
     /// Window anchor for `--agenda day/week/month` (YYYY-MM-DD).
     /// In day mode the window is exactly this date; in week/month it is the
     /// week / month containing this date. Overridden by `--from`/`--to` when

@@ -131,10 +131,11 @@ were deliberately deferred at their close. Each is non-blocking,
 info-severity, and recorded here so the rationale does not get lost.
 
 - **`tasks` mode filters only `TaskType::Todo` (logic i2)** — the
-  README explicitly says "tasks whose state is TODO", so the
-  filtering is documented behaviour, not a defect. Revisit if a
-  request appears for a "show DONE in the flat list" mode (could
-  be added as `--tasks-include-done`).
+  README explicitly says "tasks whose state is TODO", so the default
+  filtering is documented behaviour, not a defect. The "show DONE in
+  the flat list" request (Google Calendar sync needs completed tasks
+  to delete their events) shipped as the opt-in `--tasks-include-done`
+  flag; the TODO-only default is unchanged. Resolved.
 - **`print_summary` direction (logic i1)** — the per-run summary
   uses `tracing::warn!`. This is gated behind
   `stats.has_warnings()` so the warn level is honest. If the CLI

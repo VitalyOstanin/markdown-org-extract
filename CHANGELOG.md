@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `--tasks-include-done` flag. By default the flat `--tasks` /
+  `--agenda tasks` list emits only tasks whose state is `TODO`; with
+  this opt-in flag it additionally surfaces `DONE` tasks, each carrying
+  its `properties` (e.g. `ID`). The default output is unchanged and the
+  flag has no effect on `--agenda day/week/month`, which keep their
+  existing `DONE` handling (shown on the occurrence day, hidden from
+  overdue / upcoming). Motivated by a consumer that needs completed
+  tasks surfaced to remove their linked calendar event. Non-breaking
+  addition under ADR-0015.
 - Task properties via an `org-properties` fenced code block. A block of
   bare `KEY: value` lines placed under a task's heading and planning
   lines is parsed into a new optional `properties` object on each task in

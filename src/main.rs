@@ -163,11 +163,14 @@ fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
     let agenda_output = filter_agenda(
         tasks,
         cli.agenda_scope(),
-        cli.date.as_deref(),
-        cli.from.as_deref(),
-        cli.to.as_deref(),
+        crate::agenda::AgendaDates {
+            date: cli.date.as_deref(),
+            from: cli.from.as_deref(),
+            to: cli.to.as_deref(),
+            current_date: cli.current_date.as_deref(),
+        },
         &cli.tz,
-        cli.current_date.as_deref(),
+        cli.tasks_include_done,
     )?;
 
     render_output(&cli, agenda_output)

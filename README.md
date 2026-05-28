@@ -1121,8 +1121,8 @@ the whole directory).
 | `scripts/package-archive.sh`    | Build a release archive (`.tar.gz` on Linux / macOS, `.zip` on Windows) with a deterministic layout. Used by `.github/workflows/release.yml` |
 | `scripts/verify-archive.sh`     | Verify a release archive's filename, layout, and SHA-256. Mirrors what downstream packagers run |
 | `scripts/release-validate-tag.sh` | Validate that a release tag follows `vX.Y.Z[-pre+build]`. Called from `.github/workflows/release.yml` on both push-tag and workflow_dispatch paths |
-| `scripts/release-prep.sh`       | Print the canonical annotated-tag message for a version: the `v<X.Y.Z>` subject plus the `CHANGELOG.md` section body (`### ` subheadings included). Tag with `git tag -a vX.Y.Z --cleanup=verbatim -F <(scripts/release-prep.sh X.Y.Z)` — `--cleanup=verbatim` is required, otherwise the default cleanup deletes the `### ` headings as comment lines |
-| `scripts/release-verify-tag-body.sh` | Check that the release tag is annotated and its body mirrors the `CHANGELOG.md` section (ADR-0011). Run from `.github/workflows/release.yml` before publishing; also runnable locally right after tagging |
+| `scripts/release-prep.sh`       | Print the canonical annotated-tag message for a version: the `v<X.Y.Z>` subject plus the `CHANGELOG.md` section body (`### ` subheadings included). Argument is the **bare version**, no `v` prefix (e.g. `0.7.0`, not `v0.7.0`). Tag with `git tag -a vX.Y.Z --cleanup=verbatim -F <(scripts/release-prep.sh X.Y.Z)` — `--cleanup=verbatim` is required, otherwise the default cleanup deletes the `### ` headings as comment lines |
+| `scripts/release-verify-tag-body.sh` | Check that the release tag is annotated and its body mirrors the `CHANGELOG.md` section (ADR-0011). Argument is the **bare version**, no `v` prefix (the script prepends `v` internally to look up the tag); e.g. `scripts/release-verify-tag-body.sh 0.7.0` checks tag `v0.7.0`. Run from `.github/workflows/release.yml` before publishing; also runnable locally right after tagging |
 
 The `Cargo.toml` `exclude` list omits `docs/`, `.github/`, `scripts/`,
 `TODO.md`, and `CHANGELOG.md` from the published crate tarball on

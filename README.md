@@ -281,7 +281,7 @@ markdown-org-extract [OPTIONS]
 - `--agenda <MODE>` — agenda mode: `day`, `week`, `month`, `tasks` (default: `day`)
 - `--tasks` — show all TODO tasks sorted by priority (alias for `--agenda tasks`)
 - `--tasks-include-done` — also include DONE tasks in the flat `--tasks` / `--agenda tasks` list (default: TODO only). No effect in `day`/`week`/`month` mode
-- `--tasks-include-cancelled` — also include CANCELLED tasks in the flat `--tasks` / `--agenda tasks` list (default: TODO only). Independent of `--tasks-include-done`. No effect in `day`/`week`/`month` mode
+- `--tasks-include-cancelled` — also include cancelled tasks (either spelling, `CANCELLED` or `CANCELED`) in the flat `--tasks` / `--agenda tasks` list (default: TODO only). Independent of `--tasks-include-done`. No effect in `day`/`week`/`month` mode
 - `--date <DATE>` — window anchor for `day`/`week`/`month` mode in `YYYY-MM-DD`. In `day` mode the window is exactly this date; in `week`/`month` it is the week / month containing this date. Overridden by `--from`/`--to`. Not allowed in `tasks` mode. Default: `--current-date` (or today)
 - `--from <DATE>` — window start (`YYYY-MM-DD`) for `day`/`week`/`month` mode. Together with `--to`, an explicit range that overrides `--date`. If `--to` is omitted, the window ends at `--current-date` (or today). Not allowed in `tasks` mode
 - `--to <DATE>` — window end (`YYYY-MM-DD`) for `day`/`week`/`month` mode. Together with `--from`, an explicit range that overrides `--date`. If `--from` is omitted, the window starts at `--current-date` (or today). Not allowed in `tasks` mode
@@ -585,9 +585,9 @@ Lists every task whose state is TODO, sorted by priority
 `--tasks-include-done` to additionally surface DONE tasks (off by
 default), e.g. for a consumer that needs completed tasks to remove a
 linked calendar event. Add `--tasks-include-cancelled` to additionally
-surface CANCELLED tasks (off by default, independent of
-`--tasks-include-done`), e.g. for a consumer that needs cancelled tasks
-to remove a linked calendar event.
+surface cancelled tasks — either spelling, `CANCELLED` or `CANCELED` —
+(off by default, independent of `--tasks-include-done`), e.g. for a
+consumer that needs cancelled tasks to remove a linked calendar event.
 
 ```bash
 # All TODO tasks by priority
@@ -627,12 +627,15 @@ The utility recognises the following task state markers in headings:
 
 - `TODO` — task to be done.
 - `DONE` — task completed.
-- `CANCELLED` — task cancelled (must not be done; distinct from `DONE`).
+- `CANCELLED` (or the single-L `CANCELED`, as used in upstream
+  Org-mode) — task cancelled (must not be done; distinct from `DONE`).
+  The spelling you write is preserved in the `task_type` output.
 
 ```markdown
 ### TODO Implement feature
 ### DONE Complete task
 ### CANCELLED Abandoned idea
+### CANCELED Dropped variant
 ```
 
 ### Task priorities
@@ -646,7 +649,7 @@ Priorities follow the org-mode convention (letters A–Z inside square brackets)
 ### DONE [#A] Completed high-priority task
 ```
 
-The priority appears after the TODO/DONE/CANCELLED marker and before the task text.
+The priority appears after the task state marker (`TODO`/`DONE`/`CANCELLED`/`CANCELED`) and before the task text.
 The most common priorities are:
 - `[#A]` — high priority (critical tasks)
 - `[#B]` — medium priority (important tasks)

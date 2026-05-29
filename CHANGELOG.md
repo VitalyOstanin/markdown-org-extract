@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [\[Unreleased\]](#unreleased)
+- [\[0.9.0\] — 2026-05-29](#090--2026-05-29)
 - [\[0.8.0\] — 2026-05-29](#080--2026-05-29)
 - [\[0.7.0\] — 2026-05-28](#070--2026-05-28)
 - [\[0.6.0\] — 2026-05-25](#060--2026-05-25)
@@ -24,6 +25,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [\[0.1.5\] — 2025-12-06..2025-12-09](#015--2025-12-062025-12-09)
 
 ## [Unreleased]
+
+## [0.9.0] — 2026-05-29
+
+### Added
+
+- `CANCELED` (single-L) recognised as a second spelling of the
+  cancelled keyword, alongside the double-L `CANCELLED` from 0.8.0.
+  `CANCELED` is the spelling used in upstream Emacs Org-mode's
+  manual. The `task_type` value preserves the original spelling
+  from the source file rather than normalising it: `### CANCELED`
+  yields `task_type: "CANCELED"` and `### CANCELLED` yields
+  `task_type: "CANCELLED"`. This keeps reverse-sync round trips
+  from rewriting the user's chosen spelling. Non-breaking addition
+  under [ADR-0015](docs/adr/0015-json-schema-evolution.md). See
+  [ADR-0021](docs/adr/0021-accept-canceled-spelling.md).
+- ADR-0022: ADRs are amended by reference (a new ADR plus a short
+  `Status` pointer on the predecessor), not by rewriting an existing
+  ADR's body. See
+  [ADR-0022](docs/adr/0022-amend-adrs-by-reference.md).
 
 ## [0.8.0] — 2026-05-29
 

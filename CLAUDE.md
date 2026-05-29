@@ -110,6 +110,12 @@ pointers to the full text and rationale.
   budgets. A reviewer finding "add Unicode normalisation", "the
   `file` field can be lossy", or "`TS_BODY_MAX` is not a byte limit"
   closes with a pointer to it.
+- ADRs are amended by reference, not by rewriting. A new
+  architectural decision goes in a new ADR; an existing ADR is
+  touched only by a short `Amended by ADR-NNNN (YYYY-MM-DD): <one
+  line>` note in its `Status` — its `Context` / `Decision` /
+  `Consequences` prose is never rewritten to carry the new decision.
+  See [ADR-0022](docs/adr/0022-amend-adrs-by-reference.md).
 
 ## Background
 

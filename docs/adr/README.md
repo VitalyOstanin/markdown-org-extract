@@ -17,7 +17,11 @@ was decided, and the trade-offs that came with it.
   zero-padded sequence number.
 - ADRs are **immutable** once they leave `Status: Proposed`. To change
   a decision, write a new ADR that supersedes the old one and update
-  both files' `Status` fields with cross-references.
+  both files' `Status` fields with cross-references. Amendments -- not
+  only full supersession -- are recorded the same way: the new decision
+  goes in a new ADR, and the existing ADR is touched only by a `Status`
+  pointer to it, never by rewriting its body prose. See
+  [ADR-0022](0022-amend-adrs-by-reference.md).
 - Each ADR has the sections `Status`, `Context`, `Decision`,
   `Consequences`, and (optional) `References`. Keep the body short --
   one to two screens is the target.
@@ -51,6 +55,7 @@ was decided, and the trade-offs that came with it.
 | 0018 | [Warning-cookie boundary divergence from upstream](0018-warning-cookie-boundary.md) | Accepted |
 | 0019 | [Input encoding expectations](0019-input-encoding-expectations.md)                     | Accepted |
 | 0020 | [Task properties via an org-properties fenced code block](0020-task-properties-org-properties-block.md) | Accepted |
+| 0022 | [Amend ADRs by reference, not by rewriting](0022-amend-adrs-by-reference.md) | Accepted |
 
 ## Adding a new ADR
 

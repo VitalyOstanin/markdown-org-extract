@@ -395,7 +395,10 @@ mod tests {
         assert_eq!(TaskType::from_keyword("TODO"), Some(TaskType::Todo));
         assert_eq!(TaskType::from_keyword("DONE"), Some(TaskType::Done));
         assert_eq!(TaskType::from_keyword("MAYBE"), None);
-        assert_eq!(TaskType::from_keyword("CANCELLED"), Some(TaskType::Cancelled));
+        assert_eq!(
+            TaskType::from_keyword("CANCELLED"),
+            Some(TaskType::Cancelled)
+        );
         // case-sensitivity: lowercase must not match
         assert_eq!(TaskType::from_keyword("cancelled"), None);
     }

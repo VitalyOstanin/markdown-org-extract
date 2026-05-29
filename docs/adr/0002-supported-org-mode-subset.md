@@ -17,7 +17,7 @@ timestamps is partly removed. Amended by
 [ADR-0020](0020-task-properties-org-properties-block.md) on 2026-05-27:
 the "properties drawers" out-of-scope item is superseded by a
 markdown-native per-task properties mechanism (an `org-properties`
-fenced code block). Amended 2026-05-28: `CANCELLED` added as a third
+fenced code block). Amended 2026-05-29: `CANCELLED` added as a third
 supported TODO keyword alongside `TODO` and `DONE`; introduced in
 0.8.0.
 
@@ -71,7 +71,15 @@ The scanner recognises the following subset of Emacs Org-mode syntax:
 - `CANCELLED` — distinct from `DONE`; means «not to be done».
   Recognised in the same position as `TODO` / `DONE` in a heading;
   case-sensitive, must be followed by at least one whitespace
-  character. Introduced in 0.8.0 (2026-05-28).
+  character. Introduced in 0.8.0 (2026-05-29).
+- The double-L spelling `CANCELLED` is a deliberate project choice
+  fixed by the CANCELLED `task_type` design; it differs from the
+  single-L `CANCELED` example used in upstream Emacs Org-mode. This is
+  acceptable under
+  [ADR-0012](0012-verify-org-semantics-against-upstream.md): Org-mode
+  TODO keywords are user-defined via `#+TODO:` (out of scope here, see
+  below), so upstream's example spelling is not binding on this
+  project's hard-coded keyword set.
 - Optional priority cookie `[#A]`, `[#B]`, `[#C]` etc. immediately
   after the keyword.
 - Headings without a TODO/DONE/CANCELLED keyword are still extracted

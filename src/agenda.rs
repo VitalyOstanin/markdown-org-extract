@@ -283,8 +283,7 @@ pub fn filter_agenda(
                 .filter(|t| {
                     matches!(t.task_type, Some(TaskType::Todo))
                         || (include_done && matches!(t.task_type, Some(TaskType::Done)))
-                        || (include_cancelled
-                            && matches!(t.task_type, Some(TaskType::Cancelled)))
+                        || (include_cancelled && matches!(t.task_type, Some(TaskType::Cancelled)))
                 })
                 .collect();
             filtered.sort_by_key(|t| {
@@ -1794,15 +1793,21 @@ mod tests {
         };
         assert_eq!(tasks.len(), 2, "TODO and CANCELLED present, DONE excluded");
         assert!(
-            tasks.iter().any(|t| matches!(t.task_type, Some(TaskType::Todo))),
+            tasks
+                .iter()
+                .any(|t| matches!(t.task_type, Some(TaskType::Todo))),
             "TODO must be present"
         );
         assert!(
-            tasks.iter().any(|t| matches!(t.task_type, Some(TaskType::Cancelled))),
+            tasks
+                .iter()
+                .any(|t| matches!(t.task_type, Some(TaskType::Cancelled))),
             "CANCELLED must be present when include_cancelled is set"
         );
         assert!(
-            !tasks.iter().any(|t| matches!(t.task_type, Some(TaskType::Done))),
+            !tasks
+                .iter()
+                .any(|t| matches!(t.task_type, Some(TaskType::Done))),
             "DONE must stay excluded: include_cancelled is independent of include_done"
         );
     }

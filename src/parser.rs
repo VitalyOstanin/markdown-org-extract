@@ -65,7 +65,8 @@ fn warn_invalid_property_line(counter: &mut usize, path: &Path, line: u32, raw: 
 ///
 /// Matches `TODO`, `DONE`, or `CANCELLED` followed by at least one whitespace character.
 /// Used as the first step of heading parsing — see `parse_heading`.
-static HEADING_TODO_RE: LazyLock<Regex> = LazyLock::new(|| compile_bounded(r"^(TODO|DONE|CANCELLED)\s+"));
+static HEADING_TODO_RE: LazyLock<Regex> =
+    LazyLock::new(|| compile_bounded(r"^(TODO|DONE|CANCELLED)\s+"));
 
 /// Priority cookie `[#X]` with an optional trailing space, matching anywhere
 /// in the heading text.

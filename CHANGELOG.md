@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [\[Unreleased\]](#unreleased)
+- [\[0.8.0\] — 2026-05-29](#080--2026-05-29)
 - [\[0.7.0\] — 2026-05-28](#070--2026-05-28)
 - [\[0.6.0\] — 2026-05-25](#060--2026-05-25)
 - [\[0.5.0\] — 2026-05-25](#050--2026-05-25)
@@ -23,6 +24,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [\[0.1.5\] — 2025-12-06..2025-12-09](#015--2025-12-062025-12-09)
 
 ## [Unreleased]
+
+## [0.8.0] — 2026-05-29
+
+### Added
+
+- `CANCELLED` as a recognised `task_type` keyword in headings, in
+  addition to `TODO` and `DONE`. Semantics: «not to be done».
+  Distinct from `DONE` («completed»). Emitted in JSON as
+  `task_type: "CANCELLED"`. Non-breaking addition under updated
+  [ADR-0015](docs/adr/0015-json-schema-evolution.md).
+- `--tasks-include-cancelled` flag. By default the flat `--tasks` /
+  `--agenda tasks` list emits only `TODO`; this opt-in additionally
+  surfaces `CANCELLED` tasks (each carrying its `properties`), so a
+  consumer can act on cancellation — e.g. a calendar sync deleting the
+  event for a cancelled task. Independent of `--tasks-include-done`;
+  no effect on `--agenda day/week/month`.
+- ADR-0002 amended: supported TODO keyword set is now
+  `TODO` / `DONE` / `CANCELLED`.
+- ADR-0015 amended: enum-extension rule clarified with the CANCELLED
+  worked example.
 
 ## [0.7.0] — 2026-05-28
 

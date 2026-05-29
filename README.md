@@ -623,11 +623,16 @@ markdown-org-extract --agenda day --tz America/New_York
 
 ### Task markers
 
-The utility recognises TODO and DONE markers in headings:
+The utility recognises the following task state markers in headings:
+
+- `TODO` — task to be done.
+- `DONE` — task completed.
+- `CANCELLED` — task cancelled (must not be done; distinct from `DONE`).
 
 ```markdown
 ### TODO Implement feature
 ### DONE Complete task
+### CANCELLED Abandoned idea
 ```
 
 ### Task priorities
@@ -641,7 +646,7 @@ Priorities follow the org-mode convention (letters A–Z inside square brackets)
 ### DONE [#A] Completed high-priority task
 ```
 
-The priority appears after the TODO/DONE marker and before the task text.
+The priority appears after the TODO/DONE/CANCELLED marker and before the task text.
 The most common priorities are:
 - `[#A]` — high priority (critical tasks)
 - `[#B]` — medium priority (important tasks)

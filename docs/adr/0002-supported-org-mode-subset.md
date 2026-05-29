@@ -17,7 +17,9 @@ timestamps is partly removed. Amended by
 [ADR-0020](0020-task-properties-org-properties-block.md) on 2026-05-27:
 the "properties drawers" out-of-scope item is superseded by a
 markdown-native per-task properties mechanism (an `org-properties`
-fenced code block).
+fenced code block). Amended 2026-05-28: `CANCELLED` added as a third
+supported TODO keyword alongside `TODO` and `DONE`; introduced in
+0.8.0.
 
 ## Context
 
@@ -64,12 +66,16 @@ The scanner recognises the following subset of Emacs Org-mode syntax:
 
 **Headings**:
 
-- TODO/DONE prefix at the start of a heading (`### TODO ...`,
-  `### DONE ...`).
+- TODO/DONE/CANCELLED prefix at the start of a heading
+  (`### TODO ...`, `### DONE ...`, `### CANCELLED ...`).
+- `CANCELLED` — distinct from `DONE`; means «not to be done».
+  Recognised in the same position as `TODO` / `DONE` in a heading;
+  case-sensitive, must be followed by at least one whitespace
+  character. Introduced in 0.8.0 (2026-05-28).
 - Optional priority cookie `[#A]`, `[#B]`, `[#C]` etc. immediately
   after the keyword.
-- Headings without TODO/DONE are still extracted when they carry a
-  `CREATED:` or other timestamp line.
+- Headings without a TODO/DONE/CANCELLED keyword are still extracted
+  when they carry a `CREATED:` or other timestamp line.
 
 **CLOCK** entries: documented separately in
 [ADR-0003](0003-clock-metadata-support.md).
@@ -85,7 +91,7 @@ for the producer view.
 The following Org-mode features are deliberately **out of scope**:
 
 - Custom TODO state sequences via `#+TODO:` directives. Only
-  hard-coded `TODO` and `DONE` are recognised.
+  hard-coded `TODO`, `DONE`, and `CANCELLED` are recognised.
 - ~~Inactive timestamps in square brackets `[...]` outside of CLOCK
   and CLOSED contexts.~~ Superseded by
   [ADR-0014](0014-active-and-inactive-timestamps.md) (2026-05-24):

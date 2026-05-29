@@ -5,12 +5,13 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
-/// Task status type (TODO or DONE)
+/// Task status type (TODO, DONE, or CANCELLED)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum TaskType {
     Todo,
     Done,
+    Cancelled,
 }
 
 impl fmt::Display for TaskType {
@@ -18,16 +19,18 @@ impl fmt::Display for TaskType {
         f.write_str(match self {
             TaskType::Todo => "TODO",
             TaskType::Done => "DONE",
+            TaskType::Cancelled => "CANCELLED",
         })
     }
 }
 
 impl TaskType {
-    /// Parse task type from an org-mode keyword (`TODO` / `DONE`)
+    /// Parse task type from an org-mode keyword (`TODO` / `DONE` / `CANCELLED`)
     pub fn from_keyword(s: &str) -> Option<Self> {
         match s {
             "TODO" => Some(TaskType::Todo),
             "DONE" => Some(TaskType::Done),
+            "CANCELLED" => Some(TaskType::Cancelled),
             _ => None,
         }
     }
@@ -392,6 +395,16 @@ mod tests {
         assert_eq!(TaskType::from_keyword("TODO"), Some(TaskType::Todo));
         assert_eq!(TaskType::from_keyword("DONE"), Some(TaskType::Done));
         assert_eq!(TaskType::from_keyword("MAYBE"), None);
+        assert_eq!(TaskType::from_keyword("CANCELLED"), Some(TaskType::Cancelled));
+        // case-sensitivity: lowercase must not match
+        assert_eq!(TaskType::from_keyword("cancelled"), None);
+    }
+
+    #[test]
+    fn task_type_display() {
+        assert_eq!(TaskType::Todo.to_string(), "TODO");
+        assert_eq!(TaskType::Done.to_string(), "DONE");
+        assert_eq!(TaskType::Cancelled.to_string(), "CANCELLED");
     }
 
     #[test]

@@ -61,11 +61,11 @@ fn warn_invalid_property_line(counter: &mut usize, path: &Path, line: u32, raw: 
     }
 }
 
-/// Optional TODO/DONE keyword anchored to the start of a heading.
+/// Optional TODO/DONE/CANCELLED keyword anchored to the start of a heading.
 ///
-/// Matches `TODO` or `DONE` followed by at least one whitespace character.
+/// Matches `TODO`, `DONE`, or `CANCELLED` followed by at least one whitespace character.
 /// Used as the first step of heading parsing — see `parse_heading`.
-static HEADING_TODO_RE: LazyLock<Regex> = LazyLock::new(|| compile_bounded(r"^(TODO|DONE)\s+"));
+static HEADING_TODO_RE: LazyLock<Regex> = LazyLock::new(|| compile_bounded(r"^(TODO|DONE|CANCELLED)\s+"));
 
 /// Priority cookie `[#X]` with an optional trailing space, matching anywhere
 /// in the heading text.
@@ -742,6 +742,49 @@ mod tests {
         assert_eq!(tt, None);
         assert_eq!(p, Some(Priority::A));
         assert_eq!(h, "NoSpace");
+    }
+
+    #[test]
+    fn parse_heading_cancelled_simple() {
+        let (tt, p, h) = parse_heading("CANCELLED Foo");
+        assert_eq!(tt, Some(TaskType::Cancelled));
+        assert_eq!(p, None);
+        assert_eq!(h, "Foo");
+    }
+
+    #[test]
+    fn parse_heading_cancelled_with_priority() {
+        let (tt, p, h) = parse_heading("CANCELLED [#A] Foo");
+        assert_eq!(tt, Some(TaskType::Cancelled));
+        assert_eq!(p, Some(Priority::A));
+        assert_eq!(h, "Foo");
+    }
+
+    #[test]
+    fn parse_heading_cancelled_without_whitespace() {
+        // No whitespace after the keyword: not recognised, stays in title.
+        let (tt, p, h) = parse_heading("CANCELLEDFoo");
+        assert_eq!(tt, None);
+        assert_eq!(p, None);
+        assert_eq!(h, "CANCELLEDFoo");
+    }
+
+    #[test]
+    fn parse_heading_cancelled_lowercase_not_recognised() {
+        // Case-sensitive, like TODO/DONE.
+        let (tt, p, h) = parse_heading("cancelled Foo");
+        assert_eq!(tt, None);
+        assert_eq!(p, None);
+        assert_eq!(h, "cancelled Foo");
+    }
+
+    #[test]
+    fn parse_heading_todo_cancelled_first_keyword_wins() {
+        // First keyword wins; the rest goes into the title (existing rule).
+        let (tt, p, h) = parse_heading("TODO CANCELLED Foo");
+        assert_eq!(tt, Some(TaskType::Todo));
+        assert_eq!(p, None);
+        assert_eq!(h, "CANCELLED Foo");
     }
 
     #[test]

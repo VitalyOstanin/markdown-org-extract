@@ -137,6 +137,15 @@ pub struct Cli {
     #[arg(long, help_heading = "Agenda")]
     pub tasks_include_done: bool,
 
+    /// Also include CANCELLED tasks in the flat list (`--tasks` /
+    /// `--agenda tasks`). Off by default: the flat list is TODO-only.
+    /// Independent of `--tasks-include-done`. Has no effect in
+    /// `--agenda day/week/month`. Intended for consumers that need cancelled
+    /// tasks surfaced — e.g. a calendar sync that deletes an event once its
+    /// task is marked CANCELLED.
+    #[arg(long, help_heading = "Agenda")]
+    pub tasks_include_cancelled: bool,
+
     /// Window anchor for `--agenda day/week/month` (YYYY-MM-DD).
     /// In day mode the window is exactly this date; in week/month it is the
     /// week / month containing this date. Overridden by `--from`/`--to` when

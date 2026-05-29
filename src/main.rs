@@ -171,6 +171,7 @@ fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
         },
         &cli.tz,
         cli.tasks_include_done,
+        cli.tasks_include_cancelled,
     )?;
 
     render_output(&cli, agenda_output)

@@ -2796,3 +2796,89 @@ fn tasks_include_done_surfaces_done_with_properties() {
         "TODO task must still be present alongside DONE: {stdout}"
     );
 }
+
+#[test]
+fn tasks_include_cancelled_surfaces_cancelled() {
+    // `--tasks --tasks-include-cancelled` additionally emits CANCELLED tasks so
+    // a consumer (Google Calendar sync) can delete the event for a cancelled
+    // task. The TODO task stays present; DONE stays absent without its own flag.
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("t.md"),
+        "### TODO Keep me\n\n### CANCELLED Drop me\n\n### DONE Finished\n",
+    )
+    .unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--tasks",
+            "--tasks-include-cancelled",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let arr = parsed.as_array().expect("array of tasks");
+
+    assert!(
+        arr.iter().any(|t| t["task_type"] == "CANCELLED"),
+        "CANCELLED task must be present with the flag: {stdout}"
+    );
+    assert!(
+        arr.iter().any(|t| t["task_type"] == "TODO"),
+        "TODO task must still be present: {stdout}"
+    );
+    assert!(
+        !arr.iter().any(|t| t["task_type"] == "DONE"),
+        "DONE must stay absent without --tasks-include-done: {stdout}"
+    );
+}
+
+#[test]
+fn tasks_include_done_and_cancelled_surfaces_both() {
+    // Both opt-in flags together surface TODO + DONE + CANCELLED in the flat
+    // list — the combination the README documents for a consumer that needs to
+    // act on every closed task (e.g. delete its calendar event), whether it was
+    // completed or cancelled.
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("t.md"),
+        "### TODO Keep me\n\n### CANCELLED Drop me\n\n### DONE Finished\n",
+    )
+    .unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--tasks",
+            "--tasks-include-done",
+            "--tasks-include-cancelled",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let arr = parsed.as_array().expect("array of tasks");
+
+    assert!(
+        arr.iter().any(|t| t["task_type"] == "TODO"),
+        "TODO must be present: {stdout}"
+    );
+    assert!(
+        arr.iter().any(|t| t["task_type"] == "DONE"),
+        "DONE must be present with --tasks-include-done: {stdout}"
+    );
+    assert!(
+        arr.iter().any(|t| t["task_type"] == "CANCELLED"),
+        "CANCELLED must be present with --tasks-include-cancelled: {stdout}"
+    );
+}

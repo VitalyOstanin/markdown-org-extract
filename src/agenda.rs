@@ -165,6 +165,10 @@ fn parse_range(
 ///   default). A no-op for day / week / month scope, which keep their
 ///   Org-faithful `DONE` handling (shown on the occurrence day, hidden
 ///   from overdue / upcoming).
+/// - `include_cancelled` — value of `--tasks-include-cancelled`. Only
+///   affects [`AgendaScope::Tasks`]: when `true` the flat list additionally
+///   surfaces `CANCELLED` tasks. Independent of `include_done` (neither
+///   implies the other). A no-op for day / week / month scope.
 ///
 /// Errors:
 /// - `AppError::InvalidDate` — any of `date`/`from`/`to`/`current-date`
@@ -178,6 +182,7 @@ pub fn filter_agenda(
     dates: AgendaDates<'_>,
     tz: &str,
     include_done: bool,
+    include_cancelled: bool,
 ) -> Result<AgendaOutput, AppError> {
     let AgendaDates {
         date,
@@ -270,12 +275,16 @@ pub fn filter_agenda(
             // pipelines. The opt-in `--tasks-include-done` (`include_done`)
             // additionally surfaces `DONE` tasks so a consumer can act on
             // completion (e.g. a calendar sync deleting the event for a
-            // finished task). `DONE` is never auto-included.
+            // finished task). The independent opt-in `--tasks-include-cancelled`
+            // (`include_cancelled`) additionally surfaces `CANCELLED` tasks for
+            // the same reason. Neither flag implies the other.
             let mut filtered: Vec<Task> = tasks
                 .into_iter()
                 .filter(|t| {
                     matches!(t.task_type, Some(TaskType::Todo))
                         || (include_done && matches!(t.task_type, Some(TaskType::Done)))
+                        || (include_cancelled
+                            && matches!(t.task_type, Some(TaskType::Cancelled)))
                 })
                 .collect();
             filtered.sort_by_key(|t| {
@@ -1650,6 +1659,7 @@ mod tests {
             AgendaDates::default(),
             "UTC",
             false,
+            false,
         )
         .expect("filter_agenda");
 
@@ -1681,6 +1691,7 @@ mod tests {
             AgendaDates::default(),
             "UTC",
             false,
+            false,
         )
         .expect("filter_agenda");
 
@@ -1710,6 +1721,7 @@ mod tests {
             AgendaDates::default(),
             "UTC",
             true,
+            false,
         )
         .expect("filter_agenda");
 
@@ -1729,6 +1741,69 @@ mod tests {
                 .iter()
                 .any(|t| matches!(t.task_type, Some(TaskType::Done))),
             "DONE task must be present when include_done is set"
+        );
+    }
+
+    #[test]
+    fn tasks_scope_excludes_cancelled_by_default() {
+        // CANCELLED is excluded from the flat list unless explicitly opted in,
+        // mirroring the DONE default. Neither include flag set here.
+        let input = vec![
+            create_test_task("2024-12-05 Wed", None, TaskType::Todo),
+            create_test_task("2024-12-06 Thu", None, TaskType::Cancelled),
+        ];
+        let result = filter_agenda(
+            input,
+            AgendaScope::Tasks,
+            AgendaDates::default(),
+            "UTC",
+            false,
+            false,
+        )
+        .expect("filter_agenda");
+        let tasks = match result {
+            AgendaOutput::Tasks(tasks) => tasks,
+            other => panic!("expected AgendaOutput::Tasks, got {other:?}"),
+        };
+        assert_eq!(tasks.len(), 1, "only the TODO task must remain");
+        assert_eq!(tasks[0].task_type, Some(TaskType::Todo));
+    }
+
+    #[test]
+    fn tasks_scope_includes_cancelled_when_requested() {
+        // With include_cancelled set, CANCELLED appears alongside TODO so a
+        // consumer can delete the calendar event for a cancelled task. DONE is
+        // NOT pulled in by this flag (the two opt-ins are independent).
+        let input = vec![
+            create_test_task("2024-12-05 Wed", None, TaskType::Todo),
+            create_test_task("2024-12-06 Thu", None, TaskType::Done),
+            create_test_task("2024-12-07 Fri", None, TaskType::Cancelled),
+        ];
+        let result = filter_agenda(
+            input,
+            AgendaScope::Tasks,
+            AgendaDates::default(),
+            "UTC",
+            false, // include_done off — DONE must stay out
+            true,  // include_cancelled on
+        )
+        .expect("filter_agenda");
+        let tasks = match result {
+            AgendaOutput::Tasks(tasks) => tasks,
+            other => panic!("expected AgendaOutput::Tasks, got {other:?}"),
+        };
+        assert_eq!(tasks.len(), 2, "TODO and CANCELLED present, DONE excluded");
+        assert!(
+            tasks.iter().any(|t| matches!(t.task_type, Some(TaskType::Todo))),
+            "TODO must be present"
+        );
+        assert!(
+            tasks.iter().any(|t| matches!(t.task_type, Some(TaskType::Cancelled))),
+            "CANCELLED must be present when include_cancelled is set"
+        );
+        assert!(
+            !tasks.iter().any(|t| matches!(t.task_type, Some(TaskType::Done))),
+            "DONE must stay excluded: include_cancelled is independent of include_done"
         );
     }
 

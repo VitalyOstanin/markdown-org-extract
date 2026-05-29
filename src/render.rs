@@ -489,6 +489,27 @@ Body text.\n\n";
     }
 
     #[test]
+    fn render_task_canceled_single_l_json_preserves_spelling() {
+        // ADR-0021: the single-L spelling is preserved, not normalised to
+        // double-L. ADR-0015 wire contract: the cancelled TaskType variant
+        // serialises to a plain JSON string ("CANCELED") via the hand-written
+        // `Serialize` impl.
+        let mut task = fixture_task();
+        task.heading = "Foo".to_string();
+        task.task_type = Some(TaskType::Cancelled(CancelledSpelling::SingleL));
+
+        let rendered = serde_json::to_string(&task).expect("Task serialises");
+        assert!(
+            rendered.contains(r#""task_type":"CANCELED""#),
+            "expected task_type CANCELED (single-L) in JSON, got: {rendered}",
+        );
+        assert!(
+            !rendered.contains(r#""task_type":"CANCELLED""#),
+            "single-L spelling must not be normalised to double-L, got: {rendered}",
+        );
+    }
+
+    #[test]
     fn test_render_html_escapes() {
         let tasks = vec![Task {
             file: "<script>.md".to_string(),

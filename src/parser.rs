@@ -61,12 +61,16 @@ fn warn_invalid_property_line(counter: &mut usize, path: &Path, line: u32, raw: 
     }
 }
 
-/// Optional TODO/DONE/CANCELLED keyword anchored to the start of a heading.
+/// Optional TODO/DONE/CANCELLED/CANCELED keyword anchored to the start of a
+/// heading.
 ///
-/// Matches `TODO`, `DONE`, or `CANCELLED` followed by at least one whitespace character.
-/// Used as the first step of heading parsing — see `parse_heading`.
+/// Matches `TODO`, `DONE`, `CANCELLED` (double-L) or `CANCELED` (single-L,
+/// the upstream Emacs Org-mode spelling) followed by at least one whitespace
+/// character. The double-L `CANCELLED` is listed before the single-L
+/// `CANCELED` so the alternation prefers the longer spelling. Used as the
+/// first step of heading parsing — see `parse_heading`.
 static HEADING_TODO_RE: LazyLock<Regex> =
-    LazyLock::new(|| compile_bounded(r"^(TODO|DONE|CANCELLED)\s+"));
+    LazyLock::new(|| compile_bounded(r"^(TODO|DONE|CANCELLED|CANCELED)\s+"));
 
 /// Priority cookie `[#X]` with an optional trailing space, matching anywhere
 /// in the heading text.
@@ -786,6 +790,42 @@ mod tests {
         assert_eq!(tt, Some(TaskType::Todo));
         assert_eq!(p, None);
         assert_eq!(h, "CANCELLED Foo");
+    }
+
+    #[test]
+    fn parse_heading_canceled_single_l() {
+        // Upstream Emacs Org-mode spells the keyword with a single L. See
+        // ADR-0021; recognised alongside the double-L `CANCELLED`.
+        let (tt, p, h) = parse_heading("CANCELED Foo");
+        assert_eq!(tt, Some(TaskType::Cancelled(CancelledSpelling::SingleL)));
+        assert_eq!(p, None);
+        assert_eq!(h, "Foo");
+    }
+
+    #[test]
+    fn parse_heading_canceled_with_priority() {
+        let (tt, p, h) = parse_heading("CANCELED [#A] Foo");
+        assert_eq!(tt, Some(TaskType::Cancelled(CancelledSpelling::SingleL)));
+        assert_eq!(p, Some(Priority::A));
+        assert_eq!(h, "Foo");
+    }
+
+    #[test]
+    fn parse_heading_canceled_lowercase_not_recognised() {
+        // Case-sensitive, like TODO/DONE/CANCELLED.
+        let (tt, p, h) = parse_heading("canceled Foo");
+        assert_eq!(tt, None);
+        assert_eq!(p, None);
+        assert_eq!(h, "canceled Foo");
+    }
+
+    #[test]
+    fn parse_heading_canceled_without_whitespace_not_recognised() {
+        // No whitespace after the keyword: not recognised, stays in title.
+        let (tt, p, h) = parse_heading("CANCELEDfoo");
+        assert_eq!(tt, None);
+        assert_eq!(p, None);
+        assert_eq!(h, "CANCELEDfoo");
     }
 
     #[test]

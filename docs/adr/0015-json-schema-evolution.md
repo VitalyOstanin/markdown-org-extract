@@ -73,6 +73,11 @@ Non-breaking additions ship in a minor release (semver `0.X.Y` → `0.X+1.0`
 while pre-1.0; `X.Y.Z` → `X.Y+1.0` from 1.0 onward) and are noted in
 `CHANGELOG.md` under `### Added`.
 
+The CANCELLED `task_type` enum addition exercises this rule (release
+0.8.0, 2026-05-28). It is a non-breaking addition because the
+consumer (`markdown-org-vscode`) ships graceful fallback for unknown
+`task_type` values in the same coordinated release.
+
 ### Breaking changes
 
 The following count as **breaking** and require:
@@ -100,9 +105,12 @@ What counts as breaking:
 What does **not** count as breaking:
 
 - Adding a new field, optional or always-present.
-- Adding new variants to an enum-like string field, **only if** the
-  consumer is documented as required to handle unknowns gracefully.
-  (When in doubt: treat as breaking.)
+- Adding new variants to an enum-like string field, provided the
+  consumer is documented to handle unknown variants gracefully (no
+  throw, fallback to "no status" or equivalent neutral semantics).
+  The CANCELLED `task_type` addition (2026-05-28) is the worked
+  example; the consumer side `markdown-org-vscode` ships the matching
+  graceful-fallback handling. When in doubt: treat as breaking.
 - Tightening the input parsing (rejecting forms that previously
   emitted spurious output) as long as the JSON shape for valid input
   is unchanged.

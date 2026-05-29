@@ -19,7 +19,10 @@ the "properties drawers" out-of-scope item is superseded by a
 markdown-native per-task properties mechanism (an `org-properties`
 fenced code block). Amended 2026-05-29: `CANCELLED` added as a third
 supported TODO keyword alongside `TODO` and `DONE`; introduced in
-0.8.0.
+0.8.0. Amended by [ADR-0021](0021-accept-canceled-spelling.md)
+(2026-05-29): CANCELED (single-L) accepted as a second spelling of the
+cancelled keyword; task_type preserves the original spelling. Introduced
+in 0.9.0.
 
 ## Context
 

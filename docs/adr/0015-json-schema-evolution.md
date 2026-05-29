@@ -10,7 +10,9 @@
 
 ## Status
 
-Accepted.
+Accepted. Amended by [ADR-0021](0021-accept-canceled-spelling.md)
+(2026-05-29): the cancelled task_type value reflects the original file
+spelling, so its value set spans CANCELLED and CANCELED. Non-breaking.
 
 ## Context
 

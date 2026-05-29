@@ -22,6 +22,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_NET_RETRY: "10"
+
 concurrency:
   group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
   cancel-in-progress: false
@@ -66,6 +69,9 @@ jobs:
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
+      - name: Fetch dependencies (with retry)
+        uses: ./.github/actions/cargo-fetch-retry
+
       - name: cargo build
         run: cargo build --verbose
 
@@ -90,6 +96,9 @@ jobs:
 
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Fetch dependencies (with retry)
+        uses: ./.github/actions/cargo-fetch-retry
 
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
@@ -116,6 +125,9 @@ jobs:
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
+      - name: Fetch dependencies (with retry)
+        uses: ./.github/actions/cargo-fetch-retry
+
       - name: cargo build --locked
         run: cargo build --locked --verbose
 
@@ -138,6 +150,9 @@ jobs:
 
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Fetch dependencies (with retry)
+        uses: ./.github/actions/cargo-fetch-retry
 
       - name: Resolve tag and version
         # Single source of truth for "what are we releasing". Both push and
@@ -337,6 +352,9 @@ jobs:
           # Per-target cache key so the four matrix entries do not stomp
           # each other's target/ directory.
           key: ${{ matrix.target }}
+
+      - name: Fetch dependencies (with retry)
+        uses: ./.github/actions/cargo-fetch-retry
 
       - name: Resolve tag and version
         # Mirrors the "Resolve tag and version" step in the `test` job:

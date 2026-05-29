@@ -40,7 +40,7 @@ run_step() {
 }
 
 run_step "cargo fmt --check"  cargo fmt  --all -- --check
-run_step "yamllint"           yamllint .github/workflows/
+run_step "yamllint"           yamllint .github/workflows/ .github/actions/
 run_step "cargo clippy"       cargo clippy --all-targets --all-features -- -D warnings
 RUSTDOCFLAGS="-D warnings" \
 run_step "cargo doc"          cargo doc  --no-deps --all-features

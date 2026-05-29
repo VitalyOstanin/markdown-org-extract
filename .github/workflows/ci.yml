@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_NET_RETRY: "10"
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -29,6 +32,9 @@ jobs:
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
+      - name: Fetch dependencies (with retry)
+        uses: ./.github/actions/cargo-fetch-retry
+
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
 
@@ -36,7 +42,7 @@ jobs:
       # rest of the lint job spends time on cargo. ubuntu-24.04 runners ship
       # yamllint via apt; no pip install required.
       - name: yamllint workflows
-        run: yamllint .github/workflows/
+        run: yamllint .github/workflows/ .github/actions/
 
       - name: cargo clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
@@ -76,6 +82,9 @@ jobs:
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
+      - name: Fetch dependencies (with retry)
+        uses: ./.github/actions/cargo-fetch-retry
+
       - name: cargo build
         run: cargo build --verbose
 
@@ -100,6 +109,9 @@ jobs:
 
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Fetch dependencies (with retry)
+        uses: ./.github/actions/cargo-fetch-retry
 
       - name: cargo build --locked
         run: cargo build --locked --verbose

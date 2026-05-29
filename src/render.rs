@@ -337,7 +337,7 @@ pub fn render_html(tasks: &[Task]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Priority, TaskType};
+    use crate::types::{CancelledSpelling, Priority, TaskType};
 
     #[test]
     fn test_html_escape() {
@@ -474,11 +474,12 @@ Body text.\n\n";
 
     #[test]
     fn render_task_cancelled_json_serialises_correctly() {
-        // ADR-0015 wire contract: the new TaskType variant must serialise to
-        // the JSON string "CANCELLED" via the enum's `rename_all = "UPPERCASE"`.
+        // ADR-0015 wire contract: the cancelled TaskType variant must serialise
+        // to the JSON string "CANCELLED" via the hand-written `Serialize` impl,
+        // preserving the original double-L spelling (ADR-0021).
         let mut task = fixture_task();
         task.heading = "Foo".to_string();
-        task.task_type = Some(TaskType::Cancelled);
+        task.task_type = Some(TaskType::Cancelled(CancelledSpelling::DoubleL));
 
         let rendered = serde_json::to_string(&task).expect("Task serialises");
         assert!(

@@ -283,7 +283,8 @@ pub fn filter_agenda(
                 .filter(|t| {
                     matches!(t.task_type, Some(TaskType::Todo))
                         || (include_done && matches!(t.task_type, Some(TaskType::Done)))
-                        || (include_cancelled && matches!(t.task_type, Some(TaskType::Cancelled)))
+                        || (include_cancelled
+                            && matches!(t.task_type, Some(TaskType::Cancelled(_))))
                 })
                 .collect();
             filtered.sort_by_key(|t| {
@@ -638,6 +639,7 @@ fn get_month_for_date(date: NaiveDate) -> (NaiveDate, NaiveDate) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::CancelledSpelling;
     use chrono::TimeZone;
 
     #[test]
@@ -1749,7 +1751,11 @@ mod tests {
         // mirroring the DONE default. Neither include flag set here.
         let input = vec![
             create_test_task("2024-12-05 Wed", None, TaskType::Todo),
-            create_test_task("2024-12-06 Thu", None, TaskType::Cancelled),
+            create_test_task(
+                "2024-12-06 Thu",
+                None,
+                TaskType::Cancelled(CancelledSpelling::DoubleL),
+            ),
         ];
         let result = filter_agenda(
             input,
@@ -1776,7 +1782,11 @@ mod tests {
         let input = vec![
             create_test_task("2024-12-05 Wed", None, TaskType::Todo),
             create_test_task("2024-12-06 Thu", None, TaskType::Done),
-            create_test_task("2024-12-07 Fri", None, TaskType::Cancelled),
+            create_test_task(
+                "2024-12-07 Fri",
+                None,
+                TaskType::Cancelled(CancelledSpelling::DoubleL),
+            ),
         ];
         let result = filter_agenda(
             input,
@@ -1801,7 +1811,7 @@ mod tests {
         assert!(
             tasks
                 .iter()
-                .any(|t| matches!(t.task_type, Some(TaskType::Cancelled))),
+                .any(|t| matches!(t.task_type, Some(TaskType::Cancelled(_)))),
             "CANCELLED must be present when include_cancelled is set"
         );
         assert!(

@@ -5,13 +5,33 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
-/// Task status type (TODO, DONE, or CANCELLED)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
+/// Original spelling of the cancelled TODO keyword, preserved verbatim.
+///
+/// Both spellings are user conventions (neither is built into upstream
+/// Emacs Org-mode); the source file's spelling is kept so reverse-sync
+/// consumers do not silently rewrite it. See ADR-0021.
+///
+/// - `DoubleL` = `CANCELLED`
+/// - `SingleL` = `CANCELED` (the spelling used in the upstream manual)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CancelledSpelling {
+    DoubleL,
+    SingleL,
+}
+
+/// Task status type (TODO, DONE, or cancelled).
+///
+/// The cancelled variant carries the original spelling from the source
+/// file (`CANCELLED` / `CANCELED`) so it can be reproduced on output. See
+/// ADR-0021. Serialises to a plain JSON string (`"TODO"` / `"DONE"` /
+/// `"CANCELLED"` / `"CANCELED"`), not the default externally-tagged object
+/// form, which is why `Serialize` / `Deserialize` are hand-written rather
+/// than derived.
+#[derive(Debug, Clone, PartialEq)]
 pub enum TaskType {
     Todo,
     Done,
-    Cancelled,
+    Cancelled(CancelledSpelling),
 }
 
 impl fmt::Display for TaskType {
@@ -19,20 +39,49 @@ impl fmt::Display for TaskType {
         f.write_str(match self {
             TaskType::Todo => "TODO",
             TaskType::Done => "DONE",
-            TaskType::Cancelled => "CANCELLED",
+            TaskType::Cancelled(CancelledSpelling::DoubleL) => "CANCELLED",
+            TaskType::Cancelled(CancelledSpelling::SingleL) => "CANCELED",
         })
     }
 }
 
 impl TaskType {
-    /// Parse task type from an org-mode keyword (`TODO` / `DONE` / `CANCELLED`)
+    /// Parse task type from an org-mode keyword
+    /// (`TODO` / `DONE` / `CANCELLED` / `CANCELED`). The two cancelled
+    /// spellings map to distinct `CancelledSpelling` variants so the
+    /// original form is preserved.
     pub fn from_keyword(s: &str) -> Option<Self> {
         match s {
             "TODO" => Some(TaskType::Todo),
             "DONE" => Some(TaskType::Done),
-            "CANCELLED" => Some(TaskType::Cancelled),
+            "CANCELLED" => Some(TaskType::Cancelled(CancelledSpelling::DoubleL)),
+            "CANCELED" => Some(TaskType::Cancelled(CancelledSpelling::SingleL)),
             _ => None,
         }
+    }
+}
+
+impl Serialize for TaskType {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        ser.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for TaskType {
+    fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        struct TaskTypeVisitor;
+        impl Visitor<'_> for TaskTypeVisitor {
+            type Value = TaskType;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("one of \"TODO\", \"DONE\", \"CANCELLED\", \"CANCELED\"")
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<TaskType, E> {
+                TaskType::from_keyword(v).ok_or_else(|| {
+                    de::Error::unknown_variant(v, &["TODO", "DONE", "CANCELLED", "CANCELED"])
+                })
+            }
+        }
+        de.deserialize_str(TaskTypeVisitor)
     }
 }
 
@@ -395,19 +444,68 @@ mod tests {
         assert_eq!(TaskType::from_keyword("TODO"), Some(TaskType::Todo));
         assert_eq!(TaskType::from_keyword("DONE"), Some(TaskType::Done));
         assert_eq!(TaskType::from_keyword("MAYBE"), None);
+        // Both cancelled spellings are recognised and preserved (ADR-0021).
         assert_eq!(
             TaskType::from_keyword("CANCELLED"),
-            Some(TaskType::Cancelled)
+            Some(TaskType::Cancelled(CancelledSpelling::DoubleL))
+        );
+        assert_eq!(
+            TaskType::from_keyword("CANCELED"),
+            Some(TaskType::Cancelled(CancelledSpelling::SingleL))
         );
         // case-sensitivity: lowercase must not match
         assert_eq!(TaskType::from_keyword("cancelled"), None);
+        assert_eq!(TaskType::from_keyword("canceled"), None);
     }
 
     #[test]
     fn task_type_display() {
         assert_eq!(TaskType::Todo.to_string(), "TODO");
         assert_eq!(TaskType::Done.to_string(), "DONE");
-        assert_eq!(TaskType::Cancelled.to_string(), "CANCELLED");
+        assert_eq!(
+            TaskType::Cancelled(CancelledSpelling::DoubleL).to_string(),
+            "CANCELLED"
+        );
+        assert_eq!(
+            TaskType::Cancelled(CancelledSpelling::SingleL).to_string(),
+            "CANCELED"
+        );
+    }
+
+    #[test]
+    fn task_type_serializes_as_plain_string_preserving_spelling() {
+        // ADR-0021: task_type is a plain JSON string reflecting the original
+        // cancelled spelling, not the default externally-tagged object form.
+        assert_eq!(serde_json::to_string(&TaskType::Todo).unwrap(), "\"TODO\"");
+        assert_eq!(serde_json::to_string(&TaskType::Done).unwrap(), "\"DONE\"");
+        assert_eq!(
+            serde_json::to_string(&TaskType::Cancelled(CancelledSpelling::DoubleL)).unwrap(),
+            "\"CANCELLED\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TaskType::Cancelled(CancelledSpelling::SingleL)).unwrap(),
+            "\"CANCELED\""
+        );
+    }
+
+    #[test]
+    fn task_type_round_trips_through_serde() {
+        for tt in [
+            TaskType::Todo,
+            TaskType::Done,
+            TaskType::Cancelled(CancelledSpelling::DoubleL),
+            TaskType::Cancelled(CancelledSpelling::SingleL),
+        ] {
+            let json = serde_json::to_string(&tt).unwrap();
+            let back: TaskType = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, tt, "round trip must preserve the variant: {json}");
+        }
+    }
+
+    #[test]
+    fn task_type_deserialize_rejects_unknown_string() {
+        let r: Result<TaskType, _> = serde_json::from_str("\"MAYBE\"");
+        assert!(r.is_err(), "unknown task_type string must fail to parse");
     }
 
     #[test]

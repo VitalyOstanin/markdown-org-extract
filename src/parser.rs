@@ -538,7 +538,7 @@ fn collect_text_recursive<'a>(node: &'a AstNode<'a>, out: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::DEFAULT_MAX_TASKS;
+    use crate::types::{CancelledSpelling, DEFAULT_MAX_TASKS};
 
     #[test]
     fn warn_invalid_timestamp_advances_per_call_counter() {
@@ -748,7 +748,7 @@ mod tests {
     #[test]
     fn parse_heading_cancelled_simple() {
         let (tt, p, h) = parse_heading("CANCELLED Foo");
-        assert_eq!(tt, Some(TaskType::Cancelled));
+        assert_eq!(tt, Some(TaskType::Cancelled(CancelledSpelling::DoubleL)));
         assert_eq!(p, None);
         assert_eq!(h, "Foo");
     }
@@ -756,7 +756,7 @@ mod tests {
     #[test]
     fn parse_heading_cancelled_with_priority() {
         let (tt, p, h) = parse_heading("CANCELLED [#A] Foo");
-        assert_eq!(tt, Some(TaskType::Cancelled));
+        assert_eq!(tt, Some(TaskType::Cancelled(CancelledSpelling::DoubleL)));
         assert_eq!(p, Some(Priority::A));
         assert_eq!(h, "Foo");
     }

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [\[Unreleased\]](#unreleased)
+- [\[0.9.1\] — 2026-07-03](#091--2026-07-03)
 - [\[0.9.0\] — 2026-05-29](#090--2026-05-29)
 - [\[0.8.0\] — 2026-05-29](#080--2026-05-29)
 - [\[0.7.0\] — 2026-05-28](#070--2026-05-28)
@@ -25,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [\[0.1.5\] — 2025-12-06..2025-12-09](#015--2025-12-062025-12-09)
 
 ## [Unreleased]
+
+## [0.9.1] — 2026-07-03
+
+### Changed
+
+- Updated `anyhow` (1.0.102 → 1.0.103) and `memmap2` (0.9.10 →
+  0.9.11) to clear RustSec unsound advisories RUSTSEC-2026-0190 and
+  RUSTSEC-2026-0186. Lockfile-only change; no effect on behavior or
+  the public API.
+- CI: bumped `actions/checkout` in the github-actions group.
 
 ## [0.9.0] — 2026-05-29
 

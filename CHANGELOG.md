@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New optional JSON field `timestamp_repeater` on each task surfaces the
+  timestamp's org repeater in canonical form (`++7d`, `.+1m`, `+1wd`),
+  or is omitted when the timestamp has no repeater. The repeater also
+  remains present verbatim inside the raw `timestamp` string. Additive
+  and non-breaking per ADR-0015; consumers that predate it ignore it.
+  Enables downstream mapping to a Google Calendar `RRULE`.
+
 ## [0.9.1] — 2026-07-03
 
 ### Changed

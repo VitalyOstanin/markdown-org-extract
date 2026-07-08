@@ -12,7 +12,8 @@ mod repeater;
 mod weekdays;
 
 pub use extract::{
-    extract_created_normalized, extract_timestamp_normalized, parse_timestamp_fields_normalized,
+    extract_created_normalized, extract_repeater_normalized, extract_timestamp_normalized,
+    parse_timestamp_fields_normalized,
 };
 pub use parser::{parse_org_timestamp, ParsedTimestamp};
 pub use repeater::{closest_date, DatePreference, Repeater, RepeaterUnit};

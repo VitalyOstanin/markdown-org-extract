@@ -204,6 +204,17 @@ pub fn parse_timestamp_fields_normalized(
     (ts_type, date, time, end_time, active)
 }
 
+/// Extract the timestamp's repeater as its canonical org string
+/// (`++7d`, `.+1m`, `+1wd`), or `None` when the timestamp carries no
+/// repeater. Input is expected already weekday-normalised (as assembled
+/// by `extract_timestamp_normalized`); a timestamp whose date does not
+/// parse yields `None` (an invalid timestamp is not synced downstream).
+pub fn extract_repeater_normalized(timestamp: &str) -> Option<String> {
+    super::parser::parse_org_timestamp(timestamp, None)?
+        .repeater
+        .map(|r| r.canonical())
+}
+
 fn detect_active(timestamp: &str) -> Option<bool> {
     // The first `<` or `[` after any keyword prefix decides the form.
     // Whichever comes first wins; a string with neither yields `None`.
@@ -280,6 +291,35 @@ mod tests {
     }
     fn extract_created(text: &str, mappings: &[(&str, &str)]) -> Option<String> {
         extract_created_normalized(&normalize_weekdays(text, mappings))
+    }
+
+    #[test]
+    fn extract_repeater_normalized_covers_flavours_units_and_absence() {
+        // All three prefix flavours round-trip to their canonical form.
+        assert_eq!(
+            extract_repeater_normalized("SCHEDULED: <2026-07-03 Fri 14:00 ++7d>").as_deref(),
+            Some("++7d")
+        );
+        assert_eq!(
+            extract_repeater_normalized("<2026-07-03 Fri +1w>").as_deref(),
+            Some("+1w")
+        );
+        assert_eq!(
+            extract_repeater_normalized("DEADLINE: <2026-07-03 Fri .+1m>").as_deref(),
+            Some(".+1m")
+        );
+        // Workday and hour units keep their suffixes.
+        assert_eq!(
+            extract_repeater_normalized("<2026-07-03 Fri +1wd>").as_deref(),
+            Some("+1wd")
+        );
+        assert_eq!(
+            extract_repeater_normalized("<2026-07-03 Fri 14:00 +2h>").as_deref(),
+            Some("+2h")
+        );
+        // No repeater, and an unparseable date, both yield None.
+        assert_eq!(extract_repeater_normalized("<2026-07-03 Fri 14:00>"), None);
+        assert_eq!(extract_repeater_normalized("not a timestamp"), None);
     }
 
     #[test]

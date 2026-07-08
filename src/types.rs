@@ -265,6 +265,13 @@ pub struct Task {
     pub timestamp_time: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_end_time: Option<String>,
+    /// Canonical org repeater string of the active timestamp (`++7d`,
+    /// `.+1m`, `+1wd`), or `None` when the timestamp carries no repeater.
+    /// Added as a non-breaking optional field under ADR-0015; consumers
+    /// that predate it simply ignore it. Downstream (the VS Code
+    /// extension) maps this to a Google Calendar `RRULE`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp_repeater: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clocks: Option<Vec<ClockEntry>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -649,6 +656,7 @@ mod tests {
             timestamp_date: None,
             timestamp_time: None,
             timestamp_end_time: None,
+            timestamp_repeater: None,
             clocks: None,
             total_clock_time: None,
             properties: None,

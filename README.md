@@ -850,9 +850,13 @@ The output format depends on the agenda mode.
 #### JSON
 
 Optional fields (`priority`, `created`, `timestamp_active`,
-`timestamp_time`, `timestamp_end_time`, `clocks`, `total_clock_time`,
-`properties`, `task_type`) are omitted when absent rather than
-serialised as `null`.
+`timestamp_time`, `timestamp_end_time`, `timestamp_repeater`, `clocks`,
+`total_clock_time`, `properties`, `task_type`) are omitted when absent
+rather than serialised as `null`.
+`timestamp_repeater` carries the timestamp's org repeater in its
+canonical form (`++7d`, `.+1m`, `+1wd`) and is absent when the
+timestamp has no repeater; the repeater also remains present verbatim
+inside the raw `timestamp` string.
 This matches the `#[serde(skip_serializing_if = "Option::is_none")]`
 convention used in `src/types.rs`.
 

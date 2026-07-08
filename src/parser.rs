@@ -8,8 +8,8 @@ use std::sync::LazyLock;
 use crate::clock::{calculate_total_minutes, extract_clocks, format_duration};
 use crate::regex_limits::compile_bounded;
 use crate::timestamp::{
-    extract_created_normalized, extract_timestamp_normalized, normalize_weekdays,
-    parse_timestamp_fields_normalized,
+    extract_created_normalized, extract_repeater_normalized, extract_timestamp_normalized,
+    normalize_weekdays, parse_timestamp_fields_normalized,
 };
 use crate::types::{Priority, Task, TaskType, MAX_DIAGNOSTIC_ITEMS};
 
@@ -326,19 +326,26 @@ fn finalize_task(path: &Path, info: HeadingInfo, ts_warning_counter: &mut usize)
     }
 
     let line = info.line;
-    let (ts_type, ts_date, ts_time, ts_end_time, ts_active) = if let Some(ref ts) = info.timestamp {
-        // `info.timestamp` is assembled from `extract_timestamp_normalized`
-        // regex captures over an already-`normalize_weekdays`d string in
-        // both `process_node` branches, so a second normalisation here
-        // would be redundant work on every task.
-        let parsed = parse_timestamp_fields_normalized(ts);
-        if parsed.1.is_none() {
-            warn_invalid_timestamp(ts_warning_counter, path, line, ts);
-        }
-        parsed
-    } else {
-        (None, None, None, None, None)
-    };
+    let (ts_type, ts_date, ts_time, ts_end_time, ts_active, ts_repeater) =
+        if let Some(ref ts) = info.timestamp {
+            // `info.timestamp` is assembled from `extract_timestamp_normalized`
+            // regex captures over an already-`normalize_weekdays`d string in
+            // both `process_node` branches, so a second normalisation here
+            // would be redundant work on every task.
+            let parsed = parse_timestamp_fields_normalized(ts);
+            if parsed.1.is_none() {
+                warn_invalid_timestamp(ts_warning_counter, path, line, ts);
+            }
+            // The repeater is extracted via a second, fuller pass
+            // (`parse_org_timestamp`) rather than the light regex path above:
+            // the repeater grammar (prefix/value/unit, `wd`) lives in that
+            // parser and is not worth duplicating as another regex helper.
+            // The extra parse is timestamp-string-local and runs once per task.
+            let repeater = extract_repeater_normalized(ts);
+            (parsed.0, parsed.1, parsed.2, parsed.3, parsed.4, repeater)
+        } else {
+            (None, None, None, None, None, None)
+        };
 
     let (clocks_opt, total_time) = if !info.clocks.is_empty() {
         let total = calculate_total_minutes(&info.clocks).map(format_duration);
@@ -367,6 +374,7 @@ fn finalize_task(path: &Path, info: HeadingInfo, ts_warning_counter: &mut usize)
         timestamp_date: ts_date,
         timestamp_time: ts_time,
         timestamp_end_time: ts_end_time,
+        timestamp_repeater: ts_repeater,
         clocks: clocks_opt,
         total_clock_time: total_time,
         properties,

@@ -1773,11 +1773,13 @@ fn json_snapshot_tasks_mode_inactive_timestamp() {
 
 #[test]
 fn json_snapshot_tasks_mode_repeater_and_warning_preserved() {
-    // MIN-12: the repeater (`+1m`) and warning cookie (`-3d`) are not
-    // separate JSON fields -- they live verbatim inside the `timestamp`
-    // string, which downstream tooling re-parses. Pin that the string is
-    // surfaced byte-for-byte so a future "helpful" normalisation of the
-    // timestamp cannot silently drop the cookies.
+    // MIN-12: the warning cookie (`-3d`) is not a separate JSON field -- it
+    // lives verbatim inside the `timestamp` string, which downstream tooling
+    // re-parses. Pin that the string is surfaced byte-for-byte so a future
+    // "helpful" normalisation of the timestamp cannot silently drop it. The
+    // repeater (`+1m`) is additionally surfaced as its own canonical
+    // `timestamp_repeater` field (ADR-0015) for RRULE mapping downstream,
+    // while remaining present inside the raw `timestamp` string too.
     let tmp = tempdir().expect("tmpdir");
     fs::write(
         tmp.path().join("rep.md"),
@@ -1813,7 +1815,8 @@ fn json_snapshot_tasks_mode_repeater_and_warning_preserved() {
     \"timestamp\": \"DEADLINE: <2026-05-21 Thu +1m -3d>\",
     \"timestamp_type\": \"DEADLINE\",
     \"timestamp_active\": true,
-    \"timestamp_date\": \"2026-05-21\"
+    \"timestamp_date\": \"2026-05-21\",
+    \"timestamp_repeater\": \"+1m\"
   }
 ]
 ";

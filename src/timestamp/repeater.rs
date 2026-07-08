@@ -60,6 +60,19 @@ impl RepeaterUnit {
     }
 }
 
+impl Repeater {
+    /// Canonical org-mode repeater string: prefix + value + unit suffix
+    /// (`++7d`, `.+1m`, `+1wd`). Round-trips with `parse_repeater`.
+    pub fn canonical(&self) -> String {
+        format!(
+            "{}{}{}",
+            self.repeater_type.prefix(),
+            self.value,
+            self.unit.suffix()
+        )
+    }
+}
+
 /// Parse repeater string like `+1d`, `++2w`, `.+1m`, `+1wd`
 ///
 /// Returns `None` for malformed input or when the numeric value is zero

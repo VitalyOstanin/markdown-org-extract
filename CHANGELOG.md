@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [\[Unreleased\]](#unreleased)
+- [\[0.10.0\] — 2026-07-08](#0100--2026-07-08)
 - [\[0.9.1\] — 2026-07-03](#091--2026-07-03)
 - [\[0.9.0\] — 2026-05-29](#090--2026-05-29)
 - [\[0.8.0\] — 2026-05-29](#080--2026-05-29)
@@ -27,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-07-08
+
 ### Added
 
 - New optional JSON field `timestamp_repeater` on each task surfaces the
@@ -35,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remains present verbatim inside the raw `timestamp` string. Additive
   and non-breaking per ADR-0015; consumers that predate it ignore it.
   Enables downstream mapping to a Google Calendar `RRULE`.
+
+### Changed
+
+- Bumped `crossbeam-epoch` (0.9.18 → 0.9.20) to clear RustSec advisory
+  RUSTSEC-2026-0204. Lockfile-only change; no effect on behavior or the
+  public API.
+- CI: bumped `actions/checkout` (6.0.3 → 7.0.0) in the github-actions
+  group.
 
 ## [0.9.1] — 2026-07-03
 

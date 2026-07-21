@@ -13,8 +13,18 @@
 # Exits with the failing step's status code, prefixed by a diagnostic on
 # stderr. Intended as the body of a git pre-commit hook (see
 # scripts/install-hooks.sh) and as a one-liner before opening a PR.
+#
+# The test step is wrapped in coreutils `timeout` so a hung or deadlocked test
+# cannot block a commit or a local run indefinitely (CI caps this per-job with
+# `timeout-minutes`, but the local script had no equivalent guard). Override the
+# limit with TEST_TIMEOUT (a `timeout` DURATION, e.g. `300s`, `10m`); set it to
+# `0` to disable the cap. If `timeout` is unavailable, the tests run unwrapped.
 
 set -euo pipefail
+
+# Per-invocation wall-clock cap for the test step. 600s comfortably exceeds a
+# clean-build test run while still bounding a genuine hang.
+TEST_TIMEOUT="${TEST_TIMEOUT:-600s}"
 
 step() {
     # Print a uniform banner so the failing step is easy to spot when the
@@ -44,6 +54,20 @@ run_step "yamllint"           yamllint .github/workflows/ .github/actions/
 run_step "cargo clippy"       cargo clippy --all-targets --all-features -- -D warnings
 RUSTDOCFLAGS="-D warnings" \
 run_step "cargo doc"          cargo doc  --no-deps --all-features
-run_step "cargo test"         cargo test --all-features
+# Wrap tests in `timeout` when it is available and the cap is non-zero. A hung
+# test then dies with exit code 124 (timeout's convention) instead of blocking
+# forever. `timeout` is coreutils on Linux and `gtimeout` (coreutils) on macOS.
+timeout_cmd=""
+if [ "$TEST_TIMEOUT" != "0" ]; then
+    if command -v timeout >/dev/null 2>&1; then
+        timeout_cmd="timeout $TEST_TIMEOUT"
+    elif command -v gtimeout >/dev/null 2>&1; then
+        timeout_cmd="gtimeout $TEST_TIMEOUT"
+    else
+        step "note: 'timeout' not found; running tests without a time cap"
+    fi
+fi
+# shellcheck disable=SC2086 # intentional word-splitting of the optional wrapper
+run_step "cargo test"         $timeout_cmd cargo test --all-features
 
 step "all checks passed"

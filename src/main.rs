@@ -41,6 +41,11 @@ use crate::types::{ProcessingStats, MAX_FILE_SIZE};
 /// convention `128 + signum` so `$?` after Ctrl-C is the familiar `130`.
 const EXIT_INTERRUPTED: i32 = 130;
 
+/// Initial capacity of the read buffer reused across the walk. Sized at 64 KiB
+/// to cover most source files in a single allocation while still amortising to
+/// one buffer for the whole tree; the buffer grows on demand for larger files.
+const READ_BUF_INITIAL_CAP: usize = 64 * 1024;
+
 fn main() {
     // Install signal handlers before anything heavy happens so a Ctrl-C
     // during startup still triggers a clean exit. The flag is shared with
@@ -272,7 +277,7 @@ fn scan_files(
     // designed to be cleared and reused; allocating them per file added a
     // monotonic cost that scaled with tree size for no gain.
     let mut searcher = Searcher::new();
-    let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);
+    let mut buf: Vec<u8> = Vec::with_capacity(READ_BUF_INITIAL_CAP);
 
     for result in walker {
         // A SIGINT/SIGTERM trips the flag; bail out *before* opening the next

@@ -8,6 +8,7 @@ package.
 - [Switch to edition 2024](#switch-to-edition-2024)
 - [Parallel walker (rayon)](#parallel-walker-rayon)
 - [Property-based and fuzz tests](#property-based-and-fuzz-tests)
+- [Coverage reporting and threshold](#coverage-reporting-and-threshold)
 - [Localising CLI messages](#localising-cli-messages)
 - [Benchmarks (criterion)](#benchmarks-criterion)
 - [Deferred performance optimisations](#deferred-performance-optimisations)
@@ -57,6 +58,13 @@ Risk areas:
 
 Tools: `proptest` or `quickcheck`. `cargo-fuzz` for the regexes under
 `timestamp/*`.
+
+## Coverage reporting and threshold
+
+No coverage tooling is wired up yet. Adding a report and a minimum threshold
+needs a coverage tool (`cargo-llvm-cov` or `cargo-tarpaulin`), which is not
+installed. Set it up in CI (installed on the runner, not on the dev host) and
+enforce a floor at the measured level so regressions fail the build.
 
 ## Localising CLI messages
 

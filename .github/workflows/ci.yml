@@ -119,11 +119,26 @@ jobs:
   audit:
     name: cargo audit
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Run cargo audit
-        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable as of 2026-05-16
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          toolchain: stable
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      # cargo audit runs directly instead of rustsec/audit-check. The action
+      # creates GitHub check-runs, which needs a write-capable GITHUB_TOKEN;
+      # on dependabot events the token is read-only, so the action failed with
+      # "Resource not accessible by integration" regardless of the audit
+      # result. Running the CLI needs no check-run permissions and fails only
+      # on real advisories.
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo audit
+        run: cargo audit

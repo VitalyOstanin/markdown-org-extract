@@ -16,6 +16,7 @@ Thumbs.db
 *.log
 /tmp/
 .tmp/
+/temp/
 
 # Local-only review reports / scratch
 /docs/reviews/

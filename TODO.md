@@ -5,6 +5,7 @@ package.
 
 ## Table of contents
 
+- [CI on the latest Ubuntu LTS](#ci-on-the-latest-ubuntu-lts)
 - [Switch to edition 2024](#switch-to-edition-2024)
 - [Parallel walker (rayon)](#parallel-walker-rayon)
 - [Property-based and fuzz tests](#property-based-and-fuzz-tests)
@@ -13,6 +14,22 @@ package.
 - [Benchmarks (criterion)](#benchmarks-criterion)
 - [Deferred performance optimisations](#deferred-performance-optimisations)
 - [Open info-level review notes](#open-info-level-review-notes)
+
+## CI on the latest Ubuntu LTS
+
+CI must build and test on the current Ubuntu LTS runner, not `ubuntu-latest`.
+GitHub keeps `ubuntu-latest` on the previous LTS for months after a new LTS ships
+(until its runner image leaves preview), so a workflow that relies on `ubuntu-latest`
+is not actually exercising the latest LTS.
+
+Action:
+
+1. Pin the Linux runners to the current LTS image (`ubuntu-26.04` as of 2026-06,
+   preview runner image) across `ci.yml` and `release.yml` (`test` matrix, `lint`,
+   `msrv`, `audit`, `publish`, `package-binaries`).
+2. Keep the previous LTS (`ubuntu-24.04`) in the `test` matrix for one cycle so a
+   preview-image regression does not block CI.
+3. Bump the pin and drop the older LTS when a newer LTS ships.
 
 ## Switch to edition 2024
 

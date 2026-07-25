@@ -57,6 +57,7 @@ was decided, and the trade-offs that came with it.
 | 0020 | [Task properties via an org-properties fenced code block](0020-task-properties-org-properties-block.md) | Accepted |
 | 0021 | [Accept CANCELED spelling; preserve original task_type](0021-accept-canceled-spelling.md) | Accepted |
 | 0022 | [Amend ADRs by reference, not by rewriting](0022-amend-adrs-by-reference.md) | Accepted |
+| 0023 | [`timestamp_next` — resolved next occurrence for repeaters](0023-next-occurrence-field.md) | Accepted |
 
 ## Adding a new ADR
 

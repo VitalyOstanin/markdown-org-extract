@@ -1658,6 +1658,203 @@ fn json_snapshot_agenda_day_minimal_fixture() {
 }
 
 #[test]
+fn json_snapshot_agenda_day_repeating_task_carries_timestamp_next() {
+    // Pin `timestamp_next` (ADR-0023) in the wire contract: its position
+    // after `timestamp_repeater`, its `YYYY-MM-DD` shape, and the anchoring
+    // rule. The fixture repeats monthly from the 31st, so the value also
+    // proves the field is computed from the task's own anchor rather than
+    // from the rewritten `timestamp_date` of the rendered occurrence
+    // (30.04 here): month-end anchoring survives, giving 31.05.
+    let tmp = tempdir().expect("tmpdir");
+    fs::write(
+        tmp.path().join("notes.md"),
+        "# Notes\n\n### TODO Pin me\n`SCHEDULED: <2026-01-31 Sat ++1m>`\n",
+    )
+    .expect("write notes.md");
+
+    let out = bin()
+        .args([
+            "--dir",
+            tmp.path().to_str().unwrap(),
+            "--agenda",
+            "day",
+            "--current-date",
+            "2026-05-21",
+            "--tz",
+            "UTC",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).expect("stdout is UTF-8");
+    let expected = "\
+[
+  {
+    \"date\": \"2026-05-21\",
+    \"overdue\": [
+      {
+        \"file\": \"notes.md\",
+        \"line\": 3,
+        \"heading\": \"Pin me\",
+        \"content\": \"\",
+        \"task_type\": \"TODO\",
+        \"timestamp\": \"SCHEDULED: <2026-04-30 Thu ++1m>\",
+        \"timestamp_type\": \"SCHEDULED\",
+        \"timestamp_active\": true,
+        \"timestamp_date\": \"2026-04-30\",
+        \"timestamp_repeater\": \"++1m\",
+        \"timestamp_next\": \"2026-05-31\",
+        \"days_offset\": -21
+      }
+    ],
+    \"scheduled_timed\": [],
+    \"scheduled_no_time\": [],
+    \"upcoming\": []
+  }
+]
+";
+    assert_eq!(
+        stdout, expected,
+        "JSON agenda-day repeating snapshot must be byte-exact; got:\n{stdout}"
+    );
+}
+
+#[test]
+fn timestamp_next_is_the_same_in_every_cell_of_a_week_payload() {
+    // The field names the next occurrence relative to now, not to the cell
+    // it is rendered in, so one task must carry one value across the whole
+    // week -- including the cells whose `timestamp_date` was rewritten to
+    // that cell's own date.
+    let tmp = tempdir().expect("tmpdir");
+    fs::write(
+        tmp.path().join("notes.md"),
+        "# Notes\n\n### TODO Weekly sync\n`SCHEDULED: <2026-07-21 Tue ++7d>`\n",
+    )
+    .expect("write notes.md");
+
+    let out = bin()
+        .args([
+            "--dir",
+            tmp.path().to_str().unwrap(),
+            "--agenda",
+            "week",
+            "--current-date",
+            "2026-07-22",
+            "--tz",
+            "UTC",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).expect("stdout is UTF-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+
+    let mut seen: Vec<String> = Vec::new();
+    for day in parsed.as_array().expect("array of days") {
+        for bucket in [
+            "overdue",
+            "scheduled_timed",
+            "scheduled_no_time",
+            "upcoming",
+        ] {
+            for item in day[bucket].as_array().into_iter().flatten() {
+                seen.push(
+                    item["timestamp_next"]
+                        .as_str()
+                        .unwrap_or("<missing>")
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    assert!(!seen.is_empty(), "week payload must contain the task");
+    assert!(
+        seen.iter().all(|v| v == "2026-07-28"),
+        "every cell must carry 2026-07-28; got {seen:?} in:\n{stdout}"
+    );
+}
+
+#[test]
+fn timestamp_next_is_absent_in_tasks_mode() {
+    // ADR-0009 keeps the flat list date-less, so ADR-0023 deliberately does
+    // not annotate it: a now-relative field would make the output
+    // non-deterministic. A repeating task is the case that would regress.
+    let tmp = tempdir().expect("tmpdir");
+    fs::write(
+        tmp.path().join("notes.md"),
+        "# Notes\n\n### TODO Weekly sync\n`SCHEDULED: <2026-07-21 Tue ++7d>`\n",
+    )
+    .expect("write notes.md");
+
+    let out = bin()
+        .args(["--dir", tmp.path().to_str().unwrap(), "--tasks", "--quiet"])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).expect("stdout is UTF-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+
+    for task in parsed.as_array().expect("array of tasks") {
+        assert!(
+            task.get("timestamp_next").is_none(),
+            "tasks mode must not carry timestamp_next; got:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn timestamp_next_is_absent_for_a_task_without_a_repeater() {
+    let tmp = tempdir().expect("tmpdir");
+    fs::write(
+        tmp.path().join("notes.md"),
+        "# Notes\n\n### TODO One-off\n`SCHEDULED: <2026-05-21 Thu>`\n",
+    )
+    .expect("write notes.md");
+
+    let out = bin()
+        .args([
+            "--dir",
+            tmp.path().to_str().unwrap(),
+            "--agenda",
+            "day",
+            "--current-date",
+            "2026-05-21",
+            "--tz",
+            "UTC",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).expect("stdout is UTF-8");
+    assert!(
+        !stdout.contains("timestamp_next"),
+        "a non-repeating task must not carry the field; got:\n{stdout}"
+    );
+}
+
+#[test]
 fn json_snapshot_tasks_mode_clock_entry() {
     // MIN-12 (2026-05-25 tests review): the existing snapshots never
     // exercised the CLOCK fields. Pin the `clocks` array element shape

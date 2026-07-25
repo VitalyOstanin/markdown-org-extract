@@ -272,6 +272,16 @@ pub struct Task {
     /// extension) maps this to a Google Calendar `RRULE`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_repeater: Option<String>,
+    /// Resolved next occurrence date (`YYYY-MM-DD`) for a task that carries a
+    /// repeater, computed relative to "now": the closest occurrence that is
+    /// still upcoming (today-or-later; a timed occurrence counts as upcoming
+    /// only until its clock time passes). `None` for non-repeating tasks or
+    /// when the date/repeater cannot be resolved. Added as a non-breaking
+    /// optional field (same schema-evolution rule as `timestamp_repeater`);
+    /// consumers that predate it ignore it. The VS Code agenda shows it in the
+    /// repeat tooltip so "next" never names a past occurrence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp_next: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clocks: Option<Vec<ClockEntry>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -657,6 +667,7 @@ mod tests {
             timestamp_time: None,
             timestamp_end_time: None,
             timestamp_repeater: None,
+            timestamp_next: None,
             clocks: None,
             total_clock_time: None,
             properties: None,

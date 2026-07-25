@@ -958,6 +958,17 @@ The `days_offset` field encodes:
 - Negative number — days the task is overdue
 - Absent for tasks belonging to the day itself (scheduled)
 
+For a task that carries a repeater, an extra `timestamp_next`
+(`YYYY-MM-DD`) gives the resolved next still-upcoming occurrence relative
+to "now": a date before today rolls forward to the closest occurrence
+today-or-later, and a timed occurrence earlier today rolls to the
+following one (the reference is the local wall clock; under
+`--current-date` the time is treated as midnight, so only the date-level
+rolling is deterministic). It is absent for non-repeating tasks and
+**only present in the `day`/`week`/`month` agenda modes** — the date-less
+`--tasks` mode never carries it. See
+[ADR-0023](docs/adr/0023-next-occurrence-field.md).
+
 #### Markdown
 
 File paths and timestamps are wrapped in inline code (`` `...` ``) to
@@ -1010,6 +1021,11 @@ To let downstream consumers render agendas without re-parsing the
 - `timestamp_date` — date as `YYYY-MM-DD`
 - `timestamp_time` — start time, e.g. `10:00` (when present)
 - `timestamp_end_time` — end time, e.g. `12:00` (when a range was given)
+- `timestamp_repeater` — the repeater cookie, e.g. `++7d` (when present)
+- `timestamp_next` — resolved next still-upcoming occurrence as
+  `YYYY-MM-DD`, for repeating tasks in the `day`/`week`/`month` agenda
+  modes only (see [Repeating tasks](#repeating-tasks) and
+  [ADR-0023](docs/adr/0023-next-occurrence-field.md))
 
 #### Task properties
 
@@ -1038,7 +1054,9 @@ follow-up occurrences.
 
 Every standard org-mode unit is supported:
 
-- `+Nh` — every N hours
+- `+Nh` — every N hours. Agendas are a day grid, so an hour repeater is
+  projected onto it: every day counts as an occurrence and **N is
+  ignored** (`+5h` behaves like `+1h`, not like "every 5 days").
 - `+Nd` — every N days (strict; preserves the original date offset)
 - `+Nw` — every N weeks
 - `+Nm` — every N months
@@ -1050,6 +1068,36 @@ Repeater modifiers:
 - `+` — strict (cumulative); preserves the date offset
 - `++` — catch-up (smart); preserves the weekday
 - `.+` — restart-from-completion (relative to the close date)
+
+The modifier describes how the *stored* stamp advances when the task is
+completed, which is the editor's job. This tool only places occurrences on
+a calendar, so all three modifiers bracket the same grid: the agenda
+placement and `timestamp_next` are identical for `+7d`, `++7d`, and
+`.+7d`.
+
+### Next occurrence (`timestamp_next`)
+
+In the `day`/`week`/`month` agenda modes every repeating task carries
+`timestamp_next` — the closest occurrence that is still upcoming:
+
+- a date before today rolls forward to the first occurrence
+  today-or-later;
+- an occurrence landing on today stays today while its clock time is
+  still ahead, and rolls to the following occurrence once that time has
+  passed (an all-day occurrence stays today until midnight);
+- the anchor is the task's own timestamp, not the occurrence the agenda
+  renders, so a monthly repeater anchored on the 31st keeps naming
+  month-end;
+- the value is the same in every cell the task appears in — it answers
+  "when does this come round next", not "what does this cell show".
+
+The reference moment is the real local wall clock (`--tz`), independent
+of `--date`/`--from`/`--to`; with `--current-date` the time of day is
+unknown, so it is taken as midnight and only the date-level rolling
+applies. The field is absent for non-repeating tasks, for a repeater the
+parser rejects, and in the date-less `--tasks` mode (ADR-0009), which
+stays deterministic. See
+[ADR-0023](docs/adr/0023-next-occurrence-field.md).
 
 ### Working days
 

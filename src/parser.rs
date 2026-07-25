@@ -375,6 +375,9 @@ fn finalize_task(path: &Path, info: HeadingInfo, ts_warning_counter: &mut usize)
         timestamp_time: ts_time,
         timestamp_end_time: ts_end_time,
         timestamp_repeater: ts_repeater,
+        // Populated later by `annotate_next_occurrences` (needs the agenda
+        // reference date, which the parser does not have).
+        timestamp_next: None,
         clocks: clocks_opt,
         total_clock_time: total_time,
         properties,

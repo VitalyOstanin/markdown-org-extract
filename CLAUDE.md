@@ -110,6 +110,14 @@ pointers to the full text and rationale.
   budgets. A reviewer finding "add Unicode normalisation", "the
   `file` field can be lossy", or "`TS_BODY_MAX` is not a byte limit"
   closes with a pointer to it.
+- `timestamp_next` (agenda `day`/`week`/`month` only) holds a repeating
+  task's next still-upcoming occurrence. See
+  [ADR-0023](docs/adr/0023-next-occurrence-field.md): it is computed on
+  the input tasks, *before* the agenda rewrites `timestamp_date` on the
+  copies it renders, so the anchor's day-of-month survives and the value
+  is the same in every cell; `--tasks` mode stays date-less and never
+  carries it. A reviewer finding "the field disagrees with this cell's
+  date" or "tasks mode is missing the field" closes with a pointer to it.
 - ADRs are amended by reference, not by rewriting. A new
   architectural decision goes in a new ADR; an existing ADR is
   touched only by a short `Amended by ADR-NNNN (YYYY-MM-DD): <one

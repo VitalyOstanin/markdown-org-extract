@@ -177,6 +177,9 @@ fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
         &cli.tz,
         cli.tasks_include_done,
         cli.tasks_include_cancelled,
+        // `timestamp_next` only exists in the JSON wire format; the Markdown
+        // and HTML renderers never print it, so there is nothing to compute.
+        matches!(cli.format, OutputFormat::Json),
     )?;
 
     render_output(&cli, agenda_output)

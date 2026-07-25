@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [\[Unreleased\]](#unreleased)
+- [\[0.11.0\] — 2026-07-25](#0110--2026-07-25)
 - [\[0.10.0\] — 2026-07-08](#0100--2026-07-08)
 - [\[0.9.1\] — 2026-07-03](#091--2026-07-03)
 - [\[0.9.0\] — 2026-05-29](#090--2026-05-29)
@@ -27,6 +28,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [\[0.1.5\] — 2025-12-06..2025-12-09](#015--2025-12-062025-12-09)
 
 ## [Unreleased]
+
+## [0.11.0] — 2026-07-25
+
+### Added
+
+- `timestamp_next` — a new optional field on each task in the
+  `--agenda day/week/month` JSON. For a task that carries a repeater it
+  holds the resolved next still-upcoming occurrence date (`YYYY-MM-DD`)
+  relative to the local now: a date before today rolls forward to the
+  closest occurrence today-or-later, and a timed occurrence earlier today
+  rolls to the following one. Absent for non-repeating tasks and in the
+  date-less `--tasks` mode, which stays deterministic. Computed from the
+  existing `closest_date` repeater arithmetic, so a repeater advances the
+  same way it does for agenda placement (including the workday and
+  daily-grid-hour rules); the two differ only in direction, since
+  placement looks back to the current occurrence and this field looks
+  forward past it. Anchored on the task's own timestamp rather than the
+  occurrence a cell renders, so a monthly repeater anchored on the 31st
+  keeps naming month-end and the value is identical in every cell.
+  Non-breaking addition under ADR-0015; consumers that ignore it are
+  unaffected. Motivation and design in ADR-0023
+  (`docs/adr/0023-next-occurrence-field.md`).
+
+### Changed
+
+- `cargo audit` now runs directly in CI instead of through
+  `rustsec/audit-check`, and is also part of the release gate.
+- The local `scripts/check.sh` test step is wrapped in a timeout
+  (`TEST_TIMEOUT`, default 600s) so a hung test cannot block a commit
+  indefinitely.
+
+### Fixed
+
+- Markdown and HTML rendering now drop invisible bidirectional
+  formatting characters (`U+202A`–`U+202E`, `U+2066`–`U+2069`, `U+200E`,
+  `U+200F`, `U+200B`) alongside the control characters already stripped:
+  they render as nothing while changing how the surrounding text reads.
+- A repeater with an extreme step (e.g. `++99999999d`) no longer panics
+  while bracketing the occurrence grid; the date simply has no
+  representable occurrence and the field is omitted.
 
 ## [0.10.0] — 2026-07-08
 

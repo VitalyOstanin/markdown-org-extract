@@ -2,9 +2,26 @@ use std::fmt::Write;
 
 use crate::types::{ClockEntry, DayAgenda, Task, TaskWithOffset};
 
+/// Characters that render as nothing yet change how the surrounding text is
+/// displayed: the bidirectional overrides / isolates, which can reorder a
+/// heading so it reads differently from the bytes it contains, and the
+/// zero-width space, which can hide a word boundary. Dropped from rendered
+/// output so what the reader sees matches what the note says.
+fn is_invisible_formatting(ch: char) -> bool {
+    matches!(ch,
+        '\u{200b}'                  // ZERO WIDTH SPACE
+        | '\u{200e}' | '\u{200f}'   // LRM, RLM
+        | '\u{202a}'..='\u{202e}'   // LRE, RLE, PDF, LRO, RLO
+        | '\u{2066}'..='\u{2069}'   // LRI, RLI, FSI, PDI
+    )
+}
+
 /// Escape markdown special characters in plain text. Used for headings and
 /// labels that originate from user input — keeps formatting from being broken
 /// or hijacked (e.g. a heading containing `*` would otherwise render as italic).
+/// Invisible bidirectional formatting is dropped for the same reason it is
+/// dropped from HTML output: it rewrites how the line reads without showing up
+/// in it.
 fn md_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -13,6 +30,7 @@ fn md_escape(s: &str) -> String {
                 out.push('\\');
                 out.push(ch);
             }
+            c if is_invisible_formatting(c) => {}
             _ => out.push(ch),
         }
     }
@@ -20,8 +38,10 @@ fn md_escape(s: &str) -> String {
 }
 
 /// Escape HTML special characters in pre-existing text content.
-/// Also drops C0 control characters (except `\t \n \r`) to protect downstream
-/// renderers from null bytes and other invisible glyphs sneaked through markdown.
+/// Also drops C0 control characters (except `\t \n \r`), DEL, and the
+/// invisible bidirectional formatting characters, to protect downstream
+/// renderers from null bytes and from glyphs that silently reorder the text
+/// sneaked through markdown.
 fn html_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -33,6 +53,7 @@ fn html_escape(s: &str) -> String {
             '\'' => out.push_str("&#39;"),
             '\t' | '\n' | '\r' => out.push(ch),
             c if (c as u32) < 0x20 || c == '\u{7f}' => {}
+            c if is_invisible_formatting(c) => {}
             _ => out.push(ch),
         }
     }
@@ -351,6 +372,19 @@ mod tests {
         assert_eq!(html_escape("A\u{0007}B"), "AB"); // BEL
         assert_eq!(html_escape("A\u{007f}B"), "AB"); // DEL
         assert_eq!(html_escape("line1\nline2\tx"), "line1\nline2\tx");
+    }
+
+    #[test]
+    fn escapes_drop_invisible_bidi_formatting() {
+        // A heading carrying RLO reads back-to-front while the bytes say
+        // otherwise; a zero-width space hides a word boundary. Both render as
+        // nothing, so neither renderer may pass them through.
+        let sneaky = "safe\u{202e}txt.exe\u{202c}\u{200b}end\u{2066}x\u{2069}";
+        assert_eq!(html_escape(sneaky), "safetxt.exeendx");
+        assert_eq!(md_escape(sneaky), "safetxt.exeendx");
+        // Ordinary text, including non-Latin scripts, is untouched.
+        assert_eq!(html_escape("Отчёт за июль"), "Отчёт за июль");
+        assert_eq!(md_escape("Отчёт за июль"), "Отчёт за июль");
     }
 
     #[test]

@@ -50,7 +50,13 @@ trap 'rm -rf "$tmpdir"' EXIT
 # proc-macro ones) that a given binary does not link. Over-inclusion is the
 # safe direction for an attribution notice.
 "$CARGO" tree --edges normal --target all --prefix none --format '{p}' --locked \
-  >"${tmpdir}/tree.txt"
+  --color never >"${tmpdir}/tree.raw"
+# CI sets CARGO_TERM_COLOR=always, and the markers below then arrive wrapped
+# in ANSI escapes. `--color never` above already covers cargo, but the strip
+# stays as the actual defence: a coloured marker does not fail loudly, it
+# silently sticks to the version and turns into "crate is in the tree but not
+# in cargo metadata".
+sed -e 's/\x1b\[[0-9;]*m//g' "${tmpdir}/tree.raw" >"${tmpdir}/tree.txt"
 "$CARGO" metadata --format-version 1 --locked >"${tmpdir}/metadata.json"
 
 # The workspace member itself is the only entry cargo prints with a local path

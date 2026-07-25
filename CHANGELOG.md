@@ -44,6 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [ADR-0024](docs/adr/0024-third-party-license-notices-in-archives.md).
   `scripts/verify-archive.sh` now refuses an archive without it.
 
+### Internal
+
+- CI gained a `licenses` job: `cargo deny check licenses` against the
+  narrow allow-list in `deny.toml` (a dependency introducing a new licence
+  fails the build), plus a regeneration of `THIRD-PARTY-LICENSES.txt` that
+  fails when the committed copy is stale.
+
 ## [0.11.0] — 2026-07-25
 
 ### Added

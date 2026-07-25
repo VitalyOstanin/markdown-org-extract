@@ -432,8 +432,11 @@ jobs:
       # filename matches the template, sibling .sha256 verifies cleanly,
       # archive expands to a single top-level directory matching the
       # stem, that directory contains exactly the binary + README +
-      # LICENSE. Catches regressions like the original Windows-zip layout
-      # bug (flat-rooted archive) before the asset reaches the release.
+      # LICENSE + THIRD-PARTY-LICENSES.txt. Catches regressions like the
+      # original Windows-zip layout bug (flat-rooted archive), and an
+      # archive shipping a statically linked binary without the notices
+      # of the crates linked into it, before the asset reaches the
+      # release.
       - name: Verify archive against downstream contract
         shell: bash
         env:

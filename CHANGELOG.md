@@ -29,6 +29,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Release archives now carry `THIRD-PARTY-LICENSES.txt` next to `README.md`
+  and `LICENSE`: the licence texts and copyright notices of every crate
+  linked into the statically linked binary. `LICENSE` covers this project's
+  own code only, so redistributing the binary previously left the
+  attribution obligations of around a hundred dependencies unmet. The file
+  is produced by `scripts/generate-third-party-licenses.sh` from
+  `cargo tree` plus `cargo metadata`, identical texts are emitted once and
+  referenced by index, and a crate shipping no licence text fails the
+  generator instead of being dropped silently. Adding the file to the
+  archive is a change to the downstream-packager contract; see
+  [ADR-0024](docs/adr/0024-third-party-license-notices-in-archives.md).
+  `scripts/verify-archive.sh` now refuses an archive without it.
+
 ## [0.11.0] — 2026-07-25
 
 ### Added

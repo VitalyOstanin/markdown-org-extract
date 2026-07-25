@@ -81,6 +81,11 @@ fn write_staged_files(stage: &Path, bin_name: &str) {
     fs::write(stage.join(bin_name), b"fake binary\n").unwrap();
     fs::write(stage.join("README.md"), b"fake readme\n").unwrap();
     fs::write(stage.join("LICENSE"), b"fake license\n").unwrap();
+    fs::write(
+        stage.join("THIRD-PARTY-LICENSES.txt"),
+        b"fake third-party notices\n",
+    )
+    .unwrap();
 }
 
 fn make_tar_gz_top_level(dir: &Path, stem: &str, bin_name: &str) -> PathBuf {
@@ -306,6 +311,40 @@ fn verify_rejects_archive_with_missing_required_file() {
 }
 
 #[test]
+fn verify_rejects_archive_without_third_party_licenses() {
+    // The archive ships a statically linked binary, so the notices of the
+    // crates linked into it have to travel with it; an archive without them
+    // is not publishable.
+    let tmp = tempdir().unwrap();
+    let stem = "markdown-org-extract-0.3.1-x86_64-unknown-linux-gnu";
+    let stage = tmp.path().join(stem);
+    write_staged_files(&stage, "markdown-org-extract");
+    fs::remove_file(stage.join("THIRD-PARTY-LICENSES.txt")).unwrap();
+    let asset_name = format!("{stem}.tar.gz");
+    let status = Command::new("tar")
+        .arg("-czf")
+        .arg(tmp.path().join(&asset_name))
+        .arg("-C")
+        .arg(tmp.path())
+        .arg(stem)
+        .status()
+        .expect("tar");
+    assert!(status.success());
+    sha256_for(tmp.path(), &asset_name);
+    let asset = tmp.path().join(&asset_name);
+    let out = run_verify(&asset, "markdown-org-extract");
+    assert!(
+        !out.status.success(),
+        "expected reject on missing THIRD-PARTY-LICENSES.txt"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("THIRD-PARTY-LICENSES.txt"),
+        "stderr should name the missing file: {stderr}"
+    );
+}
+
+#[test]
 fn verify_rejects_filename_not_matching_template() {
     let tmp = tempdir().unwrap();
     let stem = "markdown-org-extract-0.3.1-x86_64-unknown-linux-gnu";
@@ -342,6 +381,11 @@ fn package_archive_tar_gz_produces_verifiable_layout() {
     let license = tmp.path().join("LICENSE");
     fs::write(&readme, b"fake readme\n").unwrap();
     fs::write(&license, b"fake license\n").unwrap();
+    fs::write(
+        tmp.path().join("THIRD-PARTY-LICENSES.txt"),
+        b"fake third-party notices\n",
+    )
+    .unwrap();
     let runner_temp = tmp.path().join("runner-temp");
     fs::create_dir_all(&runner_temp).unwrap();
     let out_dir = tmp.path().join("out");
@@ -393,6 +437,11 @@ fn package_archive_zip_produces_verifiable_layout() {
     fs::write(&bin_path, b"fake binary\n").unwrap();
     fs::write(tmp.path().join("README.md"), b"fake readme\n").unwrap();
     fs::write(tmp.path().join("LICENSE"), b"fake license\n").unwrap();
+    fs::write(
+        tmp.path().join("THIRD-PARTY-LICENSES.txt"),
+        b"fake third-party notices\n",
+    )
+    .unwrap();
     let runner_temp = tmp.path().join("runner-temp");
     fs::create_dir_all(&runner_temp).unwrap();
     let out_dir = tmp.path().join("out");

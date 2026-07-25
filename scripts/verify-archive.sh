@@ -8,7 +8,8 @@
 #   1. Filename matches markdown-org-extract-<version>-<target>.<tar.gz|zip>
 #   2. Sibling .sha256 exists and `sha256sum -c` passes
 #   3. Archive extracts to a single top-level directory matching the stem
-#   4. That directory contains exactly: <bin_name>, README.md, LICENSE
+#   4. That directory contains exactly: <bin_name>, README.md, LICENSE,
+#      THIRD-PARTY-LICENSES.txt
 
 set -euo pipefail
 
@@ -103,8 +104,11 @@ if [ ! -d "$root" ]; then
   exit 1
 fi
 
-# Required files: exactly <bin_name>, README.md, LICENSE -- no extras.
-required=("$BIN_NAME" "README.md" "LICENSE")
+# Required files: exactly <bin_name>, README.md, LICENSE and the third-party
+# notices -- no extras. The binary is statically linked, so shipping it
+# without the notices of the crates linked into it is a licence violation,
+# not a cosmetic omission.
+required=("$BIN_NAME" "README.md" "LICENSE" "THIRD-PARTY-LICENSES.txt")
 for f in "${required[@]}"; do
   if [ ! -f "${root}/${f}" ]; then
     echo "error: missing required file in archive: ${f}" >&2

@@ -322,17 +322,23 @@ fn bracket_month(
 
 /// Bracket on a uniform daily grid (Day/Week/Hour repeaters).
 /// `days` is the period length expressed in days.
+///
+/// Returns `None` when the grid runs off the calendar. The step comes from
+/// user input (`parse_repeater` only rejects zero, so `++99999999d` is a
+/// valid repeater), and the plain `+` operator on `NaiveDate` panics on
+/// overflow — a malformed note must not take the process down.
 fn bracket_uniform_days(
     base_date: NaiveDate,
     current: NaiveDate,
     days: i64,
-) -> (NaiveDate, NaiveDate) {
+) -> Option<(NaiveDate, NaiveDate)> {
     let days_diff = (current - base_date).num_days();
     let complete_periods = days_diff / days;
 
-    let n1 = base_date + chrono::Duration::days(complete_periods * days);
-    let n2 = n1 + chrono::Duration::days(days);
-    (n1, n2)
+    let offset = complete_periods.checked_mul(days)?;
+    let n1 = base_date.checked_add_signed(chrono::TimeDelta::try_days(offset)?)?;
+    let n2 = n1.checked_add_signed(chrono::TimeDelta::try_days(days)?)?;
+    Some((n1, n2))
 }
 
 /// Bracket on the workday-repeater grid using the calendar's O(log n)
@@ -381,15 +387,17 @@ pub fn closest_date(
     let (n1, n2) = match repeater.unit {
         RepeaterUnit::Year => bracket_year(base_date, current, repeater.value)?,
         RepeaterUnit::Month => bracket_month(base_date, current, repeater.value)?,
-        RepeaterUnit::Day => bracket_uniform_days(base_date, current, repeater.value as i64),
-        RepeaterUnit::Week => bracket_uniform_days(base_date, current, (repeater.value * 7) as i64),
+        RepeaterUnit::Day => bracket_uniform_days(base_date, current, repeater.value as i64)?,
+        // Widen before multiplying: `value * 7` in u32 wraps for a large
+        // week step and would silently bracket on the wrong grid.
+        RepeaterUnit::Week => bracket_uniform_days(base_date, current, repeater.value as i64 * 7)?,
         // Hour repeaters always project onto a daily grid: any +Nh repeater is
         // intra-day so for an agenda-by-day view every day is an occurrence.
         // The numeric value is intentionally ignored — see docstring on
         // `RepeaterUnit::Hour` and the README "Repeaters" section. Documented
         // explicitly so a future contributor does not "fix" this by using
         // `repeater.value`, which would silently turn +5h into "every 5 days".
-        RepeaterUnit::Hour => bracket_uniform_days(base_date, current, 1),
+        RepeaterUnit::Hour => bracket_uniform_days(base_date, current, 1)?,
         RepeaterUnit::Workday => bracket_workday(base_date, current, repeater.value),
     };
 
@@ -893,5 +901,31 @@ mod tests {
             cal.nth_workday_after(base, 6),
             NaiveDate::from_ymd_opt(2025, 12, 15).unwrap()
         );
+    }
+
+    #[test]
+    fn closest_date_returns_none_instead_of_panicking_on_an_absurd_step() {
+        // `parse_repeater` only rejects a zero step, so a note can legitimately
+        // carry `++99999999d`. Bracketing that grid runs off the calendar; the
+        // answer is "no occurrence", never a panic that would take the whole
+        // run down in the middle of a scan.
+        let base = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        let current = NaiveDate::from_ymd_opt(2026, 7, 25).unwrap();
+
+        // Hour repeaters are excluded on purpose: they project onto a
+        // one-day grid and ignore their value, so no step can overflow.
+        for step in ["+99999999d", "+99999999w"] {
+            let rep = parse_repeater(step).expect(step);
+            assert_eq!(
+                closest_date(base, current, DatePreference::Future, &rep),
+                None,
+                "step {step} must bracket to None, not panic"
+            );
+            assert_eq!(
+                closest_date(base, current, DatePreference::Past, &rep),
+                None,
+                "step {step} must bracket to None, not panic"
+            );
+        }
     }
 }

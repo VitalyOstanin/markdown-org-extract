@@ -171,6 +171,18 @@ esac
     Fixture { tmp, cargo, out }
 }
 
+/// Rewrites the fake `cargo tree` output the way CI sees it: with
+/// `CARGO_TERM_COLOR: always` in the environment, cargo wraps the `(*)` and
+/// `(proc-macro)` markers in ANSI escapes.
+fn colourise_tree(fixture: &Fixture) {
+    let tree = "myroot v9.9.9 (/somewhere/myroot)\n\
+                alpha v1.0.0\n\
+                beta v2.3.4 \u{1b}[33m\u{1b}[2m(proc-macro)\u{1b}[39m\u{1b}[22m\n\
+                gamma v0.1.0\n\
+                alpha v1.0.0 \u{1b}[33m\u{1b}[2m(*)\u{1b}[39m\u{1b}[22m\n";
+    fs::write(fixture.tmp.path().join("tree.txt"), tree).unwrap();
+}
+
 fn run(fixture: &Fixture) -> Output {
     Command::new("bash")
         .arg(generator_script())
@@ -318,6 +330,23 @@ fn counts_a_crate_once_despite_repeat_and_proc_macro_markers() {
     assert!(
         !crates_section.contains("(proc-macro)") && !crates_section.contains("(*)"),
         "cargo tree markers must not leak into the output:\n{crates_section}"
+    );
+}
+
+#[test]
+fn handles_colourised_cargo_tree_output() {
+    // Regression: CI sets CARGO_TERM_COLOR=always, so the markers arrive
+    // wrapped in ANSI escapes and a literal `(*)` match leaves them attached
+    // to the version, which then fails the metadata lookup.
+    let f = fixture(None);
+    colourise_tree(&f);
+    let rendered = generated(&f);
+    let crates_section = rendered.split("NOTICE [").next().unwrap();
+    assert_eq!(count(crates_section, "alpha 1.0.0"), 1, "{crates_section}");
+    assert_eq!(count(crates_section, "beta 2.3.4"), 1, "{crates_section}");
+    assert!(
+        !rendered.contains('\u{1b}'),
+        "escape sequences must not reach the notice file:\n{rendered}"
     );
 }
 

@@ -9,7 +9,8 @@ use std::fs;
 use std::sync::atomic::AtomicBool;
 
 use markdown_org_extract::{
-    filter_agenda, scan_directory, AgendaDates, AgendaOutput, AgendaScope, AppError, ScanOptions,
+    filter_agenda, parse_heading_line, scan_directory, AgendaDates, AgendaOutput, AgendaScope,
+    AppError, Priority, ScanOptions, TaskType,
 };
 
 fn write_vault(files: &[(&str, &str)]) -> tempfile::TempDir {
@@ -157,6 +158,97 @@ fn holiday_calendar_is_reachable_from_the_library() {
     // not the specific policy, which ADR-0008 fixes elsewhere.
     let holidays = calendar.get_holidays_for_year(2026);
     assert!(!holidays.is_empty(), "bundled calendar must not be empty");
+}
+
+// `parse_heading_line` exists for editors: it reports where the keyword and
+// the priority cookie sit so a caller can replace one token and leave the rest
+// of the line byte-for-byte alone. The assertions below are therefore about
+// the offsets, not only about the values.
+
+#[test]
+fn heading_line_reports_where_the_keyword_and_the_cookie_sit() {
+    let line = "## TODO [#A] Write the report";
+
+    let heading = parse_heading_line(line).expect("a heading");
+
+    assert_eq!(heading.level, 2);
+    let status = heading.status.expect("a keyword");
+    assert_eq!(status.value, TaskType::Todo);
+    assert_eq!(&line[status.range], "TODO");
+    let priority = heading.priority.expect("a priority");
+    assert_eq!(priority.value, Priority::A);
+    assert_eq!(&line[priority.range], "[#A]");
+    assert_eq!(&line[heading.title_start..], "Write the report");
+}
+
+#[test]
+fn heading_line_reads_a_heading_without_tokens() {
+    let line = "### Just a title";
+
+    let heading = parse_heading_line(line).expect("a heading");
+
+    assert_eq!(heading.level, 3);
+    assert!(heading.status.is_none());
+    assert!(heading.priority.is_none());
+    // A caller inserting a keyword writes at `title_start`, so it has to point
+    // past the gap after the hashes rather than at the hashes themselves.
+    assert_eq!(&line[heading.title_start..], "Just a title");
+}
+
+#[test]
+fn heading_line_keeps_the_text_between_the_keyword_and_the_cookie_addressable() {
+    // The parser that feeds the agenda drops this text (emacs
+    // `org-element--headline-parse-title` does the same). An editor must not:
+    // rewriting the line from parts would delete what the user typed.
+    let line = "# TODO leftover [#B] Title";
+
+    let heading = parse_heading_line(line).expect("a heading");
+
+    let status = heading.status.expect("a keyword");
+    let priority = heading.priority.expect("a priority");
+    assert_eq!(&line[status.range.end..priority.range.start], " leftover ");
+    assert_eq!(&line[heading.title_start..], "Title");
+}
+
+#[test]
+fn heading_line_preserves_the_single_l_cancelled_spelling() {
+    let line = "# CANCELED Old plan";
+
+    let heading = parse_heading_line(line).expect("a heading");
+
+    let status = heading.status.expect("a keyword");
+    assert_eq!(&line[status.range], "CANCELED");
+    assert!(matches!(status.value, TaskType::Cancelled(_)));
+}
+
+#[test]
+fn heading_line_reads_a_numeric_priority() {
+    let line = "# TODO [#12] Task";
+
+    let heading = parse_heading_line(line).expect("a heading");
+
+    let priority = heading.priority.expect("a priority");
+    assert_eq!(priority.value, Priority::Numeric(12));
+    assert_eq!(&line[priority.range], "[#12]");
+}
+
+#[test]
+fn heading_line_rejects_what_is_not_a_heading() {
+    assert!(parse_heading_line("plain text").is_none());
+    // No gap after the hashes: markdown does not treat this as a heading, and
+    // neither may an editor about to rewrite the line.
+    assert!(parse_heading_line("#no gap").is_none());
+    assert!(parse_heading_line("").is_none());
+}
+
+#[test]
+fn heading_line_offsets_survive_multibyte_text() {
+    let line = "# TODO [#A] Отчёт";
+
+    let heading = parse_heading_line(line).expect("a heading");
+
+    // Byte offsets, not character counts: slicing has to land on a boundary.
+    assert_eq!(&line[heading.title_start..], "Отчёт");
 }
 
 #[test]

@@ -39,6 +39,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in-process instead of running the executable and parsing its JSON. The two
   steps are separate, so one scan can feed several agendas. See
   [ADR-0025](docs/adr/0025-library-crate-with-thin-cli.md).
+- `parse_heading_line` locates the parts of a heading line — level, keyword,
+  priority cookie, where the title starts — and reports the byte range of each
+  token as written. An editor replacing one token can slice the line around
+  that range and leave the rest untouched, applying the same keyword and
+  cookie grammars this crate applies when it reads. Unlike the extraction
+  path, nothing is dropped: text between the keyword and the cookie stays
+  addressable, so rewriting a heading cannot delete what the user typed.
+  Assembling a line back from parts is not part of this crate.
 
 ### Changed
 

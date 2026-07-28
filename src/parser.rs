@@ -10,6 +10,7 @@ use comrak::nodes::{AstNode, NodeValue};
 use comrak::{parse_document, Arena, Options};
 use regex::Regex;
 use std::collections::BTreeMap;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -432,6 +433,132 @@ fn parse_heading(text: &str) -> (Option<TaskType>, Option<Priority>, String) {
     }
 
     (task_type, None, rest.trim().to_string())
+}
+
+/// Leading `#` run of an ATX heading and the gap after it.
+///
+/// Capped at six hashes, which is where markdown stops treating the run as a
+/// heading, and the gap is mandatory for the same reason: `#no gap` is a
+/// paragraph. Used by `parse_heading_line`, which works on the raw file line —
+/// unlike `parse_heading`, which is handed the text comrak already stripped
+/// the hashes from.
+static HEADING_HASHES_RE: LazyLock<Regex> = LazyLock::new(|| compile_bounded(r"^(#{1,6})[ \t]+"));
+
+/// A token found on a heading line, with the byte range it occupies.
+///
+/// The range covers the token as written, framing included: a priority cookie
+/// reports `[#A]`, not `A`. Callers replacing one token slice the line around
+/// this range and keep everything else byte-for-byte.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeadingToken<T> {
+    /// Byte range within the line the token was parsed from.
+    pub range: Range<usize>,
+    /// What the token parsed to.
+    pub value: T,
+}
+
+/// A heading line as it sits in a file, located token by token.
+///
+/// This is the read half of an editing operation and the reason it lives here
+/// rather than in the editor: the keyword and cookie grammars are the ones the
+/// extractor itself applies, and a second copy of them would drift. Writing —
+/// assembling a line back from parts — is deliberately not part of this crate.
+///
+/// Unlike [`Task`], which carries the heading the agenda displays, nothing is
+/// dropped here. A heading may hold text between the keyword and the cookie
+/// (`# TODO leftover [#B] Title`); the agenda discards it, following emacs
+/// `org-element--headline-parse-title`, but an editor that did the same would
+/// delete what the user typed.
+///
+/// [`Task`]: crate::types::Task
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeadingLine {
+    /// Heading level, i.e. the number of leading `#` characters (1 to 6).
+    pub level: usize,
+    /// The `TODO` / `DONE` / `CANCELLED` / `CANCELED` keyword, when present.
+    pub status: Option<HeadingToken<TaskType>>,
+    /// The `[#A]` priority cookie, when present and within the accepted range.
+    pub priority: Option<HeadingToken<Priority>>,
+    /// Byte offset the title starts at, past the tokens above and the
+    /// whitespace after them. Also where a caller inserts a token the heading
+    /// does not carry yet.
+    pub title_start: usize,
+}
+
+/// Locate the parts of a heading line, or return `None` when `line` is not a
+/// heading.
+///
+/// Applies the same keyword and priority grammars as the extraction path, so a
+/// heading the extractor reads one way cannot be rewritten another way. See
+/// [`HeadingLine`] for what the result addresses and why it keeps text the
+/// agenda drops.
+///
+/// ```
+/// # use markdown_org_extract::parse_heading_line;
+/// let line = "## TODO [#A] Write the report";
+/// let heading = parse_heading_line(line).expect("a heading");
+/// assert_eq!(&line[heading.priority.expect("a cookie").range], "[#A]");
+/// ```
+pub fn parse_heading_line(line: &str) -> Option<HeadingLine> {
+    let hashes = HEADING_HASHES_RE.captures(line)?;
+    let level = hashes
+        .get(1)
+        .expect("group 1 is Some when captures() succeeds")
+        .len();
+    let after_hashes = hashes
+        .get(0)
+        .expect("Captures::get(0) is Some when captures() succeeds")
+        .end();
+
+    let (status, after_status) = match HEADING_TODO_RE.captures(&line[after_hashes..]) {
+        Some(caps) => {
+            let keyword = caps
+                .get(1)
+                .expect("group 1 is Some when captures() succeeds");
+            let whole = caps
+                .get(0)
+                .expect("Captures::get(0) is Some when captures() succeeds");
+            let token = TaskType::from_keyword(keyword.as_str()).map(|value| HeadingToken {
+                range: after_hashes + keyword.start()..after_hashes + keyword.end(),
+                value,
+            });
+            (token, after_hashes + whole.end())
+        }
+        None => (None, after_hashes),
+    };
+
+    // The cookie is searched for in the remainder, at any position, the way
+    // `parse_heading` does it — org-mode allows text before it.
+    let priority = HEADING_PRIORITY_RE
+        .captures(&line[after_status..])
+        .and_then(|caps| {
+            let value = caps
+                .get(1)
+                .expect("group 1 is Some when captures() succeeds");
+            // The cookie is `[#` + value + `]`; the regex match may also cover
+            // a trailing space, which is not part of the token.
+            let parsed = Priority::parse(value.as_str())?;
+            Some(HeadingToken {
+                range: after_status + value.start() - "[#".len()
+                    ..after_status + value.end() + "]".len(),
+                value: parsed,
+            })
+        });
+
+    let after_tokens = priority
+        .as_ref()
+        .map_or(after_status, |cookie| cookie.range.end);
+    let title_start = after_tokens
+        + line[after_tokens..]
+            .find(|c: char| !c.is_whitespace())
+            .unwrap_or(line.len() - after_tokens);
+
+    Some(HeadingLine {
+        level,
+        status,
+        priority,
+        title_start,
+    })
 }
 
 /// Strip a matched pair of inline-code backtick fences from the trimmed

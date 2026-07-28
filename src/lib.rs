@@ -66,6 +66,10 @@ pub use crate::parser::{
 };
 pub use crate::render::{render_days_html, render_days_markdown, render_html, render_markdown};
 pub use crate::scan::{scan_directory, ScanOptions, ScanOutcome};
+pub use crate::timestamp::{
+    add_months, closest_date, parse_timestamp_parts, DatePreference, Repeater, RepeaterType,
+    RepeaterUnit, TimestampParts,
+};
 pub use crate::types::{
     ClockEntry, DayAgenda, Priority, ProcessingStats, Task, TaskType, TaskWithOffset,
     DEFAULT_MAX_TASKS, MAX_FILE_SIZE,

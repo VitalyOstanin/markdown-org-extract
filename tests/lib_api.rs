@@ -9,8 +9,8 @@ use std::fs;
 use std::sync::atomic::AtomicBool;
 
 use markdown_org_extract::{
-    filter_agenda, parse_heading_line, scan_directory, AgendaDates, AgendaOutput, AgendaScope,
-    AppError, Priority, ScanOptions, TaskType,
+    filter_agenda, parse_heading_line, parse_timestamp_parts, scan_directory, AgendaDates,
+    AgendaOutput, AgendaScope, AppError, Priority, ScanOptions, TaskType,
 };
 
 fn write_vault(files: &[(&str, &str)]) -> tempfile::TempDir {
@@ -249,6 +249,67 @@ fn heading_line_offsets_survive_multibyte_text() {
 
     // Byte offsets, not character counts: slicing has to land on a boundary.
     assert_eq!(&line[heading.title_start..], "Отчёт");
+}
+
+// `parse_timestamp_parts` is the timestamp counterpart of
+// `parse_heading_line`: an editor moving a date has to leave the weekday, the
+// time, the repeater and the warning cookie exactly where they are.
+
+#[test]
+fn timestamp_parts_report_where_the_date_and_the_weekday_sit() {
+    let line = "`SCHEDULED: <2026-07-28 Tue 10:00 +1w>`";
+
+    let parts = parse_timestamp_parts(line).expect("a timestamp");
+
+    assert_eq!(&line[parts.date.clone()], "2026-07-28");
+    assert_eq!(&line[parts.weekday.clone().expect("a weekday")], "Tue");
+    assert_eq!(&line[parts.whole.clone()], "<2026-07-28 Tue 10:00 +1w>");
+    assert!(parts.active);
+    let repeater = parts.repeater.expect("a repeater");
+    assert_eq!(repeater.canonical(), "+1w");
+}
+
+#[test]
+fn timestamp_parts_handle_a_timestamp_without_a_weekday() {
+    let parts = parse_timestamp_parts("<2026-07-28>").expect("a timestamp");
+
+    assert!(parts.weekday.is_none());
+    assert!(parts.repeater.is_none());
+}
+
+#[test]
+fn timestamp_parts_do_not_mistake_a_time_for_a_weekday() {
+    let line = "<2026-07-28 10:00>";
+
+    let parts = parse_timestamp_parts(line).expect("a timestamp");
+
+    assert!(
+        parts.weekday.is_none(),
+        "the token after the date is a time, not a weekday"
+    );
+}
+
+#[test]
+fn timestamp_parts_read_a_localised_weekday() {
+    let line = "`DEADLINE: <2026-07-28 Вт>`";
+
+    let parts = parse_timestamp_parts(line).expect("a timestamp");
+
+    assert_eq!(&line[parts.weekday.clone().expect("a weekday")], "Вт");
+    // Byte offsets past a Cyrillic token still land on a boundary.
+    assert_eq!(&line[parts.whole.clone()], "<2026-07-28 Вт>");
+}
+
+#[test]
+fn timestamp_parts_report_the_inactive_form() {
+    let parts = parse_timestamp_parts("`CLOSED: [2026-07-28 Tue]`").expect("a timestamp");
+
+    assert!(!parts.active);
+}
+
+#[test]
+fn timestamp_parts_reject_a_line_without_one() {
+    assert!(parse_timestamp_parts("# TODO Water the plants").is_none());
 }
 
 #[test]

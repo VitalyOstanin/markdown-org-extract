@@ -47,6 +47,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path, nothing is dropped: text between the keyword and the cookie stays
   addressable, so rewriting a heading cannot delete what the user typed.
   Assembling a line back from parts is not part of this crate.
+- `parse_timestamp_parts` does the same for a timestamp: it reports the byte
+  range of the whole timestamp, of its date and of its weekday token, plus the
+  repeater and the bracket form. Moving a date therefore replaces two tokens
+  and leaves the time, the repeater and the warning cookie untouched. Weekday
+  names are reported as written, in whatever language and length, because a
+  caller putting the date back has to keep both.
+- The repeater vocabulary is now reachable from the crate root:
+  `closest_date`, `add_months`, `Repeater`, `RepeaterType`, `RepeaterUnit` and
+  `DatePreference` were public in `timestamp` already and are re-exported
+  alongside the rest of the facade.
 
 ### Changed
 

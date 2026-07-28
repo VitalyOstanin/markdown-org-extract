@@ -15,6 +15,8 @@ pub use extract::{
     extract_created_normalized, extract_repeater_normalized, extract_timestamp_normalized,
     parse_timestamp_fields_normalized,
 };
-pub use parser::{parse_org_timestamp, ParsedTimestamp};
-pub use repeater::{closest_date, parse_repeater, DatePreference, Repeater, RepeaterUnit};
+pub use parser::{parse_org_timestamp, parse_timestamp_parts, ParsedTimestamp, TimestampParts};
+pub use repeater::{
+    add_months, closest_date, parse_repeater, DatePreference, Repeater, RepeaterType, RepeaterUnit,
+};
 pub(crate) use weekdays::normalize_weekdays;

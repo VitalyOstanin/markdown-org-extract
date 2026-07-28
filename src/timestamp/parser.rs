@@ -169,6 +169,98 @@ pub fn parse_org_timestamp(ts: &str, mappings: Option<&[(&str, &str)]>) -> Optio
     })
 }
 
+/// Weekday token straight after the date: a run of letters, so a time
+/// (`10:00`) or a repeater (`+1w`) is not mistaken for one. Anchored, because
+/// only the token in that position is the weekday.
+static WEEKDAY_AFTER_DATE_RE: LazyLock<Regex> =
+    LazyLock::new(|| compile_bounded(r"^[ \t]+(\p{L}+)"));
+
+/// A timestamp located token by token, for a caller that rewrites its date.
+///
+/// The ranges are byte offsets into the text the timestamp was found in, not
+/// into the timestamp itself, so an editor can splice a new date into the line
+/// it already holds. Everything the timestamp carries besides the date — the
+/// time, the repeater, the warning cookie — stays where it is, which is what
+/// makes moving a date a one-token edit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimestampParts {
+    /// The whole timestamp, brackets included.
+    pub whole: std::ops::Range<usize>,
+    /// The `YYYY-MM-DD` date.
+    pub date: std::ops::Range<usize>,
+    /// The date that range parsed to.
+    pub value: NaiveDate,
+    /// The weekday token, when the timestamp carries one. Reported as
+    /// written, in whatever language and length: a caller replacing the date
+    /// is expected to keep both.
+    pub weekday: Option<std::ops::Range<usize>>,
+    /// The repeater, when the timestamp carries one.
+    pub repeater: Option<Repeater>,
+    /// Bracket form: `true` for active `<...>`, `false` for inactive `[...]`.
+    pub active: bool,
+}
+
+/// Locate the first timestamp in `text`, or return `None` when there is none.
+///
+/// The counterpart of [`parse_org_timestamp`] for editing rather than reading:
+/// same grammar, same bracket families, but reporting where each token sits.
+/// Weekday names are matched as written — no normalisation pass — because a
+/// caller rewriting the date has to put back a weekday in the same language.
+///
+/// ```
+/// # use markdown_org_extract::parse_timestamp_parts;
+/// let line = "`SCHEDULED: <2026-07-28 Tue 10:00 +1w>`";
+/// let parts = parse_timestamp_parts(line).expect("a timestamp");
+/// assert_eq!(&line[parts.date], "2026-07-28");
+/// ```
+pub fn parse_timestamp_parts(text: &str) -> Option<TimestampParts> {
+    let angle = SINGLE_ANGLE_RE.captures(text);
+    let square = SINGLE_SQUARE_RE.captures(text);
+    // Whichever bracket family starts first, the way `parse_org_timestamp`
+    // picks it.
+    let caps = match (&angle, &square) {
+        (Some(a), Some(s)) => {
+            let (a_start, s_start) = (
+                a.get(0).expect("group 0 is Some").start(),
+                s.get(0).expect("group 0 is Some").start(),
+            );
+            if a_start <= s_start {
+                angle.as_ref()?
+            } else {
+                square.as_ref()?
+            }
+        }
+        (Some(_), None) => angle.as_ref()?,
+        (None, Some(_)) => square.as_ref()?,
+        (None, None) => return None,
+    };
+
+    let whole = caps.get(0).expect("group 0 is Some");
+    let date = caps.get(1).expect("group 1 is Some");
+    let value = NaiveDate::parse_from_str(date.as_str(), "%Y-%m-%d").ok()?;
+
+    let body = whole.as_str();
+    let repeater = REPEATER_BODY_RE
+        .captures(body)
+        .and_then(|c| parse_repeater(c.get(1)?.as_str()));
+
+    let weekday = WEEKDAY_AFTER_DATE_RE
+        .captures(&text[date.end()..whole.end()])
+        .map(|c| {
+            let token = c.get(1).expect("group 1 is Some");
+            date.end() + token.start()..date.end() + token.end()
+        });
+
+    Some(TimestampParts {
+        whole: whole.start()..whole.end(),
+        date: date.start()..date.end(),
+        value,
+        weekday,
+        repeater,
+        active: body.starts_with('<'),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

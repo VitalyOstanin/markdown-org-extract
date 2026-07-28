@@ -1,3 +1,9 @@
+//! Russian production calendar: which dates are days off and which are working.
+//!
+//! The data is baked in at build time (see `build.rs`), so [`HolidayCalendar`]
+//! needs no files at runtime — a requirement for embedders that ship a single
+//! binary or shared library.
+
 use chrono::{Datelike, NaiveDate, Weekday};
 use std::sync::OnceLock;
 

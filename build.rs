@@ -27,8 +27,18 @@ fn main() {
         .as_object()
         .expect("build.rs: top-level JSON value must be an object keyed by year");
 
-    let mut holidays_code = String::from("pub static HOLIDAYS: &[(i32, u32, u32)] = &[\n");
-    let mut workdays_code = String::from("pub static WORKDAYS: &[(i32, u32, u32)] = &[\n");
+    // The doc comments are not decoration: the library sets `missing_docs` to
+    // warn, and this file is `include!`d into it, so generated items are held
+    // to the same standard as hand-written ones.
+    let mut holidays_code = String::from(
+        "/// Non-working dates as `(year, month, day)`, sorted ascending.\n\
+         pub static HOLIDAYS: &[(i32, u32, u32)] = &[\n",
+    );
+    let mut workdays_code = String::from(
+        "/// Working dates that fall on a weekend, as `(year, month, day)`,\n\
+         /// sorted ascending.\n\
+         pub static WORKDAYS: &[(i32, u32, u32)] = &[\n",
+    );
 
     for (year_key, year_data) in root {
         if let Some(arr) = year_data.get("holidays").and_then(|v| v.as_array()) {

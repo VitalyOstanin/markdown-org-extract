@@ -1,3 +1,9 @@
+//! Org-mode `CLOCK:` entries — extraction and duration arithmetic.
+//!
+//! A task may carry any number of clock lines recording time spent on it.
+//! This module finds them, sums their durations and formats the total the way
+//! org-mode does (`HH:MM`).
+
 use regex::Regex;
 use std::sync::LazyLock;
 

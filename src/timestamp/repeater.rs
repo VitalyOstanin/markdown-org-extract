@@ -4,8 +4,11 @@ use chrono::NaiveDate;
 /// Repeater type and interval
 #[derive(Debug, Clone, PartialEq)]
 pub struct Repeater {
+    /// How the next occurrence is derived from the previous one.
     pub repeater_type: RepeaterType,
+    /// Interval count `N` in `+Nd` — how many units apart occurrences are.
     pub value: u32,
+    /// The unit the interval is counted in.
     pub unit: RepeaterUnit,
 }
 
@@ -34,15 +37,21 @@ impl RepeaterType {
 /// Repeater unit
 #[derive(Debug, Clone, PartialEq)]
 pub enum RepeaterUnit {
+    /// `d` — days.
     Day,
+    /// `w` — weeks.
     Week,
+    /// `m` — calendar months.
     Month,
+    /// `y` — calendar years.
     Year,
     /// `+Nh` — intra-day repeater. For the agenda-by-day view this projects
     /// onto a daily grid: every day is an occurrence regardless of the numeric
     /// value `N`. A hypothetical "+25h" therefore still shows up every day, not
     /// every other day. Documented behaviour, see `closest_date`.
     Hour,
+    /// `wd` — working days, skipping weekends and public holidays according
+    /// to [`HolidayCalendar`].
     Workday,
 }
 

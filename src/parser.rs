@@ -1,3 +1,11 @@
+//! Markdown to tasks: the extraction step itself.
+//!
+//! A document is parsed with comrak, and every heading carrying an org-mode
+//! keyword (`TODO`, `DONE`, …) becomes a [`Task`], together with the timestamp,
+//! priority and clock entries found in its body.
+//!
+//! [`Task`]: crate::types::Task
+
 use comrak::nodes::{AstNode, NodeValue};
 use comrak::{parse_document, Arena, Options};
 use regex::Regex;
@@ -1065,7 +1073,7 @@ Second paragraph.\n\
         let tasks = extract_tasks(
             Path::new("t.md"),
             content,
-            crate::cli::RU_WEEKDAY_MAPPINGS,
+            crate::locale::RU_WEEKDAY_MAPPINGS,
             DEFAULT_MAX_TASKS,
         );
         assert_eq!(tasks.len(), 1);

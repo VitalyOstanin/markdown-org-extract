@@ -1,3 +1,9 @@
+//! The single error type returned by the library.
+//!
+//! Every fallible entry point yields [`AppError`], so an embedder matches on
+//! one enum instead of the several error types the internals use. The binary
+//! maps the same variants to exit codes.
+
 use std::fmt;
 use std::io;
 
@@ -15,6 +21,7 @@ pub enum AppError {
         /// underlying `io::Error` is exposed through `Error::source()`
         /// so callers using `anyhow`-style chaining see both layers.
         context: String,
+        /// The failure as reported by the operating system.
         source: io::Error,
     },
     /// `--dir` does not exist or is not a directory

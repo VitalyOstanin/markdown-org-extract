@@ -1,55 +1,40 @@
 #![warn(missing_docs)]
 //! CLI utility for extracting tasks from markdown files with Emacs
 //! Org-mode support. See [`README.md`] at the repository root for the
-//! user-facing description; this binary's entry point lives in
-//! [`main`] and the public surface used by integration tests is the
-//! CLI itself, not a Rust API.
+//! user-facing description.
+//!
+//! This binary is a thin shell over the [`markdown_org_extract`] library:
+//! it parses arguments, installs signal handlers, and writes bytes. The
+//! extraction itself lives in the library so other consumers — notably an
+//! Android build, which cannot spawn a process — run the same code.
 //!
 //! [`README.md`]: https://github.com/VitalyOstanin/markdown-org-extract
 
-mod agenda;
 mod cli;
-mod clock;
-mod error;
 mod format;
-mod holidays;
-mod parser;
-mod regex_limits;
-mod render;
-mod timestamp;
-mod types;
 
 use clap::Parser;
-use grep_regex::RegexMatcher;
-use grep_searcher::{Searcher, Sink, SinkMatch};
-use ignore::WalkBuilder;
-use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use crate::agenda::filter_agenda;
-use crate::cli::{get_weekday_mappings, Cli};
-use crate::error::AppError;
+use markdown_org_extract::agenda::{self, filter_agenda, AgendaDates};
+use markdown_org_extract::scan::{scan_directory, validate_dir, ScanOptions};
+use markdown_org_extract::{render, AppError, HolidayCalendar};
+
+use crate::cli::Cli;
 use crate::format::OutputFormat;
-use crate::parser::extract_tasks_with_counter;
-use crate::render::{render_html, render_markdown};
-use crate::types::{ProcessingStats, MAX_FILE_SIZE};
 
 /// Exit code for a scan aborted by SIGINT/SIGTERM. Follows the shell
 /// convention `128 + signum` so `$?` after Ctrl-C is the familiar `130`.
 const EXIT_INTERRUPTED: i32 = 130;
 
-/// Initial capacity of the read buffer reused across the walk. Sized at 64 KiB
-/// to cover most source files in a single allocation while still amortising to
-/// one buffer for the whole tree; the buffer grows on demand for larger files.
-const READ_BUF_INITIAL_CAP: usize = 64 * 1024;
-
 fn main() {
     // Install signal handlers before anything heavy happens so a Ctrl-C
     // during startup still triggers a clean exit. The flag is shared with
-    // `scan_files`, which polls it between walker iterations.
+    // the scan, which polls it between walker iterations.
     let interrupt = Arc::new(AtomicBool::new(false));
     if let Err(e) = install_signal_handlers(&interrupt) {
         eprintln!("error: failed to install signal handlers: {e}");
@@ -75,10 +60,10 @@ fn main() {
 }
 
 /// Register a handler that flips `interrupt` to `true` on SIGINT (and SIGTERM
-/// on Unix). The flag is polled by `scan_files` so a long scan can stop
-/// between files and still print the per-run summary. SIGTERM is Unix-only:
-/// Windows does not deliver it through the C runtime, and signal-hook would
-/// reject the registration.
+/// on Unix). The flag is polled by the scan so a long run can stop between
+/// files and still print the per-run summary. SIGTERM is Unix-only: Windows
+/// does not deliver it through the C runtime, and signal-hook would reject the
+/// registration.
 fn install_signal_handlers(interrupt: &Arc<AtomicBool>) -> io::Result<()> {
     signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(interrupt))?;
     #[cfg(unix)]
@@ -127,6 +112,8 @@ fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
         }
     }
 
+    // Validate before the run span opens so a bad `--dir` is reported without
+    // a log line that already claims to be scanning it.
     let dir_canonical = validate_dir(&cli.dir)?;
 
     // Root span for the whole run, carrying the scanned directory. Every
@@ -139,13 +126,18 @@ fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
     let run_span = tracing::info_span!("run", dir = %dir_canonical.display());
     let _run = run_span.enter();
 
-    let mappings = get_weekday_mappings(&cli.locale);
-
-    let (tasks, stats) = scan_files(&cli, &dir_canonical, &mappings, interrupt)?;
+    let options = ScanOptions {
+        glob: &cli.glob,
+        max_tasks: cli.max_tasks,
+        absolute_paths: cli.absolute_paths,
+        locale: &cli.locale,
+    };
+    let outcome = scan_directory(&dir_canonical, &options, Some(interrupt))?;
+    let stats = outcome.stats;
 
     tracing::info!(
         files = stats.files_processed,
-        tasks = tasks.len(),
+        tasks = outcome.tasks.len(),
         interrupted = stats.interrupted,
         "scan finished"
     );
@@ -166,9 +158,9 @@ fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
     }
 
     let agenda_output = filter_agenda(
-        tasks,
+        outcome.tasks,
         cli.agenda_scope(),
-        crate::agenda::AgendaDates {
+        AgendaDates {
             date: cli.date.as_deref(),
             from: cli.from.as_deref(),
             to: cli.to.as_deref(),
@@ -188,7 +180,7 @@ fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
 /// Handle the `--holidays YEAR` short-circuit: emit a JSON array of
 /// `YYYY-MM-DD` dates and exit before any file scanning happens.
 fn handle_holidays(year: i32) -> Result<(), AppError> {
-    let calendar = holidays::HolidayCalendar::global();
+    let calendar = HolidayCalendar::global();
     let holidays = calendar.get_holidays_for_year(year);
     let dates: Vec<String> = holidays
         .iter()
@@ -224,202 +216,6 @@ fn handle_completions(shell: clap_complete::Shell) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Validate that `--dir` points to an existing directory and canonicalize it.
-fn validate_dir(dir: &Path) -> Result<PathBuf, AppError> {
-    if !dir.exists() {
-        return Err(AppError::InvalidDirectory(format!(
-            "directory does not exist: {}",
-            dir.display()
-        )));
-    }
-    if !dir.is_dir() {
-        return Err(AppError::InvalidDirectory(format!(
-            "path is not a directory: {}",
-            dir.display()
-        )));
-    }
-    fs::canonicalize(dir).map_err(|e| {
-        AppError::InvalidDirectory(format!("cannot canonicalize {}: {e}", dir.display()))
-    })
-}
-
-/// Walk `dir_canonical`, apply the `--glob` filter and a keyword pre-filter,
-/// then parse matching files into `Task`s. Returns the accumulated tasks and
-/// a `ProcessingStats` recording skipped/failed files.
-fn scan_files(
-    cli: &Cli,
-    dir_canonical: &Path,
-    mappings: &[(&'static str, &'static str)],
-    interrupt: &AtomicBool,
-) -> Result<(Vec<types::Task>, ProcessingStats), AppError> {
-    let glob_matcher = compile_glob(&cli.glob)?;
-
-    let mut tasks = Vec::new();
-    let mut stats = ProcessingStats {
-        max_tasks_limit: cli.max_tasks,
-        ..ProcessingStats::default()
-    };
-    let matcher = RegexMatcher::new(
-        r"(?m)(^[#*]+\s+(TODO|DONE)\s|DEADLINE:|SCHEDULED:|CREATED:|CLOSED:|CLOCK:)",
-    )
-    .map_err(|e| AppError::Regex(e.to_string()))?;
-
-    // Defense-in-depth: refuse to follow symlinks and stay within the chosen
-    // filesystem. Pass `dir_canonical` (absolute) so every emitted path is an
-    // absolute descendant of the root, which lets `strip_prefix(dir_canonical)`
-    // succeed downstream for both glob matching and display-path computation.
-    // Using `&cli.dir` (often relative) would silently break multi-segment
-    // glob patterns like `notes/*.md` against a relative `--dir`.
-    let walker = WalkBuilder::new(dir_canonical)
-        .standard_filters(true)
-        .follow_links(false)
-        .same_file_system(true)
-        .build();
-
-    // Reuse one Searcher and one read buffer across the entire walk. Both are
-    // designed to be cleared and reused; allocating them per file added a
-    // monotonic cost that scaled with tree size for no gain.
-    let mut searcher = Searcher::new();
-    let mut buf: Vec<u8> = Vec::with_capacity(READ_BUF_INITIAL_CAP);
-
-    for result in walker {
-        // A SIGINT/SIGTERM trips the flag; bail out *before* opening the next
-        // file so the partial summary is consistent with what was actually
-        // processed. `Relaxed` is sufficient — the only writer is the signal
-        // handler, and we re-check on every iteration, so there is no need
-        // for ordering with respect to other reads/writes here.
-        if interrupt.load(Ordering::Relaxed) {
-            stats.interrupted = true;
-            break;
-        }
-        // A walker error on one entry (permission denied on a subdir, broken
-        // metadata, etc.) must not abort the whole scan: the rest of the
-        // tree may still contain usable files. Record it in the summary so
-        // the user knows their output is partial. The Display impl of
-        // ignore::Error already includes the failing path, so we forward the
-        // whole message into `failed_paths` for the listing in print_summary.
-        let entry = match result {
-            Ok(entry) => entry,
-            Err(err) => {
-                stats.walk_errors += 1;
-                let msg = err.to_string();
-                stats.record_failed_path(&msg);
-                tracing::warn!(error = %msg, "walker entry failed; skipping");
-                continue;
-            }
-        };
-        if !entry.file_type().is_some_and(|ft| ft.is_file()) {
-            continue;
-        }
-
-        let path = entry.path();
-
-        if !glob_match(&glob_matcher, path, dir_canonical) {
-            continue;
-        }
-
-        // Read once with a hard cap into the reusable buffer. Avoids the
-        // TOCTOU window where a separate metadata() check might say a file is
-        // small but the subsequent read() pulls in a file that has since
-        // grown — read_capped_into probes one byte past the cap and refuses
-        // anything larger.
-        match read_capped_into(path, MAX_FILE_SIZE, &mut buf) {
-            Ok(true) => {}
-            Ok(false) => {
-                stats.files_skipped_size += 1;
-                continue;
-            }
-            Err(e) => {
-                stats.files_failed_read += 1;
-                stats.record_failed_path(&path.display().to_string());
-                // The path is surfaced in the aggregated summary warn
-                // (see ProcessingStats::print_summary). Keep the
-                // underlying cause at debug level so `-vv` can explain
-                // *why* a path failed without re-flooding the default
-                // warn stream that the O5 aggregation deliberately
-                // quietened (2026-05-25 review, m3 / error-handling).
-                tracing::debug!(file = %path.display(), error = %e, "file read failed; skipping");
-                continue;
-            }
-        }
-
-        let mut found = false;
-        if let Err(e) = searcher.search_slice(&matcher, &buf, FoundSink { found: &mut found }) {
-            stats.files_failed_search += 1;
-            stats.record_failed_path(&path.display().to_string());
-            tracing::debug!(file = %path.display(), error = %e, "content search failed; skipping");
-            continue;
-        }
-
-        if !found {
-            continue;
-        }
-
-        let content = match std::str::from_utf8(&buf) {
-            Ok(s) => s,
-            Err(e) => {
-                stats.files_failed_read += 1;
-                stats.record_failed_path(&path.display().to_string());
-                tracing::debug!(file = %path.display(), error = %e, "file is not valid UTF-8; skipping");
-                continue;
-            }
-        };
-
-        let display_path = if cli.absolute_paths {
-            path.display().to_string()
-        } else {
-            // WalkBuilder now traverses `dir_canonical`, so every emitted path
-            // is an absolute descendant of it; strip_prefix cannot fail unless
-            // canonicalize and the walker disagree (a TOCTOU we cannot fix
-            // here). The absolute path is the safest fallback for that case.
-            match path.strip_prefix(dir_canonical) {
-                Ok(rel) => rel.display().to_string(),
-                Err(_) => path.display().to_string(),
-            }
-        };
-
-        // A path that is not valid UTF-8 (arbitrary bytes on Linux, unpaired
-        // surrogates on Windows) was just rendered lossily into `display_path`
-        // via `Path::display`, which substitutes U+FFFD for the invalid bytes.
-        // The file is still processed, but the `file` field cannot round-trip,
-        // so warn once per run and count it (ADR-0019). `to_str().is_none()` is
-        // the precise signal: it distinguishes a genuinely non-UTF-8 path from
-        // a valid path that merely happens to contain a literal U+FFFD.
-        if path.to_str().is_none() {
-            stats.note_nonutf8_path(&display_path);
-        }
-
-        // Wrap parsing in a span so every debug!/trace! emitted by the parser,
-        // timestamp extractor, and clock extractor inherits `file` automatically.
-        // Without this, multi-file runs at `-vv` produce a soup of messages
-        // without any way to tie a warning back to the file it came from. The
-        // key is `file` (not `path`) so the span agrees with the parser events
-        // and the `Task.file` output field — one path, one key (2026-05-25
-        // review, O3).
-        let span = tracing::debug_span!("file", file = %display_path);
-        let extracted = span.in_scope(|| {
-            extract_tasks_with_counter(
-                Path::new(&display_path),
-                content,
-                mappings,
-                cli.max_tasks,
-                &mut stats.ts_warnings_emitted,
-                &mut stats.prop_warnings_emitted,
-            )
-        });
-        tasks.extend(extracted);
-        stats.files_processed += 1;
-
-        if tasks.len() >= cli.max_tasks {
-            tasks.truncate(cli.max_tasks);
-            stats.max_tasks_reached = true;
-            break;
-        }
-    }
-
-    Ok((tasks, stats))
-}
-
 /// Serialize the agenda result into the requested format and either write it
 /// to `--output` or to stdout.
 fn render_output(cli: &Cli, agenda_output: agenda::AgendaOutput) -> Result<(), AppError> {
@@ -430,11 +226,11 @@ fn render_output(cli: &Cli, agenda_output: agenda::AgendaOutput) -> Result<(), A
         },
         OutputFormat::Markdown => match agenda_output {
             agenda::AgendaOutput::Days(days) => render::render_days_markdown(&days),
-            agenda::AgendaOutput::Tasks(tasks) => render_markdown(&tasks),
+            agenda::AgendaOutput::Tasks(tasks) => render::render_markdown(&tasks),
         },
         OutputFormat::Html => match agenda_output {
             agenda::AgendaOutput::Days(days) => render::render_days_html(&days),
-            agenda::AgendaOutput::Tasks(tasks) => render_html(&tasks),
+            agenda::AgendaOutput::Tasks(tasks) => render::render_html(&tasks),
         },
     };
     ensure_trailing_newline(&mut output);
@@ -464,8 +260,8 @@ fn is_stdout_sigil(path: &Path) -> bool {
 /// - the target itself is not an existing symlink (refuse symlink overwrite).
 ///
 /// There is a TOCTOU window between this check and the subsequent
-/// `fs::write` in `run`: an attacker who already controls the parent
-/// directory could replace the target with a symlink between the two
+/// `fs::write` in `render_output`: an attacker who already controls the
+/// parent directory could replace the target with a symlink between the two
 /// calls. For a non-setuid CLI run by an ordinary user this is
 /// acceptable — the attacker already has full access to the same
 /// directory. Closing the window completely needs `O_NOFOLLOW` on the
@@ -515,174 +311,10 @@ fn validate_output_path(path: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Read a file with a hard size cap, returning `Ok(None)` if the file exceeds
-/// the cap. Defense-in-depth against TOCTOU: we cannot trust a prior
-/// `fs::metadata` call because the file may have grown (or been swapped out
-/// for a symlink target on a different filesystem) between the metadata read
-/// and the content read. Reading `cap + 1` bytes lets us detect overruns
-/// without first asking the filesystem how large the file claims to be.
-/// Read up to `cap` bytes from `path` into `buf`, clearing `buf` first.
-///
-/// Returns:
-///
-/// - `Ok(true)` -- file content fully read (length <= `cap`).
-/// - `Ok(false)` -- file exceeds `cap`; `buf` holds the first `cap + 1` bytes
-///   (caller should treat as over-cap and discard).
-/// - `Err(_)` -- IO error (open / read failure).
-///
-/// Reusing one buffer across the scan loop lets a tight walker avoid one
-/// allocation per file. The buffer's capacity grows monotonically to the
-/// largest file seen, which is bounded by `MAX_FILE_SIZE` plus the probe byte.
-fn read_capped_into(path: &Path, cap: u64, buf: &mut Vec<u8>) -> io::Result<bool> {
-    buf.clear();
-    let file = File::open(path)?;
-    let probe = cap.saturating_add(1);
-    file.take(probe).read_to_end(buf)?;
-    Ok((buf.len() as u64) <= cap)
-}
-
-struct FoundSink<'a> {
-    found: &'a mut bool,
-}
-
-impl<'a> Sink for FoundSink<'a> {
-    type Error = std::io::Error;
-
-    fn matched(&mut self, _searcher: &Searcher, _mat: &SinkMatch) -> Result<bool, Self::Error> {
-        *self.found = true;
-        Ok(false)
-    }
-}
-
-/// Compile a `--glob` pattern into a `globset::GlobMatcher`. Empty patterns
-/// and `*.` (extension-less) are rejected for parity with previous behaviour.
-fn compile_glob(pattern: &str) -> Result<globset::GlobMatcher, AppError> {
-    if pattern.is_empty() {
-        return Err(AppError::InvalidGlob("empty pattern".to_string()));
-    }
-    if pattern == "*." {
-        return Err(AppError::InvalidGlob(
-            "pattern '*.': extension cannot be empty".to_string(),
-        ));
-    }
-    globset::Glob::new(pattern)
-        .map(|g| g.compile_matcher())
-        .map_err(|e| AppError::InvalidGlob(format_error_chain(pattern, &e)))
-}
-
-/// Flatten a `globset::Error` (or any `std::error::Error`) into a single line
-/// that preserves its `source()` chain. Without this the user only sees the
-/// top-level `Display`, which sometimes elides the underlying reason (e.g. the
-/// specific syntax error inside a brace alternative).
-fn format_error_chain(pattern: &str, err: &dyn std::error::Error) -> String {
-    let mut msg = format!("invalid pattern '{pattern}': {err}");
-    let mut source = err.source();
-    while let Some(cause) = source {
-        msg.push_str(&format!(" (caused by: {cause})"));
-        source = cause.source();
-    }
-    msg
-}
-
-/// Match a path against the compiled glob. The matcher is tried against:
-/// (1) the path relative to `dir_root` — supports patterns like `**/*.md`,
-/// (2) the file name — supports patterns like `*.md` regardless of depth.
-fn glob_match(matcher: &globset::GlobMatcher, path: &Path, dir_root: &Path) -> bool {
-    if let Ok(rel) = path.strip_prefix(dir_root) {
-        if matcher.is_match(rel) {
-            return true;
-        }
-    }
-    if let Some(name) = path.file_name() {
-        return matcher.is_match(Path::new(name));
-    }
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use tempfile::tempdir;
-
-    fn m(pattern: &str, file: &str) -> bool {
-        let matcher = compile_glob(pattern).unwrap();
-        glob_match(&matcher, &PathBuf::from(file), Path::new(""))
-    }
-
-    #[test]
-    fn glob_simple_extension_matches_at_any_depth() {
-        assert!(m("*.md", "test.md"));
-        assert!(m("*.md", "src/notes/test.md"));
-        assert!(!m("*.md", "test.txt"));
-    }
-
-    #[test]
-    fn glob_exact_name_matches() {
-        assert!(m("README.md", "README.md"));
-        assert!(!m("README.md", "OTHER.md"));
-    }
-
-    #[test]
-    fn glob_double_star_matches_full_path() {
-        assert!(m("**/*.md", "src/notes/test.md"));
-        assert!(m("src/*.md", "src/test.md"));
-        assert!(!m("src/*.md", "other/test.md"));
-    }
-
-    #[test]
-    fn glob_invalid_patterns_rejected() {
-        assert!(compile_glob("").is_err());
-        assert!(compile_glob("*.").is_err());
-        // unbalanced brace — globset rejects it
-        assert!(compile_glob("{md,").is_err());
-    }
-
-    #[test]
-    fn compile_glob_message_echoes_offending_pattern() {
-        // The user-facing message must mention the pattern so the user does
-        // not have to guess which invocation produced the error.
-        let err = compile_glob("{md,").unwrap_err();
-        let s = err.to_string();
-        assert!(s.contains("{md,"), "pattern missing in message: {s}");
-        assert!(s.contains("invalid pattern"), "expected prefix, got: {s}");
-    }
-
-    #[test]
-    fn format_error_chain_walks_source() {
-        use std::error::Error;
-        use std::fmt;
-        // Two-link chain: Outer ── source ──> Inner.
-        #[derive(Debug)]
-        struct Inner;
-        impl fmt::Display for Inner {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "inner reason")
-            }
-        }
-        impl Error for Inner {}
-
-        #[derive(Debug)]
-        struct Outer(Inner);
-        impl fmt::Display for Outer {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "outer failure")
-            }
-        }
-        impl Error for Outer {
-            fn source(&self) -> Option<&(dyn Error + 'static)> {
-                Some(&self.0)
-            }
-        }
-
-        let msg = format_error_chain("pat", &Outer(Inner));
-        assert!(msg.contains("invalid pattern 'pat'"), "got: {msg}");
-        assert!(msg.contains("outer failure"), "top-level missing: {msg}");
-        assert!(
-            msg.contains("caused by: inner reason"),
-            "source missing: {msg}"
-        );
-    }
 
     #[test]
     fn validate_output_rejects_missing_parent() {
@@ -723,64 +355,25 @@ mod tests {
     }
 
     #[test]
-    fn read_capped_into_returns_true_when_file_within_limit() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("small.md");
-        fs::write(&path, b"hello world").unwrap();
-        let mut buf = Vec::new();
-        assert!(read_capped_into(&path, 1024, &mut buf).unwrap());
-        assert_eq!(buf, b"hello world");
+    fn ensure_trailing_newline_adds_one_when_missing() {
+        let mut s = String::from("payload");
+        ensure_trailing_newline(&mut s);
+        assert_eq!(s, "payload\n");
     }
 
     #[test]
-    fn read_capped_into_returns_true_at_exact_limit() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("exact.md");
-        let payload = vec![b'x'; 64];
-        fs::write(&path, &payload).unwrap();
-        let mut buf = Vec::new();
-        assert!(read_capped_into(&path, 64, &mut buf).unwrap());
-        assert_eq!(buf, payload);
+    fn ensure_trailing_newline_leaves_an_existing_one_alone() {
+        // Formatters that already terminate their output must not gain a
+        // second newline.
+        let mut s = String::from("payload\n");
+        ensure_trailing_newline(&mut s);
+        assert_eq!(s, "payload\n");
     }
 
     #[test]
-    fn read_capped_into_returns_false_when_file_over_limit() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("big.md");
-        let payload = vec![b'x'; 65];
-        fs::write(&path, &payload).unwrap();
-        // cap is 64, file is 65 bytes — must be rejected (false), not truncated.
-        let mut buf = Vec::new();
-        let ok = read_capped_into(&path, 64, &mut buf).unwrap();
-        assert!(
-            !ok,
-            "expected false for file exceeding cap (read {} bytes)",
-            buf.len()
-        );
-    }
-
-    #[test]
-    fn read_capped_into_returns_err_for_missing_file() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("missing.md");
-        let mut buf = Vec::new();
-        assert!(read_capped_into(&path, 64, &mut buf).is_err());
-    }
-
-    #[test]
-    fn read_capped_into_clears_previous_contents() {
-        // Buffer reuse contract: any leftover content from a previous read
-        // must not bleed into the next file.
-        let dir = tempdir().unwrap();
-        let path1 = dir.path().join("first.md");
-        let path2 = dir.path().join("second.md");
-        fs::write(&path1, b"longer content here").unwrap();
-        fs::write(&path2, b"short").unwrap();
-
-        let mut buf = Vec::new();
-        read_capped_into(&path1, 1024, &mut buf).unwrap();
-        assert_eq!(buf, b"longer content here");
-        read_capped_into(&path2, 1024, &mut buf).unwrap();
-        assert_eq!(buf, b"short", "buffer must be cleared on each read");
+    fn stdout_sigil_is_only_the_bare_dash() {
+        assert!(is_stdout_sigil(Path::new("-")));
+        assert!(!is_stdout_sigil(Path::new("./-")));
+        assert!(!is_stdout_sigil(Path::new("out.json")));
     }
 }

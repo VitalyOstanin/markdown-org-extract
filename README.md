@@ -4,11 +4,13 @@
 [![CI](https://github.com/VitalyOstanin/markdown-org-extract/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/VitalyOstanin/markdown-org-extract/actions/workflows/ci.yml?query=branch%3Amaster)
 [![license](https://img.shields.io/crates/l/markdown-org-extract.svg)](https://github.com/VitalyOstanin/markdown-org-extract/blob/master/LICENSE)
 
-CLI utility for extracting tasks from markdown files with support for Emacs Org-mode markers.
+Extracts tasks from markdown files with support for Emacs Org-mode markers.
+Ships as a command-line tool and as a Rust library — both run the same code.
 
 ## Table of contents
 
 - [Installation and build](#installation-and-build)
+- [Use as a library](#use-as-a-library)
 - [For downstream packagers](#for-downstream-packagers)
 - [Usage](#usage)
 - [Example files](#example-files)
@@ -144,6 +146,50 @@ and `timestamp::parser` (timestamps that carry a workday repeater).
 For the authoritative, always-current list of cases, read the
 `#[test]` functions in those modules (`cargo test -- --list` prints
 the names).
+
+## Use as a library
+
+The crate is also a library, so a Rust consumer can extract tasks
+in-process instead of spawning the binary and parsing its JSON. This is
+required where processes cannot be spawned at all, such as Android.
+
+```toml
+[dependencies]
+markdown-org-extract = "0.11"
+```
+
+Scanning and agenda building are separate steps, so one scan can feed
+several agendas:
+
+```rust
+use markdown_org_extract::{filter_agenda, scan_directory, AgendaDates, AgendaScope, ScanOptions};
+
+let outcome = scan_directory("notes".as_ref(), &ScanOptions::default(), None)?;
+println!("{} tasks in {} files", outcome.tasks.len(), outcome.stats.files_processed);
+
+let agenda = filter_agenda(
+    outcome.tasks,
+    AgendaScope::Week,
+    AgendaDates::default(),
+    "Europe/Moscow",
+    false, // include_done
+    false, // include_cancelled
+    true,  // annotate_next
+)?;
+```
+
+`ScanOptions` carries what the walk needs (`glob`, `max_tasks`,
+`absolute_paths`, `locale`) and has a `Default`. The third argument to
+`scan_directory` is an optional `&AtomicBool` the caller can set to stop
+a running scan; pass `None` when there is nothing to interrupt it.
+
+Nothing here reads the wall clock unless it has to:
+`AgendaDates::current_date` sets what "today" means, so the same input
+renders the same agenda on any day. See
+[ADR-0025](docs/adr/0025-library-crate-with-thin-cli.md) for the split
+between the library and the CLI, and the
+[API documentation](https://docs.rs/markdown-org-extract) for the rest of
+the surface.
 
 ## For downstream packagers
 
@@ -1148,12 +1194,15 @@ during compilation rather than at runtime.
 ```
 markdown-org-extract/
 ├── src/
-│   ├── main.rs             # CLI entry point, file walker, file I/O
-│   ├── cli.rs              # Argument parsing (clap), tracing init
+│   ├── lib.rs              # Library facade: the public API embedders use
+│   ├── main.rs             # CLI entry point: parse args, call the library, write
+│   ├── cli.rs              # Argument parsing (clap), tracing init — binary only
+│   ├── format.rs           # OutputFormat (clap ValueEnum) — binary only
+│   ├── scan.rs             # Directory walk, file I/O, ScanOptions
 │   ├── agenda.rs           # Agenda logic (day/week/month), repeaters
 │   ├── parser.rs           # Task extraction from the markdown AST
 │   ├── render.rs           # Markdown/HTML rendering
-│   ├── format.rs           # OutputFormat (clap ValueEnum)
+│   ├── locale.rs           # Weekday translation tables
 │   ├── error.rs            # AppError
 │   ├── types.rs            # Task / Priority / DayAgenda / ProcessingStats
 │   ├── clock.rs            # CLOCK parsing and time aggregation
@@ -1165,7 +1214,8 @@ markdown-org-extract/
 │       ├── repeater.rs     #   parsing and arithmetic of repeaters (+1d, ++2w, .+1wd…)
 │       └── weekdays.rs     #   normalisation of Russian weekday names
 ├── tests/
-│   └── cli.rs              # CLI integration tests (assert_cmd)
+│   ├── cli.rs              # CLI integration tests (assert_cmd)
+│   └── lib_api.rs          # Tests against the library API, no process spawned
 ├── examples/               # Sample markdown files
 ├── docs/                   # Supplementary documentation
 ├── scripts/                # Developer helper scripts (see table below)

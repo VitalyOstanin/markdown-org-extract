@@ -59,6 +59,7 @@ was decided, and the trade-offs that came with it.
 | 0022 | [Amend ADRs by reference, not by rewriting](0022-amend-adrs-by-reference.md) | Accepted |
 | 0023 | [`timestamp_next` — resolved next occurrence for repeaters](0023-next-occurrence-field.md) | Accepted |
 | 0024 | [Third-party licence notices ship inside the release archives](0024-third-party-license-notices-in-archives.md) | Accepted |
+| 0025 | [The crate is a library; the CLI is a thin wrapper over it](0025-library-crate-with-thin-cli.md) | Accepted |
 
 ## Adding a new ADR
 

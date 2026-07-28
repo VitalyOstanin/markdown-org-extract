@@ -166,7 +166,7 @@ pub fn parse_timestamp_fields(
     parse_timestamp_fields_normalized(&normalized)
 }
 
-/// Fast-path companion to [`parse_timestamp_fields`] for callers that have
+/// Fast-path companion to `parse_timestamp_fields` for callers that have
 /// already weekday-normalised the input (e.g. `parser::finalize_task`, where
 /// `info.timestamp` was assembled from `extract_timestamp_normalized`'s
 /// regex captures over a `normalize_weekdays` output). Skipping the second

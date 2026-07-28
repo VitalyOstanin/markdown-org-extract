@@ -1,3 +1,10 @@
+//! The data model shared by every stage of the pipeline.
+//!
+//! [`Task`] is what a scan produces and what everything downstream consumes;
+//! its serde representation is the JSON contract the CLI emits, so field names
+//! and optionality here are load-bearing for external consumers (ADR-0015
+//! governs how they may evolve).
+
 use chrono::NaiveDate;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -15,7 +22,9 @@ use std::str::FromStr;
 /// - `SingleL` = `CANCELED` (the spelling used in the upstream manual)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CancelledSpelling {
+    /// `CANCELLED`.
     DoubleL,
+    /// `CANCELED`.
     SingleL,
 }
 
@@ -29,8 +38,11 @@ pub enum CancelledSpelling {
 /// than derived.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TaskType {
+    /// Open task (`TODO`).
     Todo,
+    /// Completed task (`DONE`).
     Done,
+    /// Abandoned task, carrying the spelling used in the source file.
     Cancelled(CancelledSpelling),
 }
 
@@ -100,8 +112,11 @@ impl<'de> Deserialize<'de> for TaskType {
 pub enum Priority {
     /// Numeric priority `[#0]`..`[#64]`. Outside this range is rejected.
     Numeric(u8),
+    /// `[#A]` — the highest letter priority.
     A,
+    /// `[#B]`.
     B,
+    /// `[#C]` — org-mode's default when a task carries no explicit priority.
     C,
     /// Letters D-Z, preserved verbatim.
     Other(char),
@@ -226,9 +241,12 @@ impl<'de> Deserialize<'de> for Priority {
 ///   is responsible for deciding how (or whether) to render it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClockEntry {
+    /// Inactive timestamp the interval started at, verbatim from the file.
     pub start: String,
+    /// Inactive timestamp the interval ended at; `None` for an open clock.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end: Option<String>,
+    /// Elapsed time as `HH:MM`; `None` for an open clock.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<String>,
 }
@@ -239,18 +257,31 @@ pub struct ClockEntry {
 /// output stays compact and stable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
+    /// Path to the file the task was found in — relative to the scanned root
+    /// unless [`ScanOptions::absolute_paths`] was set.
+    ///
+    /// [`ScanOptions::absolute_paths`]: crate::scan::ScanOptions::absolute_paths
     pub file: String,
+    /// 1-based line number of the heading inside that file.
     pub line: u32,
+    /// Heading text with the keyword, priority and tags stripped off.
     pub heading: String,
+    /// Body of the section below the heading, up to the next heading.
     pub content: String,
+    /// Org keyword the heading carried, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_type: Option<TaskType>,
+    /// Priority cookie `[#A]`, if present.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<Priority>,
+    /// Creation date recorded for the task, if the file carries one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
+    /// The timestamp line verbatim, e.g. `SCHEDULED: <2026-03-02 Mon>`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
+    /// Keyword introducing the timestamp: `SCHEDULED`, `DEADLINE` or `CLOSED`;
+    /// `None` for a bare timestamp with no keyword.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_type: Option<String>,
     /// Bracket form of the timestamp: `Some(true)` for active `<...>`,
@@ -259,10 +290,13 @@ pub struct Task {
     /// the schema-evolution rule under which this field was added.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_active: Option<bool>,
+    /// Date part of the timestamp as `YYYY-MM-DD`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_date: Option<String>,
+    /// Start time as `HH:MM`; `None` for an all-day timestamp.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_time: Option<String>,
+    /// End time as `HH:MM` for a time range (`<... 10:00-11:30>`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_end_time: Option<String>,
     /// Canonical org repeater string of the active timestamp (`++7d`,
@@ -282,8 +316,10 @@ pub struct Task {
     /// repeat tooltip so "next" never names a past occurrence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_next: Option<String>,
+    /// `CLOCK:` entries recorded in the task body, in file order.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clocks: Option<Vec<ClockEntry>>,
+    /// Sum of every closed clock entry as `HH:MM`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_clock_time: Option<String>,
     /// Per-task properties parsed from an `org-properties` fenced code
@@ -317,14 +353,19 @@ pub const MAX_DIAGNOSTIC_ITEMS: usize = 20;
 /// File processing statistics surfaced to stderr after a run.
 #[derive(Debug, Default)]
 pub struct ProcessingStats {
+    /// Files that were read and searched to completion.
     pub files_processed: usize,
+    /// Files skipped because they exceed [`MAX_FILE_SIZE`].
     pub files_skipped_size: usize,
+    /// Files whose content could not be searched.
     pub files_failed_search: usize,
+    /// Files that could not be opened or read.
     pub files_failed_read: usize,
     /// Walker-level entries the scanner could not even enumerate
     /// (e.g. `PermissionDenied` on a subdirectory). Counted separately so a
     /// single unreadable subtree does not silently mask the rest of the scan.
     pub walk_errors: usize,
+    /// The task limit was hit, so the result is truncated.
     pub max_tasks_reached: bool,
     /// Configured task limit (from `--max-tasks`). Reported in the summary so
     /// users know which limit they hit and can rerun with a higher value.
@@ -357,6 +398,8 @@ pub struct ProcessingStats {
 }
 
 impl ProcessingStats {
+    /// Whether the run produced anything worth reporting: a skipped or failed
+    /// file, a truncated result, an interruption or a non-UTF-8 path.
     pub fn has_warnings(&self) -> bool {
         self.files_skipped_size > 0
             || self.files_failed_search > 0
@@ -367,6 +410,9 @@ impl ProcessingStats {
             || self.nonutf8_paths > 0
     }
 
+    /// Remember a path that could not be processed, up to
+    /// [`MAX_DIAGNOSTIC_ITEMS`] entries — beyond that only the counters grow,
+    /// so an unreadable tree cannot make the list unbounded.
     pub fn record_failed_path(&mut self, path: &str) {
         if self.failed_paths.len() < MAX_DIAGNOSTIC_ITEMS {
             self.failed_paths.push(path.to_string());
@@ -388,6 +434,10 @@ impl ProcessingStats {
         self.nonutf8_paths += 1;
     }
 
+    /// Emit the end-of-run summary as one structured `warn` record, or
+    /// nothing at all when [`has_warnings`] is false.
+    ///
+    /// [`has_warnings`]: ProcessingStats::has_warnings
     pub fn print_summary(&self) {
         if !self.has_warnings() {
             return;
@@ -423,8 +473,12 @@ impl ProcessingStats {
 /// Used for agenda rendering (overdue / upcoming).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TaskWithOffset {
+    /// The task itself; flattened on serialization, so its fields appear
+    /// alongside `days_offset` rather than nested under a key.
     #[serde(flatten)]
     pub task: Task,
+    /// Days between the agenda date and the task's timestamp: negative for
+    /// overdue, positive for upcoming. `None` when the task has no date.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub days_offset: Option<i64>,
 }
@@ -432,15 +486,21 @@ pub struct TaskWithOffset {
 /// Tasks aggregated for a specific date, split into overdue / scheduled / upcoming buckets.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DayAgenda {
+    /// The day this bucket describes, as `YYYY-MM-DD`.
     pub date: String,
+    /// Tasks whose date has already passed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub overdue: Vec<TaskWithOffset>,
+    /// Tasks falling on this day at a specific time, ordered by that time.
     pub scheduled_timed: Vec<TaskWithOffset>,
+    /// All-day tasks falling on this day.
     pub scheduled_no_time: Vec<TaskWithOffset>,
+    /// Tasks dated later than this day but close enough to warn about.
     pub upcoming: Vec<TaskWithOffset>,
 }
 
 impl DayAgenda {
+    /// An empty agenda for `date`.
     pub fn new(date: NaiveDate) -> Self {
         Self {
             date: date.format("%Y-%m-%d").to_string(),

@@ -13,11 +13,11 @@ use std::sync::LazyLock;
 /// the source const points at string literals; storing them in the cache
 /// avoids a per-call `Vec<&str>` materialisation.
 static CACHED_RU_ENGINE: LazyLock<Option<(AhoCorasick, Vec<&'static str>)>> = LazyLock::new(|| {
-    let patterns: Vec<&'static str> = crate::cli::RU_WEEKDAY_MAPPINGS
+    let patterns: Vec<&'static str> = crate::locale::RU_WEEKDAY_MAPPINGS
         .iter()
         .map(|(loc, _)| *loc)
         .collect();
-    let replacements: Vec<&'static str> = crate::cli::RU_WEEKDAY_MAPPINGS
+    let replacements: Vec<&'static str> = crate::locale::RU_WEEKDAY_MAPPINGS
         .iter()
         .map(|(_, eng)| *eng)
         .collect();
@@ -34,7 +34,7 @@ static CACHED_RU_ENGINE: LazyLock<Option<(AhoCorasick, Vec<&'static str>)>> = La
 /// same length aborts on the first divergent entry. Roughly an order of
 /// magnitude cheaper than rebuilding the Aho-Corasick engine.
 fn mappings_match_ru(mappings: &[(&str, &str)]) -> bool {
-    let canonical = crate::cli::RU_WEEKDAY_MAPPINGS;
+    let canonical = crate::locale::RU_WEEKDAY_MAPPINGS;
     mappings.len() == canonical.len()
         && mappings
             .iter()
@@ -151,7 +151,7 @@ mod tests {
             "Mixed: Пн и Tuesday в одной строке",
             "",
         ];
-        let canonical = crate::cli::RU_WEEKDAY_MAPPINGS;
+        let canonical = crate::locale::RU_WEEKDAY_MAPPINGS;
         // Clone the table into a separate Vec so its slice pointer
         // does not coincide with the cached one -- exercises the
         // slow path explicitly.

@@ -1,3 +1,10 @@
+//! Turning a flat task list into a dated agenda.
+//!
+//! [`filter_agenda`] takes everything a scan found and keeps only what falls
+//! inside the requested window, grouping the survivors per day. The window is
+//! anchored on [`AgendaDates::current_date`] rather than the host clock so the
+//! same input always renders the same output (ADR-0015).
+
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime};
 use chrono_tz::Tz;
 
@@ -66,9 +73,13 @@ pub enum AgendaOutput {
 /// `--agenda day|week|month`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgendaScope {
+    /// A single day.
     Day,
+    /// Seven days starting from the anchor date.
     Week,
+    /// The calendar month containing the anchor date.
     Month,
+    /// No date window: every task, as a flat list.
     Tasks,
 }
 
@@ -170,7 +181,7 @@ fn parse_range(
 ///   surfaces `CANCELLED` tasks. Independent of `include_done` (neither
 ///   implies the other). A no-op for day / week / month scope.
 /// - `annotate_next` — whether to fill `timestamp_next` (see
-///   [`annotate_next_occurrences`]). Only the JSON output carries the field,
+///   `annotate_next_occurrences`). Only the JSON output carries the field,
 ///   so the Markdown / HTML renderers pass `false` and skip the work. Always
 ///   a no-op for [`AgendaScope::Tasks`], which stays date-less per ADR-0023.
 ///

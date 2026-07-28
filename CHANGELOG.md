@@ -30,6 +30,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The crate is now a library as well as a binary. `scan_directory` walks a
+  directory and returns the tasks it finds; `filter_agenda` turns those into
+  an agenda for a scope and date window. A consumer that cannot spawn a
+  process — Android, where the platform forbids it — can call the same code
+  in-process instead of running the executable and parsing its JSON. The two
+  steps are separate, so one scan can feed several agendas. See
+  [ADR-0025](docs/adr/0025-library-crate-with-thin-cli.md).
+
+### Changed
+
+- `src/main.rs` is now a thin wrapper: it parses arguments, installs signal
+  handlers, calls the library and writes the result. Exit codes, stderr
+  summaries and the JSON schema are unchanged. Scanning takes a `ScanOptions`
+  rather than the clap type, and the interrupt flag is optional, so nothing
+  in the library depends on argument parsing. The weekday translation tables
+  moved from `cli.rs` to the new `locale` module because the parser and the
+  timestamp extractor need them.
+
 ## [0.11.1] — 2026-07-25
 
 ### Added

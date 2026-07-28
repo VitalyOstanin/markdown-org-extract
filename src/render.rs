@@ -1,3 +1,10 @@
+//! Rendering tasks and agendas as markdown or HTML.
+//!
+//! These functions produce the text the CLI writes to `--output`; embedders
+//! that build their own UI can ignore them and read the structures directly.
+//! Headings are sanitised here: characters that render as nothing but reorder
+//! or hide surrounding text are dropped rather than passed through.
+
 use std::fmt::Write;
 
 use crate::types::{ClockEntry, DayAgenda, Task, TaskWithOffset};

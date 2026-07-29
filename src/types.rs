@@ -361,6 +361,14 @@ pub struct ProcessingStats {
     pub files_failed_search: usize,
     /// Files that could not be opened or read.
     pub files_failed_read: usize,
+    /// Files read in full and then skipped because their bytes are not valid
+    /// UTF-8 — a note saved in a single-byte encoding, typically by a Windows
+    /// editor. Counted apart from [`files_failed_read`] because the two need
+    /// different answers: this one is fixed by converting the file, not by
+    /// retrying or fixing permissions.
+    ///
+    /// [`files_failed_read`]: ProcessingStats::files_failed_read
+    pub files_not_utf8: usize,
     /// Walker-level entries the scanner could not even enumerate
     /// (e.g. `PermissionDenied` on a subdirectory). Counted separately so a
     /// single unreadable subtree does not silently mask the rest of the scan.
@@ -404,6 +412,7 @@ impl ProcessingStats {
         self.files_skipped_size > 0
             || self.files_failed_search > 0
             || self.files_failed_read > 0
+            || self.files_not_utf8 > 0
             || self.walk_errors > 0
             || self.max_tasks_reached
             || self.interrupted
@@ -456,6 +465,7 @@ impl ProcessingStats {
             files_skipped_size = self.files_skipped_size,
             files_failed_search = self.files_failed_search,
             files_failed_read = self.files_failed_read,
+            files_not_utf8 = self.files_not_utf8,
             walk_errors = self.walk_errors,
             max_tasks_reached = self.max_tasks_reached,
             max_tasks_limit = self.max_tasks_limit,

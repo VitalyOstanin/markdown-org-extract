@@ -228,7 +228,7 @@ fn scan_files(
         let content = match std::str::from_utf8(&buf) {
             Ok(s) => s,
             Err(e) => {
-                stats.files_failed_read += 1;
+                stats.files_not_utf8 += 1;
                 stats.record_failed_path(&path.display().to_string());
                 tracing::debug!(file = %path.display(), error = %e, "file is not valid UTF-8; skipping");
                 continue;

@@ -60,6 +60,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A file skipped because its bytes are not UTF-8 is counted in the new
+  `ProcessingStats::files_not_utf8` instead of `files_failed_read`, and the
+  end-of-run summary reports it under that name. The two failures need
+  different answers — a file in CP1251 is fixed by converting it, an
+  unreadable one by fixing permissions or the disk — and folding them into
+  one counter left an embedder unable to tell the user which happened. The
+  totals a consumer sums stay the same; a consumer reading
+  `files_failed_read` alone now sees the encoding case reported separately.
 - `src/main.rs` is now a thin wrapper: it parses arguments, installs signal
   handlers, calls the library and writes the result. Exit codes, stderr
   summaries and the JSON schema are unchanged. Scanning takes a `ScanOptions`

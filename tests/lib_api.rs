@@ -99,6 +99,31 @@ fn scan_directory_caps_the_task_count() {
 }
 
 #[test]
+fn scan_directory_counts_a_file_that_is_not_utf8_apart_from_a_read_failure() {
+    // A note written in a Windows editor and committed to the same
+    // repository arrives as CP1251. An embedder showing "N files could not be
+    // read" cannot tell the user to convert it unless the reason is reported
+    // separately from a genuine IO failure.
+    let vault = write_vault(&[("ok.md", ONE_TASK)]);
+    // `# TODO Отчёт` with the title in CP1251, and a timestamp so the file
+    // reaches the UTF-8 check rather than being filtered out by the search.
+    let mut cp1251 = b"# TODO ".to_vec();
+    cp1251.extend_from_slice(&[0xCE, 0xF2, 0xF7, 0xB8, 0xF2, b'\n']);
+    cp1251.extend_from_slice("`SCHEDULED: <2026-03-02 Mon>`\n".as_bytes());
+    fs::write(vault.path().join("cp1251.md"), cp1251).expect("write file");
+
+    let outcome = scan_directory(vault.path(), &ScanOptions::default(), None).expect("scan");
+
+    assert_eq!(outcome.tasks.len(), 1, "only the UTF-8 file has tasks");
+    assert_eq!(outcome.stats.files_not_utf8, 1);
+    assert_eq!(
+        outcome.stats.files_failed_read, 0,
+        "an unreadable file and a file in another encoding need different answers"
+    );
+    assert!(outcome.stats.has_warnings());
+}
+
+#[test]
 fn scan_directory_rejects_a_missing_directory() {
     let vault = write_vault(&[]);
     let missing = vault.path().join("does-not-exist");

@@ -57,8 +57,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `closest_date`, `add_months`, `Repeater`, `RepeaterType`, `RepeaterUnit` and
   `DatePreference` were public in `timestamp` already and are re-exported
   alongside the rest of the facade.
+- `display_text` turns a markdown fragment into the text the agenda shows,
+  with the inline markup taken off. It is the counterpart of
+  `parse_heading_line`: that one says where the title starts in the file,
+  this one says what the title looks like once extracted. An editor comparing
+  the raw line against a `Task::heading` it was handed needs both, or every
+  edit of a formatted heading is refused as stale.
 
 ### Changed
+
+- A heading now keeps the text of an inline code span: `` # TODO `build` is
+  broken `` extracts as `` build is broken `` rather than as `is broken`. The
+  literal was dropped along with the backticks, taking a word out of the
+  middle of the title. Body paragraphs are unchanged — there an inline code
+  span carries the planning lines and the property markers, which have their
+  own extractors.
 
 - A file skipped because its bytes are not UTF-8 is counted in the new
   `ProcessingStats::files_not_utf8` instead of `files_failed_read`, and the

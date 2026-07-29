@@ -62,7 +62,8 @@ pub use crate::error::AppError;
 pub use crate::holidays::HolidayCalendar;
 pub use crate::locale::get_weekday_mappings;
 pub use crate::parser::{
-    extract_tasks, extract_tasks_with_counter, parse_heading_line, HeadingLine, HeadingToken,
+    display_text, extract_tasks, extract_tasks_with_counter, parse_heading_line, HeadingLine,
+    HeadingToken,
 };
 pub use crate::render::{render_days_html, render_days_markdown, render_html, render_markdown};
 pub use crate::scan::{scan_directory, ScanOptions, ScanOutcome};

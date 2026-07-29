@@ -656,28 +656,87 @@ fn extract_timestamps_from_node<'a>(
 }
 
 /// Extract plain text from paragraph, including text inside Emph/Strong/Link nodes
+///
+/// Inline code is left out here, unlike in a heading: in a body paragraph it
+/// carries the planning lines and the property markers, which are read by
+/// their own extractors and would otherwise appear twice — once as data and
+/// once as prose.
 fn extract_paragraph_text<'a>(node: &'a AstNode<'a>) -> String {
     let mut text = String::new();
-    collect_text_recursive(node, &mut text);
+    collect_text_recursive(node, &mut text, InlineCode::Drop);
     text.trim().to_string()
 }
 
 /// Extract all text from a heading node, including text inside Emph/Strong
+/// and the literal of an inline code span.
 fn extract_text<'a>(node: &'a AstNode<'a>) -> String {
     let mut text = String::new();
-    collect_text_recursive(node, &mut text);
+    collect_text_recursive(node, &mut text, InlineCode::Keep);
     text
 }
 
-fn collect_text_recursive<'a>(node: &'a AstNode<'a>, out: &mut String) {
+/// What [`collect_text_recursive`] does with an inline code span.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InlineCode {
+    /// Write its literal out, so a heading keeps every word it was written
+    /// with.
+    Keep,
+    /// Skip it.
+    Drop,
+}
+
+fn collect_text_recursive<'a>(node: &'a AstNode<'a>, out: &mut String, code: InlineCode) {
     for child in node.children() {
         let value = child.data.borrow().value.clone();
         match value {
             NodeValue::Text(t) => out.push_str(&t),
+            NodeValue::Code(inline) if code == InlineCode::Keep => out.push_str(&inline.literal),
             NodeValue::Emph | NodeValue::Strong | NodeValue::Link(_) | NodeValue::Strikethrough => {
-                collect_text_recursive(child, out)
+                collect_text_recursive(child, out, code)
             }
             _ => {}
+        }
+    }
+}
+
+/// The text of a markdown fragment as the agenda shows it, with the inline
+/// markup taken off.
+///
+/// This is how a heading reaches [`Task::heading`](crate::Task::heading):
+/// emphasis, strong text, links and strikethrough contribute their text, and
+/// an inline code span contributes its literal. An editor holding the raw
+/// line can therefore compare what the file says against what it was handed
+/// — `parse_heading_line` says where the title starts, and this says what it
+/// looks like once extracted.
+///
+/// ```
+/// # use markdown_org_extract::{display_text, parse_heading_line};
+/// let line = "# TODO **Отчёт** за июль";
+/// let heading = parse_heading_line(line).expect("a heading");
+/// assert_eq!(display_text(&line[heading.title_start..]), "Отчёт за июль");
+/// ```
+pub fn display_text(markdown: &str) -> String {
+    let arena = Arena::new();
+    let root = parse_document(&arena, markdown, &safe_comrak_options());
+
+    let mut text = String::new();
+    collect_block_text(root, &mut text);
+    text.trim().to_string()
+}
+
+/// Walk down to the inline content of every block and collect its text.
+///
+/// A fragment handed to [`display_text`] is parsed as a document, so its
+/// inline nodes sit under a paragraph (or a heading, when the caller passes a
+/// whole line); the leaves are the same either way.
+fn collect_block_text<'a>(node: &'a AstNode<'a>, out: &mut String) {
+    for child in node.children() {
+        let value = child.data.borrow().value.clone();
+        match value {
+            NodeValue::Paragraph | NodeValue::Heading(_) => {
+                collect_text_recursive(child, out, InlineCode::Keep)
+            }
+            _ => collect_block_text(child, out),
         }
     }
 }

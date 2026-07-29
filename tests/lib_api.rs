@@ -9,8 +9,8 @@ use std::fs;
 use std::sync::atomic::AtomicBool;
 
 use markdown_org_extract::{
-    filter_agenda, parse_heading_line, parse_timestamp_parts, scan_directory, AgendaDates,
-    AgendaOutput, AgendaScope, AppError, Priority, ScanOptions, TaskType,
+    display_text, filter_agenda, parse_heading_line, parse_timestamp_parts, scan_directory,
+    AgendaDates, AgendaOutput, AgendaScope, AppError, Priority, ScanOptions, TaskType,
 };
 
 fn write_vault(files: &[(&str, &str)]) -> tempfile::TempDir {
@@ -347,5 +347,41 @@ fn renderers_are_reachable_from_the_library() {
     assert!(
         markdown.contains("Write the report"),
         "rendered output missing the heading: {markdown}"
+    );
+}
+
+// `display_text` is the other half of what an editor needs: `parse_heading_line`
+// says where the title starts in the file, and this says what that title looks
+// like once the agenda has it. A caller comparing the two has to get the same
+// string, or every edit of a formatted heading reads as a stale one.
+
+#[test]
+fn display_text_takes_inline_markup_off_a_heading_title() {
+    assert_eq!(display_text("**Отчёт** за июль"), "Отчёт за июль");
+    assert_eq!(display_text("_курсив_ и текст"), "курсив и текст");
+    assert_eq!(
+        display_text("Read [the spec](https://example.invalid/spec)"),
+        "Read the spec"
+    );
+}
+
+#[test]
+fn display_text_keeps_the_text_of_an_inline_code_span() {
+    // Dropping it would take a word out of the middle of a heading.
+    assert_eq!(display_text("`build` is broken"), "build is broken");
+}
+
+#[test]
+fn display_text_matches_the_heading_a_scan_produces() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::write(dir.path().join("notes.md"), "# TODO **Отчёт** за `июль`\n").expect("write");
+
+    let result = scan_directory(dir.path(), &ScanOptions::default(), None).expect("scan");
+    let line = "# TODO **Отчёт** за `июль`";
+    let heading = parse_heading_line(line).expect("a heading");
+
+    assert_eq!(
+        result.tasks[0].heading,
+        display_text(&line[heading.title_start..])
     );
 }

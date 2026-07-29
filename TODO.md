@@ -13,6 +13,7 @@ package.
 - [Localising CLI messages](#localising-cli-messages)
 - [Benchmarks (criterion)](#benchmarks-criterion)
 - [Deferred performance optimisations](#deferred-performance-optimisations)
+- [One grammar for every client, over WebAssembly](#one-grammar-for-every-client-over-webassembly)
 - [Open info-level review notes](#open-info-level-review-notes)
 
 ## CI on the latest Ubuntu LTS
@@ -147,6 +148,48 @@ none of these is worth a behavioural or API risk taken blind.
   the JSON wire-contract snapshot tests pin, so switching the default is
   a UX trade-off that needs sign-off, not a free win. A `--compact`
   opt-in flag would be the non-breaking route if a consumer asks.
+
+## One grammar for every client, over WebAssembly
+
+**Investigate first, then agree the implementation.** Nothing is decided
+here beyond the problem being worth solving.
+
+The format is read by three grammars today. This crate parses a heading in
+two steps (`HEADING_TODO_RE`, then `HEADING_PRIORITY_RE` anywhere in the
+remainder) and a timestamp as a date plus a free-form bracket body scanned
+for a repeater and a warning cookie. The Android application calls that code
+directly. The VS Code extension has its own positional regexes
+(`HEADING_REGEX` in `src/orgPatterns.ts`, `TIMESTAMP_REGEX` in
+`src/utils/timestampParts.ts`), and they disagree with this crate on lines
+users actually write:
+
+| № | Line | Here | VS Code |
+|---|------|------|---------|
+| 1 | `## TODO Написать [#A] отчёт`      | priority `A`         | no priority; the cookie stays in the title and a second one gets appended |
+| 2 | `## TODO [#A]Написать отчёт`        | priority `A`         | no priority |
+| 3 | `` `SCHEDULED: <2026-01-12 Пн +1w -2d>` `` | date moves, tokens kept | not recognised at all; the timestamp commands do nothing |
+
+Publishing the regexes alone would not fix this: what diverges is the order
+the patterns are applied in and the way the bracket body is scanned, neither
+of which a pattern string carries. A shared conformance corpus would catch a
+divergence but not prevent one.
+
+Compiling this crate to `wasm32` and having the extension call it removes
+the second grammar instead of synchronising it. Two things make it closer
+than it sounds: `parse_heading_line` and `parse_timestamp_parts` already
+return byte ranges for every token, which is exactly what the cursor-aware
+commands in the extension compute by hand today; and the same code is
+already reached from another language through UniFFI on Android.
+
+What the investigation has to establish:
+
+| № | Question                                                                 |
+|---|--------------------------------------------------------------------------|
+| 1 | What the facade is: `ignore`, `grep-searcher`, `signal-hook` and `clap` do not build for `wasm32`, so string parsing has to be separable from directory walking behind a feature |
+| 2 | Size of the resulting module, with and without `comrak` (needed only by `display_text`) |
+| 3 | How the extension loads it — bundled in the vsix, or fetched like the binary is today — and what that means for the web build of VS Code, where a native binary cannot run at all |
+| 4 | Which extension code moves: the `HEADING_REGEX` consumers and the two callers of `getTimestampPartAt` |
+| 5 | How the module is versioned against the crate, replacing the per-platform SHA256 table the extension pins today |
 
 ## Open info-level review notes
 

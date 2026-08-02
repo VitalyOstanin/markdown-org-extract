@@ -183,6 +183,31 @@ let agenda = filter_agenda(
 `scan_directory` is an optional `&AtomicBool` the caller can set to stop
 a running scan; pass `None` when there is nothing to interrupt it.
 
+Notes kept in more than one place are one agenda rather than one agenda
+each. `scan_directories` walks several roots as a single run — one task
+list, one `ProcessingStats`, and `max_tasks` as the budget over all of
+them — and every task carries `root`, the canonical path its `file` is
+relative to:
+
+```rust
+use std::path::PathBuf;
+use markdown_org_extract::{scan_directories, ScanOptions};
+
+let roots = vec![PathBuf::from("work-notes"), PathBuf::from("personal-notes")];
+let outcome = scan_directories(&roots, &ScanOptions::default(), None)?;
+
+for task in &outcome.tasks {
+    // `file` is relative to `root`, and the same relative path can occur
+    // in two collections, so the two are joined before opening a note.
+    let path = PathBuf::from(task.root.as_deref().unwrap_or(".")).join(&task.file);
+    println!("{} — {}", path.display(), task.heading);
+}
+```
+
+A root named twice is walked once; a root that is missing fails the call
+rather than reading as an empty collection. See
+[ADR-0026](docs/adr/0026-several-roots-in-one-scan.md).
+
 Nothing here reads the wall clock unless it has to:
 `AgendaDates::current_date` sets what "today" means, so the same input
 renders the same agenda on any day. See
@@ -327,7 +352,7 @@ markdown-org-extract [OPTIONS]
 
 ### Options
 
-- `--dir <DIR>` — directory to scan (default: `.`)
+- `--dir <DIR>` — directory to scan (default: `.`). Repeat the flag to scan several collections as one run: the tasks are merged in the order the roots are given, `--max-tasks` is the budget for all of them together, and every task then carries a `root` field naming the directory its `file` is relative to. A directory named twice is scanned once; a directory that is missing fails the run rather than reading as empty. A single `--dir` emits the output it always did, without the `root` field
 - `--glob <GLOB>` — file filter pattern (default: `*.md`)
 - `--format <FORMAT>` — output format: `json`, `md`, `html` (default: `json`)
 - `--output <OUTPUT>` — file to write the result to; `-` means stdout (default: stdout)

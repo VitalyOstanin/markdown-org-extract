@@ -87,8 +87,12 @@ Exit status:
 #[command(version)]
 pub struct Cli {
     /// Root directory to scan (recursive). `.gitignore` is respected.
+    /// Repeat the flag to scan several collections as one run: the tasks are
+    /// merged, `--max-tasks` is the budget for all of them together, and every
+    /// task then carries a `root` field naming the directory its `file` is
+    /// relative to. A directory named twice is scanned once.
     #[arg(long, default_value = ".", help_heading = "Input")]
-    pub dir: PathBuf,
+    pub dir: Vec<PathBuf>,
 
     /// File matching pattern. Supported: `*.ext` and exact file names.
     #[arg(long, default_value = "*.md", help_heading = "Input")]

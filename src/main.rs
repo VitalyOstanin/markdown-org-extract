@@ -21,7 +21,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use markdown_org_extract::agenda::{self, filter_agenda, AgendaDates};
-use markdown_org_extract::scan::{scan_directory, validate_dir, ScanOptions};
+use markdown_org_extract::scan::{scan_directories, scan_directory, validate_dir, ScanOptions};
 use markdown_org_extract::{render, AppError, HolidayCalendar};
 
 use crate::cli::Cli;
@@ -113,8 +113,14 @@ fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
     }
 
     // Validate before the run span opens so a bad `--dir` is reported without
-    // a log line that already claims to be scanning it.
-    let dir_canonical = validate_dir(&cli.dir)?;
+    // a log line that already claims to be scanning it. Every root, not the
+    // first: a run over three collections must not walk two of them before
+    // saying the third is not there.
+    let roots = cli
+        .dir
+        .iter()
+        .map(|dir| validate_dir(dir))
+        .collect::<Result<Vec<_>, _>>()?;
 
     // Root span for the whole run, carrying the scanned directory. Every
     // event from here on — the per-file spans, `scan finished`, the summary,
@@ -123,7 +129,7 @@ fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
     // O4). It is an `info_span`, so at the default `warn` level it is inactive
     // and adds nothing to the default output; the context appears from `-v`
     // upward, the same threshold at which `scan finished` becomes visible.
-    let run_span = tracing::info_span!("run", dir = %dir_canonical.display());
+    let run_span = tracing::info_span!("run", dir = %joined(&roots));
     let _run = run_span.enter();
 
     let options = ScanOptions {
@@ -132,7 +138,13 @@ fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
         absolute_paths: cli.absolute_paths,
         locale: &cli.locale,
     };
-    let outcome = scan_directory(&dir_canonical, &options, Some(interrupt))?;
+    // One root goes through `scan_directory` so its output is unchanged: the
+    // tasks of a single-directory run carry no `root` field, which is what
+    // every consumer written against it reads.
+    let outcome = match roots.as_slice() {
+        [only] => scan_directory(only, &options, Some(interrupt))?,
+        several => scan_directories(several, &options, Some(interrupt))?,
+    };
     let stats = outcome.stats;
 
     tracing::info!(
@@ -175,6 +187,19 @@ fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
     )?;
 
     render_output(&cli, agenda_output)
+}
+
+/// The scanned roots as one span field, comma-separated.
+///
+/// The span carries what the run was over, and with several roots that is all
+/// of them: a log attributed to the first of three says nothing about where a
+/// warning from the third came from.
+fn joined(roots: &[std::path::PathBuf]) -> String {
+    roots
+        .iter()
+        .map(|root| root.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Handle the `--holidays YEAR` short-circuit: emit a JSON array of

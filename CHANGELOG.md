@@ -31,6 +31,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Several roots in one scan. `scan_directories` walks a list of directories as
+  one run — one task list, one `ProcessingStats`, and `--max-tasks` as the
+  budget for all of them together — and `--dir` may now be repeated to do the
+  same from the command line. Notes kept in more than one place (a work
+  repository and a private one, a shared vault and a personal one) are one
+  agenda rather than one agenda each. A root named twice is walked once; a
+  root that is missing fails the run rather than reading as empty. See
+  [ADR-0026](docs/adr/0026-several-roots-in-one-scan.md).
+- `Task.root`, the canonical path of the directory a task's `file` is relative
+  to. Filled in when the run scanned several roots, absent for a scan of one:
+  the same relative path can occur in two collections and mean two different
+  files, so a consumer joins it back on before opening or editing a note. A
+  non-breaking addition under
+  [ADR-0015](docs/adr/0015-json-schema-evolution.md); the output of a
+  single-directory run is unchanged, field for field.
+
 ## [0.12.0] — 2026-07-31
 
 ### Added

@@ -1133,6 +1133,7 @@ mod tests {
 
         Task {
             file: "test.md".to_string(),
+            root: None,
             line: 1,
             heading: "Test task".to_string(),
             content: String::new(),
@@ -1165,6 +1166,7 @@ mod tests {
         let active = timestamp.starts_with('<');
         Task {
             file: "test.md".to_string(),
+            root: None,
             line: 1,
             heading: "Plain timestamp task".to_string(),
             content: String::new(),
@@ -1231,6 +1233,7 @@ mod tests {
         let day = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let make = |heading: &str, prio: Option<Priority>, file: &str, line: u32| Task {
             file: file.to_string(),
+            root: None,
             line,
             heading: heading.to_string(),
             content: String::new(),
@@ -1506,6 +1509,7 @@ mod tests {
 
         Task {
             file: "test.md".to_string(),
+            root: None,
             line: 1,
             heading: "Test task".to_string(),
             content: String::new(),
@@ -1540,6 +1544,7 @@ mod tests {
 
         Task {
             file: "test.md".to_string(),
+            root: None,
             line: 1,
             heading: "Test task".to_string(),
             content: String::new(),
@@ -2516,6 +2521,7 @@ mod tests {
         let timestamp = format!("{ts_type}: <{date_str} {repeater}>");
         Task {
             file: "test.md".to_string(),
+            root: None,
             line: 1,
             heading: "Test task".to_string(),
             content: String::new(),

@@ -262,6 +262,22 @@ pub struct Task {
     ///
     /// [`ScanOptions::absolute_paths`]: crate::scan::ScanOptions::absolute_paths
     pub file: String,
+    /// Canonical path of the root `file` is relative to, when the run scanned
+    /// several of them ([`scan_directories`]). `None` for a scan of one
+    /// directory, where the caller named the root itself and the field would
+    /// only repeat what it already knows.
+    ///
+    /// The same relative path can occur in two roots and mean two different
+    /// files, so a consumer that scans several roots joins this back on before
+    /// opening or editing a note. Under
+    /// [`ScanOptions::absolute_paths`](crate::scan::ScanOptions::absolute_paths)
+    /// `file` already names the file on its own and this field merely says
+    /// which collection it belongs to. Added as a non-breaking optional field
+    /// under ADR-0015.
+    ///
+    /// [`scan_directories`]: crate::scan::scan_directories
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
     /// 1-based line number of the heading inside that file.
     pub line: u32,
     /// Heading text with the keyword, priority and tags stripped off.
@@ -724,6 +740,7 @@ mod tests {
     fn empty_task() -> Task {
         Task {
             file: "t.md".into(),
+            root: None,
             line: 1,
             heading: String::new(),
             content: String::new(),

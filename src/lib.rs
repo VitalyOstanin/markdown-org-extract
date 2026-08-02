@@ -66,7 +66,7 @@ pub use crate::parser::{
     HeadingToken,
 };
 pub use crate::render::{render_days_html, render_days_markdown, render_html, render_markdown};
-pub use crate::scan::{scan_directory, ScanOptions, ScanOutcome};
+pub use crate::scan::{scan_directories, scan_directory, ScanOptions, ScanOutcome};
 pub use crate::timestamp::{
     add_months, closest_date, parse_timestamp_parts, DatePreference, Repeater, RepeaterType,
     RepeaterUnit, TimestampParts,

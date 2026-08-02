@@ -371,6 +371,9 @@ fn finalize_task(path: &Path, info: HeadingInfo, ts_warning_counter: &mut usize)
 
     Some(Task {
         file: path.display().to_string(),
+        // Filled in by the scan when it walked several roots: the parser is
+        // given one file and has no notion of which collection it belongs to.
+        root: None,
         line,
         heading: info.heading,
         content: info.content,

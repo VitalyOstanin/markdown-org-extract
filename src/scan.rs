@@ -87,9 +87,121 @@ pub fn scan_directory(
 ) -> Result<ScanOutcome, AppError> {
     let dir_canonical = validate_dir(dir)?;
     let mappings = get_weekday_mappings(options.locale);
-    let (tasks, stats) = scan_files(options, &dir_canonical, &mappings, interrupt)?;
+    let mut run = Run::new(options);
+    // No root on the tasks: the caller named the one directory and `file` is
+    // relative to it, so repeating it on every task would say nothing new.
+    scan_files(
+        options,
+        &dir_canonical,
+        &mappings,
+        interrupt,
+        None,
+        &mut run,
+    )?;
 
-    Ok(ScanOutcome { tasks, stats })
+    Ok(run.finish())
+}
+
+/// Scan several roots in one run and return the tasks of all of them.
+///
+/// Notes are kept in more than one place — a work repository and a private
+/// one, a shared vault and a personal one — and the agenda over them is the
+/// agenda of all of them together. The merge is here rather than in the caller
+/// because the parts that make it a merge belong to a scan: the task cap is a
+/// budget for the run, the statistics are one report over it, and
+/// [`filter_agenda`](crate::filter_agenda) already takes a flat list of tasks
+/// whatever they were read from.
+///
+/// Every task carries [`Task::root`], the canonical path of the directory its
+/// `file` is relative to: the same relative path in two roots is two different
+/// files. The roots are walked in the order they are given, and one named
+/// twice is walked once — the same directory configured as two sources would
+/// otherwise show every task in it twice.
+///
+/// A root nested inside another one is not detected, and the notes under it
+/// are read by both walks. Nesting roots is a choice the caller makes, and
+/// refusing it would rule out a collection that deliberately holds a smaller
+/// one.
+///
+/// Errors:
+/// - `AppError::InvalidDirectory` — the list is empty, or any root is missing,
+///   is not a directory, or cannot be canonicalized. Refused rather than
+///   skipped: a directory that has been unmounted or renamed would otherwise
+///   read as a collection with nothing in it.
+/// - `AppError::InvalidGlob` / `AppError::Regex` — as for [`scan_directory`].
+pub fn scan_directories(
+    dirs: &[PathBuf],
+    options: &ScanOptions<'_>,
+    interrupt: Option<&AtomicBool>,
+) -> Result<ScanOutcome, AppError> {
+    if dirs.is_empty() {
+        return Err(AppError::InvalidDirectory(
+            "no directory to scan".to_string(),
+        ));
+    }
+
+    // Every root is validated before any of them is walked, so a mistyped path
+    // is reported as such rather than after a walk that already spent seconds
+    // on the roots before it.
+    let mut roots: Vec<PathBuf> = Vec::with_capacity(dirs.len());
+    for dir in dirs {
+        let canonical = validate_dir(dir)?;
+        if !roots.contains(&canonical) {
+            roots.push(canonical);
+        }
+    }
+
+    let mappings = get_weekday_mappings(options.locale);
+    let mut run = Run::new(options);
+
+    for root in &roots {
+        // Both stops belong to the run rather than to one root: a cap that has
+        // been reached is not going to un-reach itself, and a signal that
+        // stopped the first walk must not start the second.
+        if run.stats.interrupted || run.stats.max_tasks_reached {
+            break;
+        }
+
+        let label = root.display().to_string();
+        scan_files(
+            options,
+            root,
+            &mappings,
+            interrupt,
+            Some(label.as_str()),
+            &mut run,
+        )?;
+    }
+
+    Ok(run.finish())
+}
+
+/// What a scan accumulates across the roots it walks.
+///
+/// One vector and one `ProcessingStats` for the whole run, so the task cap is
+/// a budget over all the roots and the summary is a single report.
+struct Run {
+    tasks: Vec<Task>,
+    stats: ProcessingStats,
+}
+
+impl Run {
+    fn new(options: &ScanOptions<'_>) -> Self {
+        Self {
+            tasks: Vec::new(),
+            stats: ProcessingStats {
+                max_tasks_limit: options.max_tasks,
+                ..ProcessingStats::default()
+            },
+        }
+    }
+
+    fn finish(self) -> ScanOutcome {
+        ScanOutcome {
+            tasks: self.tasks,
+            stats: self.stats,
+        }
+    }
 }
 
 /// Validate that a scan root points to an existing directory and canonicalize
@@ -114,21 +226,23 @@ pub fn validate_dir(dir: &Path) -> Result<PathBuf, AppError> {
 }
 
 /// Walk `dir_canonical`, apply the glob filter and a keyword pre-filter, then
-/// parse matching files into `Task`s. Returns the accumulated tasks and a
-/// `ProcessingStats` recording skipped/failed files.
+/// parse matching files into `Task`s, appending them to `run`.
+///
+/// `root` is what every task found here reports as [`Task::root`]; `None`
+/// leaves the field unset, which is the single-directory case. The tasks and
+/// the statistics are accumulated in `run` rather than returned, so a scan of
+/// several roots shares one task budget and one summary.
 fn scan_files(
     options: &ScanOptions<'_>,
     dir_canonical: &Path,
     mappings: &[(&'static str, &'static str)],
     interrupt: Option<&AtomicBool>,
-) -> Result<(Vec<Task>, ProcessingStats), AppError> {
+    root: Option<&str>,
+    run: &mut Run,
+) -> Result<(), AppError> {
     let glob_matcher = compile_glob(options.glob)?;
 
-    let mut tasks = Vec::new();
-    let mut stats = ProcessingStats {
-        max_tasks_limit: options.max_tasks,
-        ..ProcessingStats::default()
-    };
+    let Run { tasks, stats } = run;
     let matcher = RegexMatcher::new(
         r"(?m)(^[#*]+\s+(TODO|DONE)\s|DEADLINE:|SCHEDULED:|CREATED:|CLOSED:|CLOCK:)",
     )
@@ -277,7 +391,10 @@ fn scan_files(
                 &mut stats.prop_warnings_emitted,
             )
         });
-        tasks.extend(extracted);
+        tasks.extend(extracted.into_iter().map(|mut task| {
+            task.root = root.map(str::to_string);
+            task
+        }));
         stats.files_processed += 1;
 
         if tasks.len() >= options.max_tasks {
@@ -287,7 +404,7 @@ fn scan_files(
         }
     }
 
-    Ok((tasks, stats))
+    Ok(())
 }
 
 /// Read up to `cap` bytes from `path` into `buf`, clearing `buf` first.

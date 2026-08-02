@@ -3082,3 +3082,132 @@ fn tasks_include_done_and_cancelled_surfaces_both() {
         "CANCELLED must be present with --tasks-include-cancelled: {stdout}"
     );
 }
+
+// Several `--dir` flags in one run. Notes kept in more than one place are one
+// agenda, and the JSON says which root each task came from — the same relative
+// path can occur in two of them and mean two different files.
+
+/// A directory holding one note, for the multi-root tests below.
+fn vault_with(name: &str, body: &str) -> tempfile::TempDir {
+    let dir = tempdir().expect("tmp");
+    fs::write(dir.path().join(name), body).expect("write note");
+    dir
+}
+
+#[test]
+fn several_dirs_are_scanned_into_one_task_list() {
+    let work = vault_with("notes.md", "# TODO Renew the certificate\n");
+    let home = vault_with("notes.md", "# TODO Book the tickets\n");
+
+    let out = bin()
+        .args([
+            "--dir",
+            work.path().to_str().unwrap(),
+            "--dir",
+            home.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let arr = parsed.as_array().expect("array of tasks");
+    let headings: Vec<&str> = arr
+        .iter()
+        .filter_map(|t| t.get("heading").and_then(|h| h.as_str()))
+        .collect();
+    assert_eq!(
+        headings,
+        vec!["Renew the certificate", "Book the tickets"],
+        "both roots must be in, in the order they were given: {stdout}"
+    );
+}
+
+#[test]
+fn several_dirs_name_the_root_of_every_task() {
+    let work = vault_with("notes.md", "# TODO Renew the certificate\n");
+    let home = vault_with("notes.md", "# TODO Book the tickets\n");
+
+    let out = bin()
+        .args([
+            "--dir",
+            work.path().to_str().unwrap(),
+            "--dir",
+            home.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let arr = parsed.as_array().expect("array of tasks");
+    let roots: Vec<&str> = arr
+        .iter()
+        .filter_map(|t| t.get("root").and_then(|r| r.as_str()))
+        .collect();
+    assert_eq!(roots.len(), 2, "every task carries its root: {stdout}");
+    assert_ne!(roots[0], roots[1], "the roots differ: {stdout}");
+    assert!(
+        arr.iter().all(|t| t["file"].as_str() == Some("notes.md")),
+        "the path stays relative to its own root: {stdout}"
+    );
+}
+
+#[test]
+fn one_dir_emits_no_root_field() {
+    // The single-directory output is what every existing consumer reads, and
+    // it must not grow a field: the caller named the root itself.
+    let vault = vault_with("notes.md", "# TODO Renew the certificate\n");
+
+    let out = bin()
+        .args([
+            "--dir",
+            vault.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let arr = parsed.as_array().expect("array of tasks");
+    assert!(
+        arr.iter().all(|t| t.get("root").is_none()),
+        "a single root is not named on the tasks: {stdout}"
+    );
+}
+
+#[test]
+fn a_missing_dir_among_several_fails_the_run() {
+    let vault = vault_with("notes.md", "# TODO Renew the certificate\n");
+
+    bin()
+        .args([
+            "--dir",
+            vault.path().to_str().unwrap(),
+            "--dir",
+            "/this/path/should/never/exist_xyz",
+            "--tasks",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("directory does not exist"));
+}

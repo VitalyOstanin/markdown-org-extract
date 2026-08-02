@@ -398,6 +398,7 @@ mod tests {
     fn test_render_markdown_basic() {
         let tasks = vec![Task {
             file: "test.md".to_string(),
+            root: None,
             line: 1,
             heading: "Test Task".to_string(),
             content: "Description".to_string(),
@@ -441,6 +442,7 @@ mod tests {
     fn test_render_markdown_escapes_heading() {
         let tasks = vec![Task {
             file: "test.md".to_string(),
+            root: None,
             line: 1,
             heading: "Fix *important* [#issue]".to_string(),
             content: String::new(),
@@ -469,6 +471,7 @@ mod tests {
     fn fixture_task() -> Task {
         Task {
             file: "notes.md".to_string(),
+            root: None,
             line: 42,
             heading: "Test task".to_string(),
             content: "Body text.".to_string(),
@@ -560,6 +563,7 @@ Body text.\n\n";
     fn test_render_html_escapes() {
         let tasks = vec![Task {
             file: "<script>.md".to_string(),
+            root: None,
             line: 1,
             heading: "Test & Task".to_string(),
             content: String::new(),

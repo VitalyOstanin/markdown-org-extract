@@ -20,7 +20,7 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::tempdir;
@@ -33,65 +33,92 @@ fn script(name: &str) -> PathBuf {
     project_root().join("scripts").join(name)
 }
 
-/// Write a fake `cargo` to `bin_dir` that:
-///   * appends its CLI args (one invocation per line, space-separated) to `log`;
-///   * exits with code 1 if its first arg equals `fail_on`, otherwise 0.
-fn write_fake_cargo(bin_dir: &Path, log: &Path, fail_on: Option<&str>) {
-    let fail_marker = fail_on.unwrap_or("__none__");
-    let script = format!(
-        r#"#!/usr/bin/env bash
-echo "$@" >> "{log}"
-if [ "${{1:-}}" = "{fail}" ]; then
-    exit 1
-fi
-exit 0
-"#,
-        log = log.display(),
-        fail = fail_marker,
-    );
-    let bin = bin_dir.join("cargo");
-    fs::write(&bin, script).unwrap();
-    let mut perms = fs::metadata(&bin).unwrap().permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&bin, perms).unwrap();
+/// Put a fake `cargo` and a fake `yamllint` in `bin_dir`, both of them
+/// symlinks to `tests/fixtures/fake-tool.sh`. The fake decides which tool it
+/// plays from the name it was invoked by, and logs and exits according to the
+/// environment `run_check_once` passes it.
+///
+/// The fakes are linked rather than written because a file that is being
+/// written cannot be executed while another thread's fork still holds the
+/// descriptor: the run then dies with exit code 126 and an empty log, which
+/// reads as if check.sh had skipped its steps. That is what made
+/// `check_fails_fast_when_fmt_fails` fail the release run of 0.13.0, and
+/// writing the fakes per test reproduced it locally within a few runs.
+fn link_fake_tools(bin_dir: &Path) {
+    let fake = project_root()
+        .join("tests")
+        .join("fixtures")
+        .join("fake-tool.sh");
+
+    for name in ["cargo", "yamllint"] {
+        symlink(&fake, bin_dir.join(name)).unwrap();
+    }
 }
 
-/// Write a fake `yamllint` to `bin_dir`. It tags every invocation in `log`
-/// with a `yamllint ` prefix so the unified log can still be parsed by the
-/// existing cargo-only assertions (which expect bare `<subcommand>` lines).
-fn write_fake_yamllint(bin_dir: &Path, log: &Path, should_fail: bool) {
-    let exit_code = if should_fail { 1 } else { 0 };
-    let script = format!(
-        r#"#!/usr/bin/env bash
-echo "yamllint $@" >> "{log}"
-exit {exit_code}
-"#,
-        log = log.display(),
-        exit_code = exit_code,
+/// Run the fake `cargo` once and check that it both executed and logged. A
+/// tempdir mounted `noexec`, or a fixture that lost its executable bit,
+/// otherwise shows up much later as a run that made no invocations at all --
+/// which reads as if the script had skipped its steps.
+fn probe_fake_cargo(bin_dir: &Path, log: &Path) {
+    let probe = Command::new(bin_dir.join("cargo"))
+        .arg("--probe")
+        .env("FAKE_LOG", log)
+        .output()
+        .expect("execute the fake cargo");
+    assert!(
+        probe.status.success(),
+        "the fake cargo in {} did not run: exit {:?}, stderr: {}",
+        bin_dir.display(),
+        probe.status.code(),
+        String::from_utf8_lossy(&probe.stderr)
     );
-    let bin = bin_dir.join("yamllint");
-    fs::write(&bin, script).unwrap();
-    let mut perms = fs::metadata(&bin).unwrap().permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&bin, perms).unwrap();
+    let logged = fs::read_to_string(log).unwrap_or_default();
+    assert_eq!(
+        logged.lines().filter(|l| !l.trim().is_empty()).count(),
+        1,
+        "the fake cargo ran but logged nothing to {}",
+        log.display()
+    );
+    fs::write(log, "").expect("clear the probe entry from the log");
 }
 
-/// Run `scripts/check.sh` with PATH pinned to `bin_dir` (where the fake
-/// `cargo` and `yamllint` live) followed by the real PATH. `fail_on`
-/// triggers exit-1 in the matching step: cargo subcommands (`fmt`, `clippy`,
-/// `doc`, `test`) and the literal `yamllint`. Returns (exit code, stdout,
-/// stderr, invocation log lines).
-fn run_check(fail_on: Option<&str>) -> (i32, String, String, Vec<String>) {
+/// What one run of `scripts/check.sh` produced.
+struct Check {
+    code: i32,
+    stdout: String,
+    stderr: String,
+    /// One line per fake-tool invocation, in the order the script made them.
+    invocations: Vec<String>,
+}
+
+impl Check {
+    /// Everything the run produced, for a failing assertion to quote. A run
+    /// that never reached the fake tools otherwise reads as an empty list of
+    /// invocations and says nothing about why it stopped.
+    fn report(&self) -> String {
+        format!(
+            "exit code {}; invocations {:?}; stdout:\n{}\nstderr:\n{}",
+            self.code, self.invocations, self.stdout, self.stderr
+        )
+    }
+}
+
+/// Run `scripts/check.sh` with PATH pinned to a tempdir holding the fake
+/// `cargo` and `yamllint`, followed by the real PATH. `fail_on` triggers
+/// exit-1 in the matching step: cargo subcommands (`fmt`, `clippy`, `doc`,
+/// `test`) and the literal `yamllint`.
+fn run_check(fail_on: Option<&str>) -> Check {
     let dir = tempdir().unwrap();
     let bin_dir = dir.path().join("bin");
     fs::create_dir(&bin_dir).unwrap();
     let log = dir.path().join("invocations.log");
     let cargo_fail = match fail_on {
-        Some(s) if matches!(s, "fmt" | "clippy" | "doc" | "test") => Some(s),
-        _ => None,
+        Some(s) if matches!(s, "fmt" | "clippy" | "doc" | "test") => s,
+        _ => "__none__",
     };
-    write_fake_cargo(&bin_dir, &log, cargo_fail);
-    write_fake_yamllint(&bin_dir, &log, matches!(fail_on, Some("yamllint")));
+    let yamllint_exit = i32::from(matches!(fail_on, Some("yamllint")));
+    link_fake_tools(&bin_dir);
+    probe_fake_cargo(&bin_dir, &log);
 
     let path = std::env::var("PATH").unwrap_or_default();
     let new_path = format!("{}:{}", bin_dir.display(), path);
@@ -99,30 +126,36 @@ fn run_check(fail_on: Option<&str>) -> (i32, String, String, Vec<String>) {
     let output = Command::new("bash")
         .arg(script("check.sh"))
         .env("PATH", new_path)
+        .env("FAKE_LOG", &log)
+        .env("FAKE_CARGO_FAIL", cargo_fail)
+        .env("FAKE_YAMLLINT_EXIT", yamllint_exit.to_string())
         .output()
         .expect("invoke check.sh");
 
-    let code = output.status.code().unwrap_or(-1);
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     let log_contents = fs::read_to_string(&log).unwrap_or_default();
-    let invocations: Vec<String> = log_contents
-        .lines()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
 
-    (code, stdout, stderr, invocations)
+    Check {
+        code: output.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        invocations: log_contents
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+    }
 }
 
 #[test]
 fn check_runs_fmt_yamllint_clippy_doc_test_in_order_on_success() {
-    let (code, _stdout, stderr, invocations) = run_check(None);
-    assert_eq!(code, 0, "expected success; stderr: {stderr}");
+    let run = run_check(None);
+    let invocations = &run.invocations;
+    assert_eq!(run.code, 0, "expected success; {}", run.report());
     assert_eq!(
         invocations.len(),
         5,
-        "expected exactly 5 invocations (fmt, yamllint, clippy, doc, test), got {invocations:?}"
+        "expected exactly 5 invocations (fmt, yamllint, clippy, doc, test); {}",
+        run.report()
     );
     // fmt --check, yamllint .github/workflows/, clippy -D warnings,
     // doc -D warnings, then test.
@@ -175,12 +208,14 @@ fn check_runs_fmt_yamllint_clippy_doc_test_in_order_on_success() {
 
 #[test]
 fn check_fails_fast_when_fmt_fails() {
-    let (code, _stdout, stderr, invocations) = run_check(Some("fmt"));
-    assert_ne!(code, 0, "expected failure when fmt fails");
+    let run = run_check(Some("fmt"));
+    let invocations = &run.invocations;
+    assert_ne!(run.code, 0, "expected failure when fmt fails");
     assert_eq!(
         invocations.len(),
         1,
-        "fail-fast: yamllint/clippy/doc/test must not run after fmt failure; got {invocations:?}"
+        "fail-fast: yamllint/clippy/doc/test must not run after fmt failure; {}",
+        run.report()
     );
     assert!(
         invocations[0].starts_with("fmt"),
@@ -188,19 +223,22 @@ fn check_fails_fast_when_fmt_fails() {
         invocations[0]
     );
     assert!(
-        stderr.contains("fmt") || stderr.contains("format"),
-        "stderr should mention which step failed: {stderr}"
+        run.stderr.contains("fmt") || run.stderr.contains("format"),
+        "stderr should mention which step failed: {}",
+        run.stderr
     );
 }
 
 #[test]
 fn check_fails_fast_when_yamllint_fails() {
-    let (code, _stdout, stderr, invocations) = run_check(Some("yamllint"));
-    assert_ne!(code, 0, "expected failure when yamllint fails");
+    let run = run_check(Some("yamllint"));
+    let invocations = &run.invocations;
+    assert_ne!(run.code, 0, "expected failure when yamllint fails");
     assert_eq!(
         invocations.len(),
         2,
-        "fail-fast: clippy/doc/test must not run after yamllint failure; got {invocations:?}"
+        "fail-fast: clippy/doc/test must not run after yamllint failure; {}",
+        run.report()
     );
     assert!(invocations[0].starts_with("fmt"));
     assert!(
@@ -209,43 +247,50 @@ fn check_fails_fast_when_yamllint_fails() {
         invocations[1]
     );
     assert!(
-        stderr.contains("yamllint"),
-        "stderr should mention which step failed: {stderr}"
+        run.stderr.contains("yamllint"),
+        "stderr should mention which step failed: {}",
+        run.stderr
     );
 }
 
 #[test]
 fn check_fails_fast_when_clippy_fails() {
-    let (code, _stdout, _stderr, invocations) = run_check(Some("clippy"));
-    assert_ne!(code, 0, "expected failure when clippy fails");
+    let run = run_check(Some("clippy"));
+    let invocations = &run.invocations;
+    assert_ne!(run.code, 0, "expected failure when clippy fails");
     assert_eq!(
         invocations.len(),
         3,
-        "fail-fast: doc/test must not run after clippy failure; got {invocations:?}"
+        "fail-fast: doc/test must not run after clippy failure; {}",
+        run.report()
     );
     assert!(invocations[2].starts_with("clippy"));
 }
 
 #[test]
 fn check_fails_fast_when_doc_fails() {
-    let (code, _stdout, _stderr, invocations) = run_check(Some("doc"));
-    assert_ne!(code, 0, "expected failure when doc fails");
+    let run = run_check(Some("doc"));
+    let invocations = &run.invocations;
+    assert_ne!(run.code, 0, "expected failure when doc fails");
     assert_eq!(
         invocations.len(),
         4,
-        "fail-fast: test must not run after doc failure; got {invocations:?}"
+        "fail-fast: test must not run after doc failure; {}",
+        run.report()
     );
     assert!(invocations[3].starts_with("doc"));
 }
 
 #[test]
 fn check_fails_when_test_fails() {
-    let (code, _stdout, _stderr, invocations) = run_check(Some("test"));
-    assert_ne!(code, 0, "expected failure when test fails");
+    let run = run_check(Some("test"));
+    let invocations = &run.invocations;
+    assert_ne!(run.code, 0, "expected failure when test fails");
     assert_eq!(
         invocations.len(),
         5,
-        "all five steps should run: {invocations:?}"
+        "all five steps should run; {}",
+        run.report()
     );
     assert!(invocations[4].starts_with("test"));
 }

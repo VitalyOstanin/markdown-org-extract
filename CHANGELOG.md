@@ -32,6 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `tests/dev_scripts.rs` no longer writes a fake `cargo` and `yamllint` for
+  every test. A file being written cannot be executed while another thread's
+  fork still holds the descriptor, so a run occasionally died with exit code
+  126 before reaching the fakes — that is how `check_fails_fast_when_fmt_fails`
+  failed in the 0.13.0 release run, which skipped publication. The fakes are
+  now symlinks to `tests/fixtures/fake-tool.sh`, which nothing writes to, and
+  a run that never reaches them now reports its exit code and both streams
+  instead of a bare empty list of invocations.
+
 ## [0.13.0] — 2026-08-02
 
 ### Added

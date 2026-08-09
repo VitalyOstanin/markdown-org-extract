@@ -32,6 +32,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `--tasks` orders the list within one priority by date and then by time,
+  with the file and the line as the tiebreaker. What has no time to sort by
+  goes last at both levels: a task with no date after every dated one, and a
+  whole-day task after the timed ones of its day — the reading org-agenda
+  gives a timeless entry (`org-agenda-sort-notime-is-late`, on by default,
+  treats it as 99:01). Sorting by priority alone left the rest to the walk
+  over the tree, which is unspecified: two runs over the same notes could
+  hand the same tasks over in another order, and a reader saw 09:30 above
+  08:00 with nothing to explain it. Which tasks are listed has not changed.
+
 ### Fixed
 
 - `tests/dev_scripts.rs` no longer writes a fake `cargo` and `yamllint` for

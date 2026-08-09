@@ -325,11 +325,39 @@ pub fn filter_agenda(
                             && matches!(t.task_type, Some(TaskType::Cancelled(_))))
                 })
                 .collect();
-            filtered.sort_by_key(|t| {
-                t.priority
+            // Priority first, then the date and the time — the only axis a
+            // date-less list can be read along — with the file and the line
+            // left as the tiebreaker. Sorting by priority alone left the rest
+            // to the walk over the tree, which is unspecified: two runs over
+            // the same notes could hand a consumer the same tasks in another
+            // order, and a reader saw 09:30 above 08:00 with nothing to
+            // explain it.
+            //
+            // What has no time to sort by goes last, at both levels: a task
+            // with no date after every dated one, and within a day the
+            // whole-day task after the timed ones. That is org-agenda's own
+            // answer — `org-agenda-sort-notime-is-late` defaults to t, which
+            // reads an entry without a clock time as 99:01, later than any
+            // entry that has one — and it matches the day agenda here, where
+            // `scheduled_no_time` renders below the hours.
+            filtered.sort_by(|a, b| {
+                let pa = a
+                    .priority
                     .as_ref()
                     .map(|p| p.order())
-                    .unwrap_or(NO_PRIORITY_ORDER)
+                    .unwrap_or(NO_PRIORITY_ORDER);
+                let pb = b
+                    .priority
+                    .as_ref()
+                    .map(|p| p.order())
+                    .unwrap_or(NO_PRIORITY_ORDER);
+                pa.cmp(&pb)
+                    .then_with(|| a.timestamp_date.is_none().cmp(&b.timestamp_date.is_none()))
+                    .then_with(|| a.timestamp_date.cmp(&b.timestamp_date))
+                    .then_with(|| a.timestamp_time.is_none().cmp(&b.timestamp_time.is_none()))
+                    .then_with(|| a.timestamp_time.cmp(&b.timestamp_time))
+                    .then_with(|| a.file.cmp(&b.file))
+                    .then_with(|| a.line.cmp(&b.line))
             });
             Ok(AgendaOutput::Tasks(filtered))
         }
@@ -2119,6 +2147,98 @@ mod tests {
             vec!["numeric-0", "A-priority", "Z-priority", "no-priority"],
             "no-priority must sort strictly after every defined priority"
         );
+    }
+
+    #[test]
+    fn tasks_scope_orders_one_priority_by_date_then_time() {
+        // The flat list has no date axis, so within a priority the order used
+        // to be whatever the walk over the files produced -- unspecified, and
+        // read by a consumer as "these are unordered". A date and a time are
+        // the only things a reader can order this list by, so they come first,
+        // with the file and the line left as the tiebreaker that keeps two
+        // runs over the same tree identical. A whole-day task sorts after the
+        // timed ones of its day, as org-agenda reads a timeless entry (99:01,
+        // `org-agenda-sort-notime-is-late`).
+        let mut later_day = create_test_task("2024-12-06 Fri", Some("08:00"), TaskType::Todo);
+        later_day.heading = "second day, early".to_string();
+
+        let mut same_day_late = create_test_task("2024-12-05 Thu", Some("14:00"), TaskType::Todo);
+        same_day_late.heading = "first day, afternoon".to_string();
+
+        let mut same_day_early = create_test_task("2024-12-05 Thu", Some("09:30"), TaskType::Todo);
+        same_day_early.heading = "first day, morning".to_string();
+
+        let mut same_day_no_time = create_test_task("2024-12-05 Thu", None, TaskType::Todo);
+        same_day_no_time.heading = "first day, all day".to_string();
+
+        // Mixed input order so the assertion proves the sort is doing the work.
+        let input = vec![
+            same_day_late.clone(),
+            later_day.clone(),
+            same_day_no_time.clone(),
+            same_day_early.clone(),
+        ];
+
+        let result = filter_agenda(
+            input,
+            AgendaScope::Tasks,
+            AgendaDates::default(),
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect("filter_agenda");
+
+        let tasks = match result {
+            AgendaOutput::Tasks(tasks) => tasks,
+            other => panic!("expected AgendaOutput::Tasks, got {other:?}"),
+        };
+        let headings: Vec<&str> = tasks.iter().map(|t| t.heading.as_str()).collect();
+        assert_eq!(
+            headings,
+            vec![
+                "first day, morning",
+                "first day, afternoon",
+                "first day, all day",
+                "second day, early",
+            ],
+            "one day comes before the next, and inside a day the hours come before the whole day"
+        );
+    }
+
+    #[test]
+    fn tasks_scope_puts_a_dateless_task_after_every_dated_one() {
+        // A task with no timestamp at all cannot take a place on the date
+        // order, and putting it first would push the work a reader can act on
+        // down the list. It goes last, where the priority group ends.
+        let mut dated = create_test_task("2024-12-05 Thu", None, TaskType::Todo);
+        dated.heading = "dated".to_string();
+
+        let mut dateless = create_test_task("2024-12-05 Thu", None, TaskType::Todo);
+        dateless.heading = "dateless".to_string();
+        dateless.timestamp = None;
+        dateless.timestamp_type = None;
+        dateless.timestamp_active = None;
+        dateless.timestamp_date = None;
+
+        let result = filter_agenda(
+            vec![dateless.clone(), dated.clone()],
+            AgendaScope::Tasks,
+            AgendaDates::default(),
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect("filter_agenda");
+
+        let tasks = match result {
+            AgendaOutput::Tasks(tasks) => tasks,
+            other => panic!("expected AgendaOutput::Tasks, got {other:?}"),
+        };
+        let headings: Vec<&str> = tasks.iter().map(|t| t.heading.as_str()).collect();
+        assert_eq!(headings, vec!["dated", "dateless"]);
     }
 
     #[test]

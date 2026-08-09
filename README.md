@@ -358,7 +358,7 @@ markdown-org-extract [OPTIONS]
 - `--output <OUTPUT>` — file to write the result to; `-` means stdout (default: stdout)
 - `--locale <LOCALE>` — weekday locales, comma-separated (default: `ru,en`)
 - `--agenda <MODE>` — agenda mode: `day`, `week`, `month`, `tasks` (default: `day`)
-- `--tasks` — show all TODO tasks sorted by priority (alias for `--agenda tasks`)
+- `--tasks` — show all TODO tasks sorted by priority, then by date and time (alias for `--agenda tasks`)
 - `--tasks-include-done` — also include DONE tasks in the flat `--tasks` / `--agenda tasks` list (default: TODO only). No effect in `day`/`week`/`month` mode
 - `--tasks-include-cancelled` — also include cancelled tasks (either spelling, `CANCELLED` or `CANCELED`) in the flat `--tasks` / `--agenda tasks` list (default: TODO only). Independent of `--tasks-include-done`. No effect in `day`/`week`/`month` mode
 - `--date <DATE>` — window anchor for `day`/`week`/`month` mode in `YYYY-MM-DD`. In `day` mode the window is exactly this date; in `week`/`month` it is the week / month containing this date. Overridden by `--from`/`--to`. Not allowed in `tasks` mode. Default: `--current-date` (or today)
@@ -513,7 +513,7 @@ markdown-org-extract --dir ./notes --agenda week --from 2025-12-01 --to 2025-12-
 markdown-org-extract --dir ./notes --agenda month --from 2025-12-01 --to 2025-12-31
 ```
 
-All TODO tasks sorted by priority:
+All TODO tasks sorted by priority, then by date and time:
 ```bash
 markdown-org-extract --dir ./notes --tasks
 ```
@@ -660,7 +660,11 @@ markdown-org-extract --agenda month --from 2025-12-01 --to 2025-12-31
 ### tasks — all TODO tasks
 
 Lists every task whose state is TODO, sorted by priority
-(A → B → C → no priority). Timestamps are ignored. Add
+(A → B → C → no priority) and, within one priority, by date and then by
+time. What has no time to sort by goes last: a task carrying no date
+after every dated one, and a whole-day task after the timed ones of its
+day, with the file and the line as the tiebreaker. A timestamp never
+decides whether a task is listed, only where it sits. Add
 `--tasks-include-done` to additionally surface DONE tasks (off by
 default), e.g. for a consumer that needs completed tasks to remove a
 linked calendar event. Add `--tasks-include-cancelled` to additionally
@@ -669,7 +673,7 @@ surface cancelled tasks — either spelling, `CANCELLED` or `CANCELED` —
 consumer that needs cancelled tasks to remove a linked calendar event.
 
 ```bash
-# All TODO tasks by priority
+# All TODO tasks by priority, then by date and time
 markdown-org-extract --tasks
 
 # TODO tasks plus completed (DONE) ones

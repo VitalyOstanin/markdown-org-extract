@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [\[Unreleased\]](#unreleased)
+- [\[0.15.0\] — 2026-08-11](#0150--2026-08-11)
 - [\[0.14.0\] — 2026-08-09](#0140--2026-08-09)
 - [\[0.13.0\] — 2026-08-02](#0130--2026-08-02)
 - [\[0.12.0\] — 2026-07-31](#0120--2026-07-31)
@@ -32,6 +33,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [\[0.1.5\] — 2025-12-06..2025-12-09](#015--2025-12-062025-12-09)
 
 ## [Unreleased]
+
+## [0.15.0] — 2026-08-11
+
+### Changed
+
+- A priority cookie away from its canonical place no longer takes the heading
+  with it. The cookie is still read wherever it is written — `### TODO Buy
+  [#A] filter` is an `A`, as `org-priority-regexp` has it — but it is removed
+  from the task text only when it opens the heading, directly after the keyword
+  or at the start. Previously everything up to the cookie was dropped, so
+  `### TODO Title with a trailing cookie [#A]` reached the agenda with an empty
+  heading and drew a row with no text. `parse_heading_line` follows the same
+  split: `title_start` now stops before a mid-line cookie, and `priority.range`
+  addresses the cookie where the user wrote it, so an editor replaces the value
+  in place instead of moving the cookie to the front. What Emacs shows is
+  unchanged by either rule: `org-agenda` prints the line as written and sorts a
+  trailing `[#A]` above a leading `[#C]`. See
+  [ADR-0027](docs/adr/0027-priority-cookie-read-anywhere-removed-in-place.md).
 
 ## [0.14.0] — 2026-08-09
 

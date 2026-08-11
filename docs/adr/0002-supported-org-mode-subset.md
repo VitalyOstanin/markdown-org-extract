@@ -22,7 +22,10 @@ supported TODO keyword alongside `TODO` and `DONE`; introduced in
 0.8.0. Amended by [ADR-0021](0021-accept-canceled-spelling.md)
 (2026-05-29): CANCELED (single-L) accepted as a second spelling of the
 cancelled keyword; task_type preserves the original spelling. Introduced
-in 0.9.0.
+in 0.9.0. Amended by
+[ADR-0027](0027-priority-cookie-read-anywhere-removed-in-place.md)
+(2026-08-11): the priority bullet below describes only where a cookie is
+removed from the title; it is read wherever it is written.
 
 ## Context
 

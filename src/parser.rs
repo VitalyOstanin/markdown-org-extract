@@ -85,10 +85,13 @@ static HEADING_TODO_RE: LazyLock<Regex> =
 /// in the heading text.
 ///
 /// Mirrors emacs org-mode's `org-priority-regexp` semantics: the priority
-/// cookie may appear at any position in the (remaining) heading title, and the
-/// title content before it is dropped. The value is either an uppercase ASCII
-/// letter or a one- or two-digit integer; the integer range is validated by
-/// `Priority::parse` (only `0..=64` is accepted).
+/// cookie may appear at any position in the (remaining) heading title. The
+/// value is either an uppercase ASCII letter or a one- or two-digit integer;
+/// the integer range is validated by `Priority::parse` (only `0..=64` is
+/// accepted).
+///
+/// Where the cookie sits decides only whether it is taken out of the title —
+/// see `parse_heading`. It never decides whether the priority is read.
 ///
 /// Two-digit alternatives are listed before single-digit `[0-9]` so the
 /// matcher prefers the longest valid run (e.g. matches `15`, not just `1`).
@@ -404,10 +407,21 @@ fn finalize_task(path: &Path, info: HeadingInfo, ts_warning_counter: &mut usize)
 /// 1. Strip an optional `TODO` / `DONE` keyword anchored at the start.
 /// 2. Search the remaining text for the first `[#X]` cookie at any position,
 ///    where `X` is `A-Z` or an integer `0..=64`. If found, that becomes the
-///    priority; the title is everything after `[#X]` + optional space.
-///    Text before the cookie (between TODO and `[#X]`) is **discarded** —
-///    this matches emacs's `goto-char (match-end 0)` behaviour.
-/// 3. Whatever remains is trimmed and returned as the heading.
+///    priority, wherever it sits — emacs reads it the same way, through the
+///    `.*?` prefix of `org-priority-regexp`.
+/// 3. The cookie is taken **out of** the title only when it is in its canonical
+///    place: at the start of what is left, i.e. directly after the keyword, or
+///    opening the heading when there is no keyword. A cookie written anywhere
+///    else stays in the title, together with the text before it.
+/// 4. Whatever remains is trimmed and returned as the heading.
+///
+/// Step 3 is where this parser parts company with `org-element`, whose
+/// `:raw-value` drops everything up to the cookie (`goto-char (match-end 0)`).
+/// That value is not what a reader sees: `org-agenda` builds its line from
+/// `org-get-heading`, which keeps the title whole — `* TODO Buy [#A] filter`
+/// is shown as written and still sorts as an `A`. Dropping the prefix here
+/// left a trailing cookie with an empty heading and a blank agenda row. See
+/// [ADR-0002](../docs/adr/0002-supported-org-mode-subset.md).
 ///
 /// A heading without TODO/DONE and without a priority cookie is returned
 /// verbatim (trimmed).
@@ -422,20 +436,26 @@ fn parse_heading(text: &str) -> (Option<TaskType>, Option<Priority>, String) {
     } else {
         (None, text)
     };
+    let title = rest.trim();
 
     // Step 2: optional priority cookie anywhere in the remainder.
-    if let Some(caps) = HEADING_PRIORITY_RE.captures(rest) {
+    if let Some(caps) = HEADING_PRIORITY_RE.captures(title) {
         let value = caps.get(1).map(|m| m.as_str()).unwrap_or("");
         if let Some(priority) = Priority::parse(value) {
             let whole = caps
                 .get(0)
                 .expect("Captures::get(0) is Some when captures() succeeds");
-            let after = &rest[whole.end()..];
-            return (task_type, Some(priority), after.trim().to_string());
+            // Step 3: only a cookie opening the title is consumed by it.
+            let heading = if whole.start() == 0 {
+                title[whole.end()..].trim()
+            } else {
+                title
+            };
+            return (task_type, Some(priority), heading.to_string());
         }
     }
 
-    (task_type, None, rest.trim().to_string())
+    (task_type, None, title.to_string())
 }
 
 /// Leading `#` run of an ATX heading and the gap after it.
@@ -468,11 +488,15 @@ pub struct HeadingToken<T> {
 /// assembling a line back from parts — is deliberately not part of this crate.
 ///
 /// Unlike [`Task`], which carries the heading the agenda displays, nothing is
-/// dropped here. A heading may hold text between the keyword and the cookie
-/// (`# TODO leftover [#B] Title`); the agenda discards it, following emacs
-/// `org-element--headline-parse-title`, but an editor that did the same would
-/// delete what the user typed.
+/// summarised here. A heading may hold text between the keyword and the cookie
+/// (`# TODO leftover [#B] Title`): the agenda keeps that text and shows the
+/// cookie inside it, and [`title_start`] points at the text rather than past
+/// the cookie, so an editor rewriting the title neither swallows the cookie
+/// nor moves it. Replacing the cookie itself is what [`priority`] is for — its
+/// range addresses the cookie where the user wrote it.
 ///
+/// [`title_start`]: HeadingLine::title_start
+/// [`priority`]: HeadingLine::priority
 /// [`Task`]: crate::types::Task
 #[derive(Debug, Clone, PartialEq)]
 pub struct HeadingLine {
@@ -484,7 +508,8 @@ pub struct HeadingLine {
     pub priority: Option<HeadingToken<Priority>>,
     /// Byte offset the title starts at, past the tokens above and the
     /// whitespace after them. Also where a caller inserts a token the heading
-    /// does not carry yet.
+    /// does not carry yet. A cookie away from its canonical place counts as
+    /// part of the title, so the offset stops before it.
     pub title_start: usize,
 }
 
@@ -493,8 +518,7 @@ pub struct HeadingLine {
 ///
 /// Applies the same keyword and priority grammars as the extraction path, so a
 /// heading the extractor reads one way cannot be rewritten another way. See
-/// [`HeadingLine`] for what the result addresses and why it keeps text the
-/// agenda drops.
+/// [`HeadingLine`] for what the result addresses.
 ///
 /// ```
 /// # use markdown_org_extract::parse_heading_line;
@@ -548,8 +572,13 @@ pub fn parse_heading_line(line: &str) -> Option<HeadingLine> {
             })
         });
 
+    // A cookie opening the remainder is a token of its own and the title
+    // starts past it; one written further along belongs to the title, which
+    // therefore starts where the keyword left off. Same rule as `parse_heading`
+    // applies to the heading it hands the agenda.
     let after_tokens = priority
         .as_ref()
+        .filter(|cookie| line[after_status..cookie.range.start].trim().is_empty())
         .map_or(after_status, |cookie| cookie.range.end);
     let title_start = after_tokens
         + line[after_tokens..]
@@ -896,15 +925,24 @@ mod tests {
     #[test]
     fn parse_heading_priority_in_the_middle_org_semantics() {
         // Case 8: `### Без приоритета и [#A] внутри`.
-        // The bug report's table proposed keeping `[#A]` as part of the
-        // heading, but emacs org-mode parses any `[#X]` cookie inside the
-        // title as the priority via the `.*?` prefix in `org-priority-regexp`
-        // and drops the text that precedes it. By project decision we follow
-        // the reference parser here.
+        // The cookie counts wherever it sits — `org-get-priority` finds it
+        // through the `.*?` prefix of `org-priority-regexp` — but the title is
+        // left as written: that is the line emacs puts in the agenda.
         let (tt, p, h) = parse_heading("Без приоритета и [#A] внутри");
         assert_eq!(tt, None);
         assert_eq!(p, Some(Priority::A));
-        assert_eq!(h, "внутри");
+        assert_eq!(h, "Без приоритета и [#A] внутри");
+    }
+
+    #[test]
+    fn parse_heading_trailing_cookie_leaves_a_title_behind() {
+        // The case the two clients answered differently: a cookie written last
+        // used to take the whole title with it and leave the agenda showing an
+        // empty row.
+        let (tt, p, h) = parse_heading("TODO Заголовок с cookie в конце [#A]");
+        assert_eq!(tt, Some(TaskType::Todo));
+        assert_eq!(p, Some(Priority::A));
+        assert_eq!(h, "Заголовок с cookie в конце [#A]");
     }
 
     #[test]
@@ -940,12 +978,13 @@ mod tests {
 
     #[test]
     fn parse_heading_todo_then_priority_with_intervening_text() {
-        // Direct consequence of the emacs `.*?` semantics: the text between
-        // TODO and `[#X]` is discarded.
+        // The cookie is out of its canonical place, so it stays in the title
+        // and only the priority is taken from it. Emacs shows the same line in
+        // the agenda, cookie included.
         let (tt, p, h) = parse_heading("TODO Купить [#A] фильтр");
         assert_eq!(tt, Some(TaskType::Todo));
         assert_eq!(p, Some(Priority::A));
-        assert_eq!(h, "фильтр");
+        assert_eq!(h, "Купить [#A] фильтр");
     }
 
     #[test]
@@ -1170,8 +1209,9 @@ Second paragraph.\n\
     }
 
     #[test]
-    fn extract_tasks_priority_in_middle_drops_prefix() {
-        // Org-mode `.*?` semantics: text before `[#A]` is dropped.
+    fn extract_tasks_priority_in_middle_keeps_the_prefix() {
+        // The cookie is read wherever it sits, and the heading reaches the
+        // agenda as the file has it — nothing before the cookie is dropped.
         let content = "\
 ### Без приоритета и [#A] внутри\n\
 `SCHEDULED: <2026-05-09 Sat>`\n";
@@ -1180,7 +1220,7 @@ Second paragraph.\n\
         let t = &tasks[0];
         assert_eq!(t.task_type, None);
         assert_eq!(t.priority, Some(Priority::A));
-        assert_eq!(t.heading, "внутри");
+        assert_eq!(t.heading, "Без приоритета и [#A] внутри");
     }
 
     #[test]

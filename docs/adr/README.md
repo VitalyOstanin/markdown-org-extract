@@ -36,7 +36,7 @@ was decided, and the trade-offs that came with it.
 | #    | Title                                                                                  | Status   |
 | ---- | -------------------------------------------------------------------------------------- | -------- |
 | 0001 | [Standalone CLI for org-mode in markdown](0001-standalone-cli-for-org-in-markdown.md)  | Accepted |
-| 0002 | [Supported subset of org-mode keywords](0002-supported-org-mode-subset.md)             | Accepted, amended by 0014, 0020, 0021 |
+| 0002 | [Supported subset of org-mode keywords](0002-supported-org-mode-subset.md)             | Accepted, amended by 0014, 0020, 0021, 0027 |
 | 0003 | [CLOCK metadata support](0003-clock-metadata-support.md)                               | Accepted |
 | 0004 | [TDD is mandatory for code changes](0004-tdd-mandatory.md)                             | Accepted |
 | 0005 | [No community meta-docs until a community exists](0005-no-community-meta-docs.md)      | Accepted |
@@ -61,6 +61,7 @@ was decided, and the trade-offs that came with it.
 | 0024 | [Third-party licence notices ship inside the release archives](0024-third-party-license-notices-in-archives.md) | Accepted |
 | 0025 | [The crate is a library; the CLI is a thin wrapper over it](0025-library-crate-with-thin-cli.md) | Accepted |
 | 0026 | [Several roots in one scan, and the `root` field that names them](0026-several-roots-in-one-scan.md) | Accepted |
+| 0027 | [A priority cookie is read wherever it is written, and removed only where org puts it](0027-priority-cookie-read-anywhere-removed-in-place.md) | Accepted |
 
 ## Adding a new ADR
 

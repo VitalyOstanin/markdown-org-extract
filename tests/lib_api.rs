@@ -431,9 +431,10 @@ fn heading_line_reads_a_heading_without_tokens() {
 
 #[test]
 fn heading_line_keeps_the_text_between_the_keyword_and_the_cookie_addressable() {
-    // The parser that feeds the agenda drops this text (emacs
-    // `org-element--headline-parse-title` does the same). An editor must not:
-    // rewriting the line from parts would delete what the user typed.
+    // A cookie away from its canonical place is read for its value and left
+    // where it is: the title starts at the text before it, so an editor that
+    // rewrites the title does not swallow the cookie, and one that replaces
+    // the cookie has the range to do it in place.
     let line = "# TODO leftover [#B] Title";
 
     let heading = parse_heading_line(line).expect("a heading");
@@ -441,7 +442,7 @@ fn heading_line_keeps_the_text_between_the_keyword_and_the_cookie_addressable() 
     let status = heading.status.expect("a keyword");
     let priority = heading.priority.expect("a priority");
     assert_eq!(&line[status.range.end..priority.range.start], " leftover ");
-    assert_eq!(&line[heading.title_start..], "Title");
+    assert_eq!(&line[heading.title_start..], "leftover [#B] Title");
 }
 
 #[test]

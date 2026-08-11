@@ -769,7 +769,16 @@ The most common priorities are:
 - `[#B]` — medium priority (important tasks)
 - `[#C]` — low priority (regular tasks)
 
-Priority is optional.
+Priority is optional. A numeric cookie is accepted as well: `[#0]` through
+`[#64]`, where a lower number is the higher priority.
+
+A cookie written anywhere else in the heading still sets the priority —
+`### TODO Buy [#A] filter` is an `A` — but there it stays part of the task text
+and is shown as typed, so nothing the heading says is lost. Only a cookie in the
+position above is taken out of the text. Emacs reads a heading the same way: it
+finds the cookie through `org-priority-regexp` wherever it sits, and
+`org-agenda` prints the line as written. See
+[ADR-0027](docs/adr/0027-priority-cookie-read-anywhere-removed-in-place.md).
 
 ### Timestamps
 

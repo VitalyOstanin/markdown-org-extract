@@ -553,7 +553,7 @@ fn handle_non_repeating_task(
         } else {
             agenda.scheduled_no_time.push(task_with_offset);
         }
-    } else if days_diff < 0 && is_today && !is_done {
+    } else if days_diff < 0 && is_today && !is_done && keeps_a_missed_date(task) {
         // Overdue only in today agenda
         agenda
             .overdue
@@ -571,6 +571,32 @@ fn handle_non_repeating_task(
             }
         }
     }
+}
+
+/// Whether a date that has passed leaves anything behind.
+///
+/// Only planning keywords do, and upstream splits the collection three ways to
+/// say so (ADR-0012; read against org-agenda.el at 6916affed). A plain
+/// timestamp is gathered by `org-agenda-get-timestamps`, whose regexp is built
+/// to "match timestamps set to current date, timestamps with a repeater, and
+/// S-exp timestamps" and which skips "date ranges, scheduled and deadlines,
+/// which are handled specially" -- so it produces an entry on the day being
+/// drawn and on no other. The reminder about a date gone by belongs to
+/// `org-agenda-get-scheduled`, which formats it with the `Sched.%2dx:` leader
+/// "when the item is scheduled on the current day ... due to automatic
+/// rescheduling of unfinished items for the following day", and to
+/// `org-agenda-get-deadlines` beside it.
+///
+/// Hence: a lesson held last Monday is not owed to anybody on Tuesday, and a
+/// weekly series set up a year ago is not a year of arrears.
+///
+/// CLOSED is inactive and never reaches the agenda at all (ADR-0014), so the
+/// two keywords below are the whole of it.
+fn keeps_a_missed_date(task: &Task) -> bool {
+    matches!(
+        task.timestamp_type.as_deref(),
+        Some("SCHEDULED") | Some("DEADLINE")
+    )
 }
 
 fn create_task_without_time(task: &Task, days_offset: Option<i64>) -> TaskWithOffset {
@@ -707,10 +733,13 @@ fn handle_repeating_task(
     // CLOSED). Occurrence-day scheduling above is unaffected; that matches
     // the default of `org-agenda-skip-deadline-if-done` (nil), which still
     // shows the DONE task on its actual deadline date.
+    //
+    // Neither does a plain timestamp, repeater or not -- see
+    // [`keeps_a_missed_date`]. A weekly class recurs on its day and leaves
+    // nothing behind on the six others.
     let is_done = matches!(task.task_type, Some(TaskType::Done));
-    let is_closed_ts = matches!(task.timestamp_type.as_deref(), Some("CLOSED"));
 
-    if is_today && !is_done && !is_closed_ts {
+    if is_today && !is_done && keeps_a_missed_date(task) {
         // Overdue: requires a past occurrence
         if let Some(deadline_date) = deadline {
             if deadline_date < current_date {
@@ -1244,6 +1273,59 @@ mod tests {
         let day = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let agenda = build_day_agenda(&tasks, day, day);
         assert_eq!(agenda.scheduled_no_time.len(), 1);
+    }
+
+    #[test]
+    fn a_plain_timestamp_that_has_passed_is_not_overdue() {
+        // Upstream shows a plain timestamp "exactly on that date": an event
+        // that took place is not owed to anybody afterwards. Only SCHEDULED
+        // and DEADLINE carry a missed date forward.
+        let tasks = vec![create_test_plain_task("<2026-08-10 Mon>", "2026-08-10")];
+        let today = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap();
+        let agenda = build_day_agenda(&tasks, today, today);
+        assert!(
+            agenda.overdue.is_empty(),
+            "a past event must not be reported as overdue"
+        );
+    }
+
+    #[test]
+    fn a_weekly_class_is_not_a_year_of_arrears() {
+        // The case this rule was written for: a series set up long ago, kept
+        // as a plain repeating timestamp. On a day between occurrences it
+        // says nothing; on its own weekday it is on the agenda as usual.
+        let tasks = vec![create_test_plain_task(
+            "<2025-09-01 Mon 19:00 +1w>",
+            "2025-09-01",
+        )];
+        let between = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap();
+        let on_the_day = NaiveDate::from_ymd_opt(2026, 8, 17).unwrap();
+
+        // Which of the two scheduled buckets the occurrence lands in is the
+        // hour's business, and the fixture carries no `timestamp_time` of its
+        // own; what is asserted here is that the day has it and the others
+        // do not.
+        let shown = |a: &DayAgenda| a.scheduled_timed.len() + a.scheduled_no_time.len();
+
+        let quiet = build_day_agenda(&tasks, between, between);
+        assert!(quiet.overdue.is_empty(), "a class held weekly owes nothing");
+        assert_eq!(shown(&quiet), 0, "no class on a Sunday");
+
+        let held = build_day_agenda(&tasks, on_the_day, on_the_day);
+        assert_eq!(shown(&held), 1, "the class is on on Mondays");
+        assert!(held.overdue.is_empty());
+    }
+
+    #[test]
+    fn a_scheduled_date_that_has_passed_is_still_overdue() {
+        // The counterpart guard: narrowing overdue to the planning keywords
+        // must not empty it. Upstream forwards a scheduled entry day after
+        // day until it is marked done.
+        let tasks = vec![create_test_task("2026-08-10", None, TaskType::Todo)];
+        let today = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap();
+        let agenda = build_day_agenda(&tasks, today, today);
+        assert_eq!(agenda.overdue.len(), 1);
+        assert_eq!(agenda.overdue[0].days_offset, Some(-6));
     }
 
     #[test]

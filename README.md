@@ -1028,6 +1028,16 @@ categories (in display order):
 3. **Scheduled (no time)** — that day's tasks without a time
 4. **Upcoming** — upcoming tasks relative to that day, nearest first
 
+**Overdue is for planning keywords only.** A date that has passed is carried
+into today's agenda when it came from `SCHEDULED:` or `DEADLINE:` — upstream
+Org-mode forwards such an entry day after day until it is marked done. A plain
+timestamp is an event in a calendar, shown on its date and nowhere else, so a
+class held every Monday since last autumn shows up on Mondays and is never
+reported as a year of arrears. Give a recurring appointment a plain repeating
+timestamp (`<2025-09-01 Mon 19:00 +1w>`) and a recurring obligation
+`SCHEDULED:` with `++1w`, which moves the date into the future when the task is
+done rather than counting every occurrence missed.
+
 **Important:** Each day shows upcoming tasks relative to that day, not
 relative to a global reference date.
 

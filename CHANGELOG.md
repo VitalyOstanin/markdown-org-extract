@@ -34,6 +34,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A plain timestamp whose date has passed is no longer reported as overdue.
+  Only `SCHEDULED:` and `DEADLINE:` carry a missed date into today's agenda,
+  which is what upstream Org-mode does: a scheduled entry is forwarded day
+  after day until it is marked done, while a plain timestamp is shown on its
+  date and nowhere else. A weekly class written as `<2025-09-01 Mon 19:00
+  +1w>` is on the agenda on Mondays instead of standing as a year of arrears
+  in between.
+
 ## [0.15.0] — 2026-08-11
 
 ### Changed

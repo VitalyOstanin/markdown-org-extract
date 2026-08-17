@@ -179,6 +179,32 @@ fn parse_range(
     Ok(Some((start, end)))
 }
 
+/// Resolve the window of a scope whose output is a range of days, in the one
+/// order ADR-0009 gives: an explicit `--from`/`--to` first, then the period
+/// containing `--date`, then the period containing today.
+///
+/// `period_of` names the period a scope draws around an anchor day — its week,
+/// its month, the grid its month falls in. `adjust_range` gets the last word on
+/// an explicit window, so a scope that needs whole weeks can grow it; scopes
+/// that take the window as given return it unchanged.
+fn resolve_period_window(
+    date: Option<&str>,
+    from: Option<&str>,
+    to: Option<&str>,
+    today: NaiveDate,
+    period_of: impl Fn(NaiveDate) -> (NaiveDate, NaiveDate),
+    adjust_range: impl Fn(NaiveDate, NaiveDate) -> (NaiveDate, NaiveDate),
+) -> Result<(NaiveDate, NaiveDate), AppError> {
+    if let Some((start, end)) = parse_range(from, to, today)? {
+        return Ok(adjust_range(start, end));
+    }
+    let anchor = match date {
+        Some(date_str) => parse_date_arg("date", date_str)?,
+        None => today,
+    };
+    Ok(period_of(anchor))
+}
+
 /// Filter and bucket the extracted `tasks` according to the agenda
 /// configuration on the command line.
 ///
@@ -202,17 +228,21 @@ fn parse_range(
 ///   affects [`AgendaScope::Tasks`]: when `true` the flat list additionally
 ///   surfaces `CANCELLED` tasks. Independent of `include_done` (neither
 ///   implies the other). A no-op for day / week / month scope.
-/// - `annotate_next` — whether to fill `timestamp_next` (see
-///   `annotate_next_occurrences`). Only the JSON output carries the field,
-///   so the Markdown / HTML renderers pass `false` and skip the work. Always
-///   a no-op for [`AgendaScope::Tasks`], which stays date-less per ADR-0023.
+/// - `annotate_next` — whether to fill `timestamp_next` and, on the cells of
+///   a dated scope, `timestamp_next_after` (see `annotate_next_occurrences`
+///   and ADR-0029). Only the JSON output carries either field, so the
+///   Markdown / HTML renderers pass `false` and skip the work. Always a no-op
+///   for [`AgendaScope::Tasks`], which stays date-less per ADR-0023.
 ///
 /// Errors:
 /// - `AppError::InvalidDate` — any of `date`/`from`/`to`/`current-date`
-///   failed `YYYY-MM-DD` parse, or `Tasks` scope was combined with
-///   date arguments.
+///   failed `YYYY-MM-DD` parse.
 /// - `AppError::InvalidTimezone` — `tz` was not recognised by chrono-tz.
-/// - `AppError::DateRange` — `from > to` after edge filling.
+/// - `AppError::DateRange` — the window cannot be built as asked: `from > to`
+///   after edge filling; a window argument (`date`, `from`, `to`,
+///   `current_date`, `week_start`) under [`AgendaScope::Tasks`], which has no
+///   window; `week_start` naming an anchored week under
+///   [`AgendaScope::MonthGrid`], whose columns need a fixed weekday.
 pub fn filter_agenda(
     tasks: Vec<Task>,
     scope: AgendaScope,
@@ -272,19 +302,26 @@ pub fn filter_agenda(
         ));
     }
 
-    // A grid draws one column per weekday, so its columns need a weekday to
-    // begin on; `today` leaves them undefined. Refused rather than quietly
-    // read as Monday, for the reason the check above exists.
-    if scope == AgendaScope::MonthGrid
-        && week_start.is_some_and(|raw| raw.trim().eq_ignore_ascii_case("today"))
-    {
-        return Err(AppError::DateRange(
-            "month-grid needs a fixed first day of the week: --week-start today has none"
-                .to_string(),
-        ));
+    let week_start_given = week_start.is_some();
+    let week_start = parse_week_start(week_start)?;
+
+    // Refused up-front, before the tasks are annotated and bucketed: the run
+    // cannot produce a grid, so there is nothing to spend that work on.
+    if scope == AgendaScope::MonthGrid && week_start.is_none() {
+        return Err(month_grid_needs_a_first_day());
     }
 
-    let week_start = parse_week_start(week_start)?;
+    // Accepted but inert in the scopes with no week to align: a single day has
+    // none, and a calendar month is the same month whatever the week does.
+    // Logged rather than refused — a client that passes its user's first day
+    // of the week on every call should not have to strip it per scope — but
+    // logged, so "my week start did nothing" is answerable from `-vv`.
+    if week_start_given && matches!(scope, AgendaScope::Day | AgendaScope::Month) {
+        tracing::debug!(
+            scope = ?scope,
+            "week-start does not reach this scope and is ignored"
+        );
+    }
 
     // Reference instant for `timestamp_next`: the local wall-clock now, so a
     // timed occurrence earlier today is recognised as past. Under a
@@ -324,42 +361,55 @@ pub fn filter_agenda(
             }
         }
         AgendaScope::Week => {
-            let (start_date, end_date) = if let Some(range) = parse_range(from, to, today)? {
-                range
-            } else if let Some(date_str) = date {
-                get_week_for_date(parse_date_arg("date", date_str)?, week_start)
-            } else {
-                get_week_for_date(today, week_start)
-            };
+            let (start_date, end_date) = resolve_period_window(
+                date,
+                from,
+                to,
+                today,
+                |anchor| get_week_for_date(anchor, week_start),
+                |start, end| {
+                    // An explicit window is the window; unlike the grid, a week
+                    // agenda is a list of days and needs no alignment to stay
+                    // readable. See ADR-0009 for the priority.
+                    if week_start_given {
+                        tracing::debug!("an explicit --from/--to window overrides week-start");
+                    }
+                    (start, end)
+                },
+            )?;
 
             Ok(AgendaOutput::Days(build_week_agenda(
                 &tasks, start_date, end_date, today,
             )))
         }
         AgendaScope::Month => {
-            let (start_date, end_date) = if let Some(range) = parse_range(from, to, today)? {
-                range
-            } else if let Some(date_str) = date {
-                get_month_for_date(parse_date_arg("date", date_str)?)
-            } else {
-                get_month_for_date(today)
-            };
+            let (start_date, end_date) =
+                resolve_period_window(date, from, to, today, get_month_for_date, |start, end| {
+                    (start, end)
+                })?;
 
             Ok(AgendaOutput::Days(build_week_agenda(
                 &tasks, start_date, end_date, today,
             )))
         }
         AgendaScope::MonthGrid => {
-            // `week_start` is `Some` here: `today` was refused above, and the
-            // absent flag is Monday.
-            let first_day = week_start.unwrap_or(Weekday::Mon);
-            let (start_date, end_date) = if let Some(range) = parse_range(from, to, today)? {
-                range
-            } else if let Some(date_str) = date {
-                get_month_grid_for_date(parse_date_arg("date", date_str)?, first_day)
-            } else {
-                get_month_grid_for_date(today, first_day)
+            // Refused above; repeated rather than assumed so a future edit that
+            // moves the early check cannot turn `today` into a silent Monday.
+            let Some(first_day) = week_start else {
+                return Err(month_grid_needs_a_first_day());
             };
+            let (start_date, end_date) = resolve_period_window(
+                date,
+                from,
+                to,
+                today,
+                |anchor| get_month_grid_for_date(anchor, first_day),
+                // An explicit window is grown to the weeks it touches: the
+                // scope draws rows of seven, and a window ending mid-week would
+                // leave the last row short of the columns it declares. A window
+                // already on the edges of a week is left alone.
+                |start, end| grow_to_whole_weeks(start, end, first_day),
+            )?;
 
             Ok(AgendaOutput::Days(build_week_agenda(
                 &tasks, start_date, end_date, today,
@@ -701,35 +751,40 @@ fn format_repeating_timestamp(
 /// day comes next, and the day being drawn is excluded by asking from the day
 /// after it.
 fn next_after_day(
-    task: &Task,
+    base: NaiveDate,
     repeater: &crate::timestamp::Repeater,
     day_date: NaiveDate,
 ) -> Option<String> {
-    // Only where the now-relative field was filled in. Both exist for the same
-    // consumer and only the JSON renderer prints either, so the caller that
-    // skipped `annotate_next_occurrences` is not made to pay for this one --
-    // on a month of a few thousand repeating tasks that is the difference
-    // between 107 ms and 137 ms of `--format md`.
-    task.timestamp_next.as_ref()?;
-
-    let base = task
-        .timestamp_date
-        .as_deref()
-        .and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok())?;
     let after = day_date.succ_opt()?;
 
     next_occurrence(base, repeater, None, after.and_time(NaiveTime::MIN))
         .map(|date| date.format("%Y-%m-%d").to_string())
 }
 
+/// Put a repeating task into the cell of the day it recurs on.
+///
+/// The cell holds a *copy* whose `timestamp_date` and `timestamp` are rewritten
+/// to the occurrence being drawn, not the task's own date. Anything that has to
+/// be read from that own date — `next_after_day` here, `timestamp_next` in
+/// `annotate_next_occurrences` — must therefore be computed from `parsed`
+/// or before this runs; reading it back off the copy gives the cell's date and,
+/// for a monthly repeater anchored past the 28th, silently walks the series
+/// down the month.
 fn push_scheduled_occurrence(
     task: &Task,
+    parsed: &crate::timestamp::ParsedTimestamp,
     repeater: &crate::timestamp::Repeater,
     day_date: NaiveDate,
     agenda: &mut DayAgenda,
 ) {
     let mut task_copy = task.clone();
-    task_copy.timestamp_next_after = next_after_day(task, repeater, day_date);
+    // Filled in only where `annotate_next_occurrences` ran: both fields serve
+    // the same consumer and only the JSON renderer prints either, so the
+    // Markdown and HTML paths -- which pass `annotate_next = false` and leave
+    // `timestamp_next` empty -- never reach the computation below.
+    if task.timestamp_next.is_some() {
+        task_copy.timestamp_next_after = next_after_day(parsed.date, repeater, day_date);
+    }
     task_copy.timestamp_date = Some(day_date.format("%Y-%m-%d").to_string());
 
     if let Some(ref ts_type) = task.timestamp_type {
@@ -809,12 +864,12 @@ fn handle_repeating_task(
     let mut shown_on_day = false;
     if let Some(repeat_date) = repeat {
         if day_date == repeat_date {
-            push_scheduled_occurrence(task, repeater, day_date, agenda);
+            push_scheduled_occurrence(task, parsed, repeater, day_date, agenda);
             shown_on_day = true;
         }
     }
     if !shown_on_day && deadline.is_none() && current_date < base_date && day_date == base_date {
-        push_scheduled_occurrence(task, repeater, day_date, agenda);
+        push_scheduled_occurrence(task, parsed, repeater, day_date, agenda);
     }
 
     // DONE tasks and CLOSED-typed timestamps never appear in overdue or
@@ -894,7 +949,13 @@ fn build_week_agenda(
 
     while current <= end_date {
         result.push(build_day_agenda_prepared(&prepared, current, current_date));
-        current += chrono::Duration::days(1);
+        // `succ_opt` rather than `+ 1 day`: the last day chrono can represent
+        // is a legitimate end of a window, and stepping past it must end the
+        // walk instead of panicking.
+        let Some(next) = current.succ_opt() else {
+            break;
+        };
+        current = next;
     }
 
     result
@@ -910,12 +971,13 @@ fn parse_week_start(value: Option<&str>) -> Result<Option<Weekday>, AppError> {
     let Some(raw) = value else {
         return Ok(Some(Weekday::Mon));
     };
-    let name = raw.trim().to_ascii_lowercase();
-    if name == "today" {
+    let name = raw.trim();
+    if name.eq_ignore_ascii_case("today") {
         return Ok(None);
     }
     // `Weekday::from_str` takes the three-letter abbreviations as well as the
-    // full names, so `mon` and `monday` both land here.
+    // full names and ignores case, so `mon`, `Monday` and `MONDAY` all land
+    // here.
     name.parse::<Weekday>().map(Some).map_err(|_| {
         AppError::DateRange(format!(
             "week-start '{raw}' is not a weekday name or 'today'"
@@ -923,17 +985,52 @@ fn parse_week_start(value: Option<&str>) -> Result<Option<Weekday>, AppError> {
     })
 }
 
+/// A grid draws one column per weekday, so its columns need a weekday to begin
+/// on; a week anchored on the rendered day leaves them undefined. Refused
+/// rather than quietly read as Monday: a caller that asked for an anchored week
+/// would silently get a different grid than the one it asked for.
+fn month_grid_needs_a_first_day() -> AppError {
+    AppError::DateRange(
+        "month-grid needs a fixed first day of the week: --week-start today has none".to_string(),
+    )
+}
+
 /// Get week boundaries for a specific date: seven days beginning on
 /// `week_start`, or on `date` itself when the week has no fixed first day.
+///
+/// A week that would run off either end of the calendar is clamped to it
+/// rather than taken down with it: `+`/`-` on `NaiveDate` panic on overflow,
+/// and the library takes its window arguments from embedders that have no
+/// year bounds of their own (the CLI's `--date` validator refuses anything
+/// outside 1900..=2100, but nothing stops a UniFFI caller from passing the
+/// last day chrono can represent).
 fn get_week_for_date(date: NaiveDate, week_start: Option<Weekday>) -> (NaiveDate, NaiveDate) {
     let start = match week_start {
         Some(first) => {
-            let offset = date.weekday().days_since(first);
-            date - chrono::Duration::days(offset as i64)
+            let offset = date.weekday().days_since(first) as i64;
+            chrono::TimeDelta::try_days(offset)
+                .and_then(|delta| date.checked_sub_signed(delta))
+                .unwrap_or(NaiveDate::MIN)
         }
         None => date,
     };
-    (start, start + chrono::Duration::days(6))
+    let end = chrono::TimeDelta::try_days(6)
+        .and_then(|delta| start.checked_add_signed(delta))
+        .unwrap_or(NaiveDate::MAX);
+    (start, end)
+}
+
+/// Widen `[start, end]` to the whole weeks it touches, beginning on
+/// `week_start`. A range already aligned on both edges comes back unchanged,
+/// so the answer is always a whole number of weeks.
+fn grow_to_whole_weeks(
+    start: NaiveDate,
+    end: NaiveDate,
+    week_start: Weekday,
+) -> (NaiveDate, NaiveDate) {
+    let (grown_start, _) = get_week_for_date(start, Some(week_start));
+    let (_, grown_end) = get_week_for_date(end, Some(week_start));
+    (grown_start, grown_end)
 }
 
 /// Get the boundaries of the grid a calendar month is drawn on: the whole
@@ -944,9 +1041,7 @@ fn get_week_for_date(date: NaiveDate, week_start: Option<Weekday>) -> (NaiveDate
 /// weeks the month touches rather than a fixed count of them.
 fn get_month_grid_for_date(date: NaiveDate, week_start: Weekday) -> (NaiveDate, NaiveDate) {
     let (first_day, last_day) = get_month_for_date(date);
-    let (start, _) = get_week_for_date(first_day, Some(week_start));
-    let (_, end) = get_week_for_date(last_day, Some(week_start));
-    (start, end)
+    grow_to_whole_weeks(first_day, last_day, week_start)
 }
 
 /// Get month boundaries (first to last day) for a specific date
@@ -3237,6 +3332,123 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_window_at_the_end_of_the_calendar_is_clamped_not_panicked() {
+        // The CLI refuses a year outside 1900..=2100, but an embedder calling
+        // the library directly has no such guard: a week anchored on the last
+        // day chrono can represent must come back clamped rather than take the
+        // process down on the `+ 6 days` that closes it.
+        let output = filter_agenda(
+            vec![],
+            AgendaScope::Week,
+            AgendaDates {
+                date: Some("+262142-12-31"),
+                current_date: Some("+262142-12-31"),
+                ..AgendaDates::default()
+            },
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect("filter_agenda");
+
+        let AgendaOutput::Days(days) = output else {
+            panic!("week scope must produce days");
+        };
+        assert_eq!(
+            days.last().map(|d| d.date.as_str()),
+            Some("+262142-12-31"),
+            "the window stops at the last representable day"
+        );
+    }
+
+    #[test]
+    fn month_grid_scope_grows_an_explicit_range_to_whole_weeks() {
+        // A grid is laid out in rows of seven, so an explicit window is grown
+        // to the weeks it touches rather than drawn as a ragged row: Wed 5 Aug
+        // through Tue 11 Aug covers two weeks, Mon 3 Aug through Sun 16 Aug.
+        let output = filter_agenda(
+            vec![],
+            AgendaScope::MonthGrid,
+            AgendaDates {
+                current_date: Some("2026-08-12"),
+                from: Some("2026-08-05"),
+                to: Some("2026-08-11"),
+                ..AgendaDates::default()
+            },
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect("filter_agenda");
+
+        let AgendaOutput::Days(days) = output else {
+            panic!("month-grid scope must produce days");
+        };
+        assert_eq!(days.len(), 14, "two whole weeks");
+        assert_eq!(days.first().map(|d| d.date.as_str()), Some("2026-08-03"));
+        assert_eq!(days.last().map(|d| d.date.as_str()), Some("2026-08-16"));
+    }
+
+    #[test]
+    fn month_grid_scope_grows_an_explicit_range_from_its_own_week_start() {
+        // The same window read from Sunday lands a day earlier at both edges,
+        // and still covers whole weeks.
+        let output = filter_agenda(
+            vec![],
+            AgendaScope::MonthGrid,
+            AgendaDates {
+                current_date: Some("2026-08-12"),
+                from: Some("2026-08-05"),
+                to: Some("2026-08-11"),
+                week_start: Some("sunday"),
+                ..AgendaDates::default()
+            },
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect("filter_agenda");
+
+        let AgendaOutput::Days(days) = output else {
+            panic!("month-grid scope must produce days");
+        };
+        assert_eq!(days.len(), 14, "two whole weeks");
+        assert_eq!(days.first().map(|d| d.date.as_str()), Some("2026-08-02"));
+        assert_eq!(days.last().map(|d| d.date.as_str()), Some("2026-08-15"));
+    }
+
+    #[test]
+    fn month_grid_scope_leaves_an_aligned_range_alone() {
+        // A window that already begins and ends on the edges of a week is the
+        // grid it asked for: growing it would add a row nobody requested.
+        let output = filter_agenda(
+            vec![],
+            AgendaScope::MonthGrid,
+            AgendaDates {
+                current_date: Some("2026-08-12"),
+                from: Some("2026-08-03"),
+                to: Some("2026-08-09"),
+                ..AgendaDates::default()
+            },
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect("filter_agenda");
+
+        let AgendaOutput::Days(days) = output else {
+            panic!("month-grid scope must produce days");
+        };
+        assert_eq!(days.len(), 7);
+        assert_eq!(days.first().map(|d| d.date.as_str()), Some("2026-08-03"));
+        assert_eq!(days.last().map(|d| d.date.as_str()), Some("2026-08-09"));
+    }
+
     /// The date each scheduled cell carries, paired with the occurrence it
     /// says comes after it.
     fn collect_dated_next_after(output: &AgendaOutput) -> Vec<(String, Option<String>)> {
@@ -3350,6 +3562,37 @@ mod tests {
                 .flat_map(|day| day.overdue.iter().chain(&day.upcoming))
                 .all(|item| item.task.timestamp_next_after.is_none()),
             "borrowed copies must not carry the per-cell field"
+        );
+    }
+
+    #[test]
+    fn next_after_is_absent_when_the_now_relative_pass_was_skipped() {
+        // The Markdown and HTML renderers pass `annotate_next = false`: neither
+        // prints either field, so neither is computed. A cell that carried the
+        // occurrence after it here would mean the work was done for nothing.
+        let output = filter_agenda(
+            vec![create_test_task("2026-08-03 Mon +1w", None, TaskType::Todo)],
+            AgendaScope::Week,
+            AgendaDates {
+                current_date: Some("2026-08-05"),
+                date: Some("2026-08-05"),
+                ..AgendaDates::default()
+            },
+            "UTC",
+            false,
+            false,
+            false,
+        )
+        .expect("filter_agenda");
+
+        let pairs = collect_dated_next_after(&output);
+        assert!(
+            !pairs.is_empty(),
+            "the repeating task must still be drawn on its occurrence day"
+        );
+        assert!(
+            pairs.iter().all(|(_, after)| after.is_none()),
+            "no cell may carry the following occurrence, got: {pairs:?}"
         );
     }
 

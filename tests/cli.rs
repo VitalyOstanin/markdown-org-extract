@@ -1123,6 +1123,57 @@ fn day_dates_in_json(stdout: &str) -> Vec<String> {
 }
 
 #[test]
+fn scheduled_cell_carries_the_occurrence_after_it() {
+    // The JSON a client draws a cell from names the occurrence following that
+    // cell, so a weekly task on 8 Dec points at 15 Dec while a daily one on
+    // the same day points at 9 Dec. Pinned from the CLI because the field is
+    // part of the wire contract, not an internal.
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--agenda",
+            "day",
+            "--current-date",
+            "2025-12-08",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("valid JSON");
+    let day = parsed
+        .as_array()
+        .and_then(|days| days.first())
+        .expect("one day");
+    let scheduled: Vec<&serde_json::Value> = ["scheduled_timed", "scheduled_no_time"]
+        .iter()
+        .filter_map(|bucket| day.get(*bucket))
+        .filter_map(serde_json::Value::as_array)
+        .flatten()
+        .collect();
+
+    let after_for = |repeater: &str| -> Option<String> {
+        scheduled
+            .iter()
+            .find(|task| task.get("timestamp_repeater").and_then(|r| r.as_str()) == Some(repeater))
+            .and_then(|task| task.get("timestamp_next_after"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+
+    assert_eq!(after_for("+1w").as_deref(), Some("2025-12-15"));
+    assert_eq!(after_for("+1d").as_deref(), Some("2025-12-09"));
+}
+
+#[test]
 fn agenda_month_grid_covers_the_weeks_the_month_touches() {
     // August 2026 opens on a Saturday and closes on a Monday: a grid of whole
     // Monday weeks runs 27.07 through 06.09.
@@ -1184,6 +1235,40 @@ fn agenda_month_grid_follows_week_start() {
 }
 
 #[test]
+fn agenda_month_grid_grows_an_explicit_range_to_whole_weeks() {
+    // A grid is rows of seven whatever picked the window, so an explicit
+    // range is grown to the weeks it touches: Wed 5 Aug .. Tue 11 Aug becomes
+    // Mon 3 Aug .. Sun 16 Aug.
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--agenda",
+            "month-grid",
+            "--from",
+            "2026-08-05",
+            "--to",
+            "2026-08-11",
+            "--current-date",
+            "2026-08-12",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dates = day_dates_in_json(&String::from_utf8_lossy(&out.stdout));
+    assert_eq!(dates.len(), 14, "two rows of seven");
+    assert_eq!(dates.first().map(String::as_str), Some("2026-08-03"));
+    assert_eq!(dates.last().map(String::as_str), Some("2026-08-16"));
+}
+
+#[test]
 fn agenda_month_grid_rejects_an_anchored_week_start() {
     bin()
         .args([
@@ -1234,6 +1319,9 @@ fn agenda_week_start_shifts_the_week() {
 
 #[test]
 fn agenda_week_start_rejects_a_name_that_is_not_a_weekday() {
+    // Refused by the parser, so the run fails with the usage exit code before
+    // a single note is read, and the message lists what would have been
+    // accepted instead of naming only the rejected word.
     bin()
         .args([
             "--dir",
@@ -1246,8 +1334,81 @@ fn agenda_week_start_rejects_a_name_that_is_not_a_weekday() {
             "2026-08-19",
         ])
         .assert()
-        .failure()
-        .stderr(contains("week-start"));
+        .code(2)
+        .stderr(contains("week-start"))
+        .stderr(contains("possible values"))
+        .stderr(contains("monday"))
+        .stderr(contains("today"));
+}
+
+#[test]
+fn agenda_week_start_takes_a_three_letter_name() {
+    // `sun` is the abbreviation org-mode users type; it must land on the same
+    // window as `sunday`.
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--agenda",
+            "week",
+            "--week-start",
+            "sun",
+            "--current-date",
+            "2026-08-19",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dates = day_dates_in_json(&String::from_utf8_lossy(&out.stdout));
+    assert_eq!(dates.first().map(String::as_str), Some("2026-08-16"));
+    assert_eq!(dates.last().map(String::as_str), Some("2026-08-22"));
+}
+
+#[test]
+fn agenda_week_start_ignores_case() {
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--agenda",
+            "week",
+            "--week-start",
+            "SUNDAY",
+            "--current-date",
+            "2026-08-19",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dates = day_dates_in_json(&String::from_utf8_lossy(&out.stdout));
+    assert_eq!(dates.first().map(String::as_str), Some("2026-08-16"));
+}
+
+#[test]
+fn help_mentions_week_start_abbreviations() {
+    // clap does not render value-enum aliases in `[possible values: …]`, so
+    // the three-letter forms have to live in the flag's docstring — the same
+    // arrangement `--format md` uses.
+    let long = bin().arg("--help").output().expect("run");
+    let long_out = String::from_utf8_lossy(&long.stdout);
+    assert!(
+        long_out.contains("`mon`"),
+        "expected the `mon` abbreviation in --help, got: {long_out}"
+    );
 }
 
 #[test]
@@ -1656,6 +1817,87 @@ fn walker_continues_after_permission_denied_subdir() {
         stderr.contains("walk_errors") || stderr.contains("walker entry failed"),
         "summary or per-error warning must mention the walker error; stderr: {stderr}"
     );
+}
+
+#[test]
+fn holidays_conflicts_with_agenda_window_arguments() {
+    // `--holidays` short-circuits before any scanning, so an agenda argument
+    // beside it would be silently dropped. Every window argument is listed in
+    // the conflict set, `--week-start` included.
+    bin()
+        .args(["--holidays", "2026", "--week-start", "sunday"])
+        .assert()
+        .code(2)
+        .stderr(contains("cannot be used with"));
+    bin()
+        .args(["--holidays", "2026", "--current-date", "2026-08-19"])
+        .assert()
+        .code(2)
+        .stderr(contains("cannot be used with"));
+}
+
+#[test]
+fn agenda_tasks_rejects_week_start_argument() {
+    // A week start is a window argument like the dates beside it, and the flat
+    // list has no window to begin. Refused through `--agenda tasks`, the path
+    // clap's `conflicts_with = "tasks"` does not cover.
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--agenda",
+            "tasks",
+            "--week-start",
+            "sunday",
+        ])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("tasks mode does not accept date arguments"),
+        "expected the tasks-mode rejection; got: {stderr}"
+    );
+}
+
+#[test]
+fn tasks_flag_conflicts_with_week_start() {
+    // The legacy `--tasks` spelling is refused earlier, by the parser itself.
+    bin()
+        .args(["--dir", "examples", "--tasks", "--week-start", "sunday"])
+        .assert()
+        .code(2)
+        .stderr(contains("cannot be used with"));
+}
+
+#[test]
+fn agenda_day_accepts_week_start_without_changing_the_window() {
+    // The flag reaches week-shaped windows only; a single day has no week to
+    // align, so it is accepted and leaves the day alone rather than being
+    // refused.
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--agenda",
+            "day",
+            "--week-start",
+            "sunday",
+            "--current-date",
+            "2026-08-19",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dates = day_dates_in_json(&String::from_utf8_lossy(&out.stdout));
+    assert_eq!(dates, vec!["2026-08-19".to_string()]);
 }
 
 #[test]

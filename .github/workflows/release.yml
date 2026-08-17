@@ -265,10 +265,25 @@ jobs:
         # cannot see. Uses --quiet to suppress diagnostic chatter; the exit
         # code is the signal of interest, not the output content.
         run: |
+          set -euo pipefail
           cargo build --release --locked
-          ./target/release/markdown-org-extract --version
-          ./target/release/markdown-org-extract --help >/dev/null
-          ./target/release/markdown-org-extract --dir examples --current-date 2025-12-05 --quiet >/dev/null
+          bin=./target/release/markdown-org-extract
+          "$bin" --version
+          "$bin" --help >/dev/null
+          "$bin" --dir examples --current-date 2025-12-05 --quiet >/dev/null
+
+          # The exit code alone would pass on an empty or malformed payload,
+          # and the wire format is what consumers pin (ADR-0015). Assert the
+          # shape the release actually ships: a day agenda is an array of days
+          # that carry a date, and a month grid is a whole number of weeks
+          # beginning on the requested weekday (ADR-0028, ADR-0030).
+          "$bin" --dir examples --agenda day --current-date 2025-12-05 \
+            --format json --quiet \
+            | jq -e 'type == "array" and length > 0 and all(.[]; has("date"))' >/dev/null
+
+          "$bin" --dir examples --agenda month-grid --date 2026-08-12 \
+            --current-date 2026-08-12 --week-start sunday --format json --quiet \
+            | jq -e 'length % 7 == 0 and .[0].date == "2026-07-26"' >/dev/null
 
       - name: cargo package --list
         run: cargo package --list

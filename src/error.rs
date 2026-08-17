@@ -34,7 +34,12 @@ pub enum AppError {
     InvalidTimezone(String),
     /// `--output` path is unsafe (missing parent, symlink, etc.)
     InvalidOutput(String),
-    /// `--from` and `--to` form an invalid range
+    /// A date window that cannot be built as asked: `--from` after `--to`, a
+    /// window argument in a scope that has no window (`--agenda tasks`), or a
+    /// first day of the week the scope cannot draw (`--agenda month-grid`
+    /// with `--week-start today`). Named after its first use; the variant is
+    /// public API, so the wider meaning is documented here rather than split
+    /// into a new one.
     DateRange(String),
     /// JSON or other serializer reported an error
     Serialization(String),

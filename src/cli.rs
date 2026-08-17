@@ -19,11 +19,8 @@ pub enum ColorMode {
     Never,
 }
 
-/// Agenda time scope
-///
-/// Renamed to kebab-case rather than lower-case so a two-word scope is spelled
-/// `month-grid`; the one-word values are the same under either rule, so the
-/// existing `day` / `week` / `month` / `tasks` are untouched.
+/// Agenda time scope. Spelled in kebab-case so the two-word scope reads
+/// `month-grid`; the one-word values are unchanged by the rule.
 #[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
 #[clap(rename_all = "kebab-case")]
 pub enum AgendaMode {
@@ -38,6 +35,62 @@ pub enum AgendaMode {
     MonthGrid,
     /// Flat task list (no date windowing). Equivalent to the legacy `--tasks` flag.
     Tasks,
+}
+
+/// Which weekday a week begins on (`--week-start`).
+///
+/// A closed set rather than a free-form string: the shell completes it, the
+/// help lists it, and a misspelling is refused by the parser before a single
+/// note is read. `Today` is upstream's `nil` — a week with no fixed first day,
+/// beginning wherever the anchor stands (org-agenda.el:1181).
+///
+/// The three-letter forms are aliases, so `mon` and `monday` both parse; clap
+/// does not render aliases in `[possible values: …]`, so they are spelled out
+/// in the flag's docstring the way `--format md` is.
+#[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
+#[clap(rename_all = "lower")]
+pub enum WeekStart {
+    /// Week begins on Monday (alias: `mon`)
+    #[value(alias = "mon")]
+    Monday,
+    /// Week begins on Tuesday (alias: `tue`)
+    #[value(alias = "tue")]
+    Tuesday,
+    /// Week begins on Wednesday (alias: `wed`)
+    #[value(alias = "wed")]
+    Wednesday,
+    /// Week begins on Thursday (alias: `thu`)
+    #[value(alias = "thu")]
+    Thursday,
+    /// Week begins on Friday (alias: `fri`)
+    #[value(alias = "fri")]
+    Friday,
+    /// Week begins on Saturday (alias: `sat`)
+    #[value(alias = "sat")]
+    Saturday,
+    /// Week begins on Sunday (alias: `sun`)
+    #[value(alias = "sun")]
+    Sunday,
+    /// Week begins on the anchor day, so it has no fixed first day
+    Today,
+}
+
+impl WeekStart {
+    /// The canonical spelling the agenda parses, as a `'static` string so it
+    /// can be borrowed into [`AgendaDates`][markdown_org_extract::AgendaDates]
+    /// without an owned value living in the caller.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WeekStart::Monday => "monday",
+            WeekStart::Tuesday => "tuesday",
+            WeekStart::Wednesday => "wednesday",
+            WeekStart::Thursday => "thursday",
+            WeekStart::Friday => "friday",
+            WeekStart::Saturday => "saturday",
+            WeekStart::Sunday => "sunday",
+            WeekStart::Today => "today",
+        }
+    }
 }
 
 /// `long_about` text for `--help`. Kept as a `const` so the test that pins
@@ -59,6 +112,9 @@ Examples:
 
   Two-week window, anchored at today:
     markdown-org-extract --agenda week --from 2026-05-21 --to 2026-06-04
+
+  The grid a month is drawn on, weeks beginning on Sunday:
+    markdown-org-extract --agenda month-grid --week-start sunday
 
   Flat task list, absolute paths, no progress noise:
     markdown-org-extract --tasks --absolute-paths --quiet
@@ -189,13 +245,19 @@ pub struct Cli {
     pub current_date: Option<String>,
 
     /// Which weekday a week begins on: a name (`monday` … `sunday`, or the
-    /// three-letter form) or `today` for a week beginning on the anchor day.
-    /// Default: `monday`. This is upstream's `org-agenda-start-on-weekday`,
-    /// and like it, reaches the week-shaped windows: `--agenda week` and the
-    /// columns of `--agenda month-grid`, which refuses `today`. Not allowed in
-    /// `--agenda tasks`.
-    #[arg(long, conflicts_with = "tasks", help_heading = "Agenda")]
-    pub week_start: Option<String>,
+    /// three-letter form `mon` … `sun`) or `today` for a week beginning on the
+    /// anchor day. Case is ignored. Default: `monday`. This is upstream's
+    /// `org-agenda-start-on-weekday`, and like it, reaches the week-shaped
+    /// windows: `--agenda week` and the columns of `--agenda month-grid`,
+    /// which refuses `today`. Not allowed in `--agenda tasks`.
+    #[arg(
+        long,
+        value_enum,
+        ignore_case = true,
+        conflicts_with = "tasks",
+        help_heading = "Agenda"
+    )]
+    pub week_start: Option<WeekStart>,
 
     /// Maximum number of tasks to extract before stopping (1..=10_000_000).
     /// Acts as a global cap on extracted tasks; the same value is reused as a
@@ -242,7 +304,7 @@ pub struct Cli {
     #[arg(
         long,
         value_parser = validate_year,
-        conflicts_with_all = ["dir", "glob", "format", "output", "tasks", "agenda", "date", "from", "to", "absolute_paths", "max_tasks", "completions"],
+        conflicts_with_all = ["dir", "glob", "format", "output", "tasks", "tasks_include_done", "tasks_include_cancelled", "agenda", "date", "from", "to", "current_date", "week_start", "locale", "tz", "absolute_paths", "max_tasks", "completions"],
         help_heading = "Actions"
     )]
     pub holidays: Option<i32>,
@@ -254,7 +316,7 @@ pub struct Cli {
         long,
         value_enum,
         value_name = "SHELL",
-        conflicts_with_all = ["dir", "glob", "format", "output", "tasks", "agenda", "date", "from", "to", "absolute_paths", "max_tasks", "holidays"],
+        conflicts_with_all = ["dir", "glob", "format", "output", "tasks", "tasks_include_done", "tasks_include_cancelled", "agenda", "date", "from", "to", "current_date", "week_start", "locale", "tz", "absolute_paths", "max_tasks", "holidays"],
         help_heading = "Actions"
     )]
     pub completions: Option<clap_complete::Shell>,

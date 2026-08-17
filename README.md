@@ -392,12 +392,12 @@ markdown-org-extract [OPTIONS]
 - `--tasks` — show all TODO tasks sorted by priority, then by date and time (alias for `--agenda tasks`)
 - `--tasks-include-done` — also include DONE tasks in the flat `--tasks` / `--agenda tasks` list (default: TODO only). No effect in `day`/`week`/`month` mode
 - `--tasks-include-cancelled` — also include cancelled tasks (either spelling, `CANCELLED` or `CANCELED`) in the flat `--tasks` / `--agenda tasks` list (default: TODO only). Independent of `--tasks-include-done`. No effect in `day`/`week`/`month` mode
-- `--date <DATE>` — window anchor for `day`/`week`/`month` mode in `YYYY-MM-DD`. In `day` mode the window is exactly this date; in `week`/`month` it is the week / month containing this date. Overridden by `--from`/`--to`. Not allowed in `tasks` mode. Default: `--current-date` (or today)
-- `--from <DATE>` — window start (`YYYY-MM-DD`) for `day`/`week`/`month` mode. Together with `--to`, an explicit range that overrides `--date`. If `--to` is omitted, the window ends at `--current-date` (or today). Not allowed in `tasks` mode
-- `--to <DATE>` — window end (`YYYY-MM-DD`) for `day`/`week`/`month` mode. Together with `--from`, an explicit range that overrides `--date`. If `--from` is omitted, the window starts at `--current-date` (or today). Not allowed in `tasks` mode
+- `--date <DATE>` — window anchor for `day`/`week`/`month`/`month-grid` mode in `YYYY-MM-DD`. In `day` mode the window is exactly this date; in the others it is the week / month / grid containing this date. Overridden by `--from`/`--to`. Not allowed in `tasks` mode. Default: `--current-date` (or today)
+- `--from <DATE>` — window start (`YYYY-MM-DD`) for `day`/`week`/`month`/`month-grid` mode. Together with `--to`, an explicit range that overrides `--date`. If `--to` is omitted, the window ends at `--current-date` (or today). In `month-grid` mode the range is grown outward to whole weeks. Not allowed in `tasks` mode
+- `--to <DATE>` — window end (`YYYY-MM-DD`) for `day`/`week`/`month`/`month-grid` mode. Together with `--from`, an explicit range that overrides `--date`. If `--from` is omitted, the window starts at `--current-date` (or today). In `month-grid` mode the range is grown outward to whole weeks. Not allowed in `tasks` mode
 - `--tz <TIMEZONE>` — IANA timezone for determining the current date (default: `Europe/Moscow`)
 - `--current-date <DATE>` — override of "today" (`YYYY-MM-DD`). Used as the reference for overdue / upcoming markers and as the default for a missing `--from`/`--to` edge. Not allowed in `tasks` mode. Default: today in `--tz`
-- `--week-start <DAY>` — which weekday a week begins on: a name (`monday` … `sunday`, or the three-letter form), or `today` for a week beginning on the anchor day. Default: `monday`. This is upstream's `org-agenda-start-on-weekday`, and like it, reaches the week-shaped windows only: `week` mode and the columns of `month-grid`, which refuses `today` because a calendar column is a fixed weekday. Not allowed in `tasks` mode
+- `--week-start <DAY>` — which weekday a week begins on: a name (`monday` … `sunday`, or the three-letter form `mon` … `sun`), or `today` for a week beginning on the anchor day. Case is ignored, and an unknown value is refused by the parser before any file is read. Default: `monday` — a fixed default rather than one read from the environment, so the same arguments produce the same window on any machine; a client that wants the user's own first day of the week passes it explicitly. This is upstream's `org-agenda-start-on-weekday`, and like it, reaches the week-shaped windows only: `week` mode and the columns of `month-grid`, which refuses `today` because a calendar column is a fixed weekday. Accepted but inert in `day` and `month` mode, which have no week to align (`-vv` logs when it is ignored). Not allowed in `tasks` mode
 - `--holidays <YEAR>` — print the holiday list for the given year (1900–2100) as JSON
 - `--absolute-paths` — emit absolute file paths instead of paths relative to `--dir`. With `-v`/`-vv`/`-vvv`, diagnostic stderr also logs file paths and timestamp content; under `--absolute-paths` these stderr entries carry absolute paths too. Combine with `--quiet` when sharing logs externally.
 - `--max-tasks <N>` — task limit (1..=10_000_000, default 10_000). Acts as a global cap on the number of extracted tasks; the same value is reused as a per-file cap so a single hostile file cannot exhaust the global budget on its own. The scan stops as soon as either cap is hit. A separate hard limit of **10 MiB per file** is built in; oversized files are skipped and counted under `files_skipped_size` in the processing summary
@@ -544,6 +544,14 @@ same grid read from a Sunday:
 ```bash
 markdown-org-extract --dir ./notes --agenda month-grid
 markdown-org-extract --dir ./notes --agenda month-grid --week-start sunday
+```
+
+A grid over an explicit window — two months of calendar in one answer. The
+window is grown outward to the weeks it touches, so the result is always a
+whole number of weeks beginning on `--week-start`, whatever dates bound it
+([ADR-0030](docs/adr/0030-explicit-window-in-the-month-grid.md)):
+```bash
+markdown-org-extract --dir ./notes --agenda month-grid --from 2026-08-01 --to 2026-09-30
 ```
 
 Tasks across a date range:

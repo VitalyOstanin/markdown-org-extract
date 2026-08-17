@@ -274,3 +274,36 @@ info-severity, and recorded here so the rationale does not get lost.
   classify stderr without matching prose. Not needed while stderr is
   read by humans / CI; add it when `markdown-org-vscode` (or another
   consumer) starts parsing the CLI's stderr for diagnostics.
+- **A ceiling on the window width (agenda review, 2026-08-17)** —
+  `--from`/`--to` accept any range inside the validated year bounds,
+  so `--from 1900-01-01 --to 2100-12-31` materialises ~73 000
+  `DayAgenda` values, each of which walks every task. Nothing
+  malicious about it — a client that computes its window arithmetically
+  can produce one by accident — but the run is minutes long with no
+  diagnostic. A cap (or a warning past N days) needs a number that does
+  not cut off a legitimate multi-year calendar, which is why it is
+  deferred rather than picked here.
+- **One constant for the `%Y-%m-%d` format string (agenda review,
+  2026-08-17)** — the literal appears in a dozen places across
+  `agenda.rs`, `parser.rs` and `timestamp/`. A shared `const` would
+  make the wire format greppable, but the literal is also the format
+  chrono's own docs use, and a constant hides which calls parse input
+  versus format output. Do it alongside the next change that touches
+  the date format itself.
+- **`n2` from one bracket instead of a second `closest_date`
+  (agenda review, 2026-08-17)** — a scheduled cell computes its
+  occurrence with `closest_date` and then the occurrence after it with
+  `next_occurrence`, so the repeater grid is bracketed twice per drawn
+  cell (twice more against the holiday calendar for `+Nwd`). Returning
+  the pair `(n1, n2)` from one bracket would halve that. Deferred: the
+  saving is ~0.25 µs per cell, while `closest_date` has two documented
+  short-circuits before the bracket is built (`current == base_date`,
+  `current < base_date`) that a pair-returning API would have to
+  reproduce exactly — a behavioural risk out of proportion to the win.
+  Revisit if a benchmark ever shows the bracket in the profile.
+- **Signing release tags (release review, 2026-08-17)** — tags are
+  annotated but not signed, so the tag body is verified by CI
+  (`release-verify-tag-body.sh`) while its provenance is not.
+  Signing needs a key policy for the release workflow first; until
+  then the published artefact is trusted through the crates.io token,
+  as it already is.

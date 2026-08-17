@@ -177,7 +177,7 @@ fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
             from: cli.from.as_deref(),
             to: cli.to.as_deref(),
             current_date: cli.current_date.as_deref(),
-            week_start: cli.week_start.as_deref(),
+            week_start: cli.week_start.map(cli::WeekStart::as_str),
         },
         &cli.tz,
         cli.tasks_include_done,

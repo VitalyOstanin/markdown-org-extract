@@ -41,11 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `--week-start` names the weekday a week begins on: a name (`monday` …
-  `sunday`, or the three-letter form), or `today` for a week beginning on the
-  anchor day. This is upstream's `org-agenda-start-on-weekday`, whose `nil` is
-  spelled `today` here, and like upstream it reaches the week-shaped windows
-  only. Left out, it is Monday — the week every window produced before the
-  argument existed, so nothing changes for a caller that does not pass it.
+  `sunday`, or the three-letter form `mon` … `sun`), or `today` for a week
+  beginning on the anchor day. Case is ignored, the value is one of a closed
+  set — so the shell completes it and a misspelling is refused with the list
+  of what was expected, before a single note is read. This is upstream's
+  `org-agenda-start-on-weekday`, whose `nil` is spelled `today` here, and like
+  upstream it reaches the week-shaped windows only. Left out, it is Monday —
+  the week every window produced before the argument existed, so nothing
+  changes for a caller that does not pass it.
 - `--agenda month-grid`: the whole weeks a calendar month falls in, so the
   window carries the days the first and last rows of a calendar borrow from
   the months beside it. It follows `--week-start` and refuses `today`, which
@@ -64,6 +67,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   task's own timestamp, so a monthly repeater on the 31st keeps naming
   month-end, and computed only where `timestamp_next` was. See
   [ADR-0029](docs/adr/0029-next-occurrence-after-the-rendered-day.md).
+- `--agenda month-grid` accepts an explicit `--from`/`--to` window and grows
+  it outward to the weeks it touches, so the answer is a whole number of
+  weeks beginning on `--week-start` whatever bounded it. Two months of
+  calendar arrive in one call, and a client lays out every grid seven to a
+  row without inspecting what came back. See
+  [ADR-0030](docs/adr/0030-explicit-window-in-the-month-grid.md).
+
+### Fixed
+
+- A week or a grid anchored on the last days chrono can represent no longer
+  panics. The CLI could not reach it — `--date` refuses a year outside
+  1900..=2100 — but a library caller with no such bound could, and the `+ 6
+  days` that closes a week took the process down. The window is now clamped
+  to the end of the calendar instead.
+
+### Changed
+
+- `--holidays` and `--completions` refuse every agenda argument beside them,
+  `--week-start`, `--current-date`, `--locale` and `--tz` included. Both
+  short-circuit before any scanning, so an argument they cannot act on was
+  silently dropped; it is now a usage error.
 
 ## [0.16.0] — 2026-08-16
 

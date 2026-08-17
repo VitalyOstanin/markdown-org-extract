@@ -13,7 +13,9 @@
 Accepted (2026-08-17). Extends
 [ADR-0009](0009-unified-date-window-semantics.md), which fixed how the
 date-window arguments interact, with the weekday a week begins on and with
-a window upstream does not have.
+a window upstream does not have. Extended in turn by
+[ADR-0030](0030-explicit-window-in-the-month-grid.md), which settles what
+the grid does with an explicit `--from`/`--to` window.
 
 ## Context
 

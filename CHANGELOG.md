@@ -43,6 +43,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   spelled `today` here, and like upstream it reaches the week-shaped windows
   only. Left out, it is Monday — the week every window produced before the
   argument existed, so nothing changes for a caller that does not pass it.
+- `--agenda month-grid`: the whole weeks a calendar month falls in, so the
+  window carries the days the first and last rows of a calendar borrow from
+  the months beside it. It follows `--week-start` and refuses `today`, which
+  leaves a calendar without columns. The grid is as many rows as the month
+  touches, not a fixed six: February 2027 read from a Monday is four weeks
+  and borrows nothing. `--agenda month` is unchanged — it stays the calendar
+  month. See [ADR-0028](docs/adr/0028-week-start-and-the-month-grid.md).
+
 ## [0.16.0] — 2026-08-16
 
 ### Fixed

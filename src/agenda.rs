@@ -52,9 +52,10 @@ fn prepare_tasks(tasks: &[Task]) -> Vec<PreparedTask<'_>> {
 /// Result of running [`filter_agenda`]. The variant is determined by the
 /// requested [`AgendaScope`]:
 ///
-/// - [`AgendaScope::Day`] / [`AgendaScope::Week`] / [`AgendaScope::Month`]
-///   produce [`AgendaOutput::Days`] — one [`DayAgenda`] per day in the
-///   window, each carrying overdue / scheduled / upcoming buckets.
+/// - [`AgendaScope::Day`] / [`AgendaScope::Week`] / [`AgendaScope::Month`] /
+///   [`AgendaScope::MonthGrid`] produce [`AgendaOutput::Days`] — one
+///   [`DayAgenda`] per day in the window, each carrying overdue / scheduled /
+///   upcoming buckets.
 /// - [`AgendaScope::Tasks`] produces [`AgendaOutput::Tasks`] — a single
 ///   flat list filtered to actionable items, with no date bucketing.
 ///
@@ -79,6 +80,16 @@ pub enum AgendaScope {
     Week,
     /// The calendar month containing the anchor date.
     Month,
+    /// The whole weeks a calendar month falls in: the month, plus the days its
+    /// first and last weeks borrow from the months beside it.
+    ///
+    /// Upstream has no such window — `org-agenda` draws a month as the list of
+    /// its days, and the calendar of Emacs gets its entries through the
+    /// `org-diary` sexp instead. It exists here because both clients of this
+    /// crate draw the month as a grid, and the rule for which days a grid holds
+    /// depends on which weekday a week starts on — a value this crate now
+    /// owns. See ADR-0028.
+    MonthGrid,
     /// No date window: every task, as a flat list.
     Tasks,
 }
@@ -92,9 +103,9 @@ pub enum AgendaScope {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AgendaDates<'a> {
     /// Value of `--date`. Selects the window's pivot day; in `Day` scope this
-    /// is the only day, in `Week` / `Month` scope it picks the containing
-    /// week / month. Ignored if `from`/`to` is set. Rejected under `Tasks`
-    /// scope.
+    /// is the only day, in `Week` / `Month` / `MonthGrid` scope it picks the
+    /// containing week / month. Ignored if `from`/`to` is set. Rejected under
+    /// `Tasks` scope.
     pub date: Option<&'a str>,
     /// Value of `--from`. A single edge is filled from `current_date` (or
     /// today). `from > to` returns `AppError::DateRange`.
@@ -261,6 +272,17 @@ pub fn filter_agenda(
         ));
     }
 
+    // A grid draws one column per weekday, so its columns need a weekday to
+    // begin on; `today` leaves them undefined. Refused rather than quietly
+    // read as Monday, for the reason the check above exists.
+    if scope == AgendaScope::MonthGrid
+        && week_start.is_some_and(|raw| raw.trim().eq_ignore_ascii_case("today"))
+    {
+        return Err(AppError::DateRange(
+            "month-grid needs a fixed first day of the week: --week-start today has none"
+                .to_string(),
+        ));
+    }
 
     let week_start = parse_week_start(week_start)?;
 
@@ -321,6 +343,22 @@ pub fn filter_agenda(
                 get_month_for_date(parse_date_arg("date", date_str)?)
             } else {
                 get_month_for_date(today)
+            };
+
+            Ok(AgendaOutput::Days(build_week_agenda(
+                &tasks, start_date, end_date, today,
+            )))
+        }
+        AgendaScope::MonthGrid => {
+            // `week_start` is `Some` here: `today` was refused above, and the
+            // absent flag is Monday.
+            let first_day = week_start.unwrap_or(Weekday::Mon);
+            let (start_date, end_date) = if let Some(range) = parse_range(from, to, today)? {
+                range
+            } else if let Some(date_str) = date {
+                get_month_grid_for_date(parse_date_arg("date", date_str)?, first_day)
+            } else {
+                get_month_grid_for_date(today, first_day)
             };
 
             Ok(AgendaOutput::Days(build_week_agenda(
@@ -864,6 +902,19 @@ fn get_week_for_date(date: NaiveDate, week_start: Option<Weekday>) -> (NaiveDate
         None => date,
     };
     (start, start + chrono::Duration::days(6))
+}
+
+/// Get the boundaries of the grid a calendar month is drawn on: the whole
+/// weeks that the month falls in, beginning on `week_start`.
+///
+/// A month whose edges already land on the edges of a week borrows nothing —
+/// February 2027 from a Monday is four rows, not six — so the answer is the
+/// weeks the month touches rather than a fixed count of them.
+fn get_month_grid_for_date(date: NaiveDate, week_start: Weekday) -> (NaiveDate, NaiveDate) {
+    let (first_day, last_day) = get_month_for_date(date);
+    let (start, _) = get_week_for_date(first_day, Some(week_start));
+    let (_, end) = get_week_for_date(last_day, Some(week_start));
+    (start, end)
 }
 
 /// Get month boundaries (first to last day) for a specific date
@@ -3059,6 +3110,31 @@ mod tests {
     }
 
     #[test]
+    fn month_grid_fills_out_the_weeks_the_month_touches() {
+        // August 2026 opens on a Saturday and closes on a Monday, so a grid of
+        // whole Monday weeks borrows five days from July and six from
+        // September: 27.07 through 06.09, six rows of seven.
+        let (start, end) = get_month_grid_for_date(ymd(2026, 8, 12), Weekday::Mon);
+        assert_eq!((start, end), (ymd(2026, 7, 27), ymd(2026, 9, 6)));
+        assert_eq!((end - start).num_days() + 1, 42);
+    }
+
+    #[test]
+    fn month_grid_follows_the_first_day_of_the_week() {
+        let (start, end) = get_month_grid_for_date(ymd(2026, 8, 12), Weekday::Sun);
+        assert_eq!((start, end), (ymd(2026, 7, 26), ymd(2026, 9, 5)));
+    }
+
+    #[test]
+    fn month_grid_borrows_nothing_from_a_month_that_fills_its_weeks() {
+        // February 2027 runs Monday to Sunday: four rows and no borrowed days,
+        // which is the case a grid hard-coded to six rows would pad wrongly.
+        let (start, end) = get_month_grid_for_date(ymd(2027, 2, 10), Weekday::Mon);
+        assert_eq!((start, end), (ymd(2027, 2, 1), ymd(2027, 2, 28)));
+        assert_eq!((end - start).num_days() + 1, 28);
+    }
+
+    #[test]
     fn parse_week_start_reads_a_weekday_or_the_anchor() {
         assert_eq!(parse_week_start(None).unwrap(), Some(Weekday::Mon));
         assert_eq!(
@@ -3073,6 +3149,55 @@ mod tests {
         assert!(parse_week_start(Some("payday")).is_err());
     }
 
+    #[test]
+    fn month_grid_scope_returns_every_day_of_the_grid() {
+        let output = filter_agenda(
+            vec![create_test_task("2026-08-12 Wed", None, TaskType::Todo)],
+            AgendaScope::MonthGrid,
+            AgendaDates {
+                current_date: Some("2026-08-12"),
+                date: Some("2026-08-12"),
+                ..AgendaDates::default()
+            },
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect("filter_agenda");
+
+        let AgendaOutput::Days(days) = output else {
+            panic!("month-grid scope must produce days");
+        };
+        assert_eq!(days.len(), 42);
+        assert_eq!(days.first().map(|d| d.date.as_str()), Some("2026-07-27"));
+        assert_eq!(days.last().map(|d| d.date.as_str()), Some("2026-09-06"));
+    }
+
+    #[test]
+    fn month_grid_scope_refuses_an_anchor_week_start() {
+        // Columns of a calendar are a fixed weekday each; a week that starts
+        // wherever the reader stands has no columns to draw, so the
+        // combination is refused rather than quietly read as Monday.
+        let err = filter_agenda(
+            vec![],
+            AgendaScope::MonthGrid,
+            AgendaDates {
+                current_date: Some("2026-08-12"),
+                week_start: Some("today"),
+                ..AgendaDates::default()
+            },
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect_err("month-grid must refuse an anchored week start");
+        assert!(
+            err.to_string().contains("week-start"),
+            "the message must name the argument at fault, got: {err}"
+        );
+    }
 
     #[test]
     fn week_scope_honours_the_first_day_of_the_week() {

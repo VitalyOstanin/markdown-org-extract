@@ -388,7 +388,7 @@ markdown-org-extract [OPTIONS]
 - `--format <FORMAT>` — output format: `json`, `md`, `html` (default: `json`)
 - `--output <OUTPUT>` — file to write the result to; `-` means stdout (default: stdout)
 - `--locale <LOCALE>` — weekday locales, comma-separated (default: `ru,en`)
-- `--agenda <MODE>` — agenda mode: `day`, `week`, `month`, `tasks` (default: `day`)
+- `--agenda <MODE>` — agenda mode: `day`, `week`, `month`, `month-grid`, `tasks` (default: `day`). `month` is the calendar month; `month-grid` is the whole weeks that month falls in, so the first and last rows carry the days borrowed from the months beside it — the window a calendar is drawn on. See [ADR-0028](docs/adr/0028-week-start-and-the-month-grid.md)
 - `--tasks` — show all TODO tasks sorted by priority, then by date and time (alias for `--agenda tasks`)
 - `--tasks-include-done` — also include DONE tasks in the flat `--tasks` / `--agenda tasks` list (default: TODO only). No effect in `day`/`week`/`month` mode
 - `--tasks-include-cancelled` — also include cancelled tasks (either spelling, `CANCELLED` or `CANCELED`) in the flat `--tasks` / `--agenda tasks` list (default: TODO only). Independent of `--tasks-include-done`. No effect in `day`/`week`/`month` mode
@@ -537,6 +537,13 @@ markdown-org-extract --dir ./notes --agenda week
 Tasks for the current month:
 ```bash
 markdown-org-extract --dir ./notes --agenda month
+```
+
+The grid a month is drawn on — whole weeks, borrowed days included, and the
+same grid read from a Sunday:
+```bash
+markdown-org-extract --dir ./notes --agenda month-grid
+markdown-org-extract --dir ./notes --agenda month-grid --week-start sunday
 ```
 
 Tasks across a date range:

@@ -20,8 +20,12 @@ pub enum ColorMode {
 }
 
 /// Agenda time scope
+///
+/// Renamed to kebab-case rather than lower-case so a two-word scope is spelled
+/// `month-grid`; the one-word values are the same under either rule, so the
+/// existing `day` / `week` / `month` / `tasks` are untouched.
 #[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
-#[clap(rename_all = "lower")]
+#[clap(rename_all = "kebab-case")]
 pub enum AgendaMode {
     /// Single-day agenda for `--date` (default: today)
     Day,
@@ -29,6 +33,9 @@ pub enum AgendaMode {
     Week,
     /// Whole month containing `--date`, or `--from`..`--to` range
     Month,
+    /// The whole weeks the month containing `--date` falls in: the calendar
+    /// grid a month is drawn on, borrowed days included
+    MonthGrid,
     /// Flat task list (no date windowing). Equivalent to the legacy `--tasks` flag.
     Tasks,
 }
@@ -386,6 +393,7 @@ impl Cli {
             AgendaMode::Day => AgendaScope::Day,
             AgendaMode::Week => AgendaScope::Week,
             AgendaMode::Month => AgendaScope::Month,
+            AgendaMode::MonthGrid => AgendaScope::MonthGrid,
             AgendaMode::Tasks => AgendaScope::Tasks,
         }
     }

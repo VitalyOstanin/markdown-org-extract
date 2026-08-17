@@ -1123,6 +1123,85 @@ fn day_dates_in_json(stdout: &str) -> Vec<String> {
 }
 
 #[test]
+fn agenda_month_grid_covers_the_weeks_the_month_touches() {
+    // August 2026 opens on a Saturday and closes on a Monday: a grid of whole
+    // Monday weeks runs 27.07 through 06.09.
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--agenda",
+            "month-grid",
+            "--date",
+            "2026-08-12",
+            "--current-date",
+            "2026-08-12",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dates = day_dates_in_json(&String::from_utf8_lossy(&out.stdout));
+    assert_eq!(dates.len(), 42, "six rows of seven");
+    assert_eq!(dates.first().map(String::as_str), Some("2026-07-27"));
+    assert_eq!(dates.last().map(String::as_str), Some("2026-09-06"));
+}
+
+#[test]
+fn agenda_month_grid_follows_week_start() {
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--agenda",
+            "month-grid",
+            "--week-start",
+            "sunday",
+            "--date",
+            "2026-08-12",
+            "--current-date",
+            "2026-08-12",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dates = day_dates_in_json(&String::from_utf8_lossy(&out.stdout));
+    assert_eq!(dates.first().map(String::as_str), Some("2026-07-26"));
+    assert_eq!(dates.last().map(String::as_str), Some("2026-09-05"));
+}
+
+#[test]
+fn agenda_month_grid_rejects_an_anchored_week_start() {
+    bin()
+        .args([
+            "--dir",
+            "examples",
+            "--agenda",
+            "month-grid",
+            "--week-start",
+            "today",
+            "--current-date",
+            "2026-08-12",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("month-grid"));
+}
+
+#[test]
 fn agenda_week_start_shifts_the_week() {
     // The same week read from Sunday starts a day earlier. Pinned from the CLI
     // because the flag is what a client passes; the window itself is unit

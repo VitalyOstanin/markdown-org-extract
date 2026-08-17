@@ -43,7 +43,7 @@ was decided, and the trade-offs that came with it.
 | 0006 | [Do not duplicate registry duplicate-publish guards](0006-no-registry-duplicate-guard.md) | Accepted |
 | 0007 | [No test counts in README](0007-no-test-counts-in-readme.md)                           | Accepted |
 | 0008 | [Russian-locale defaults: tz, holidays, locale list](0008-rf-defaults.md)              | Accepted |
-| 0009 | [Unified date-window semantics for agenda](0009-unified-date-window-semantics.md)      | Accepted |
+| 0009 | [Unified date-window semantics for agenda](0009-unified-date-window-semantics.md)      | Accepted, extended by 0028 |
 | 0010 | [Rollback policy for published releases](0010-rollback-policy.md)                      | Accepted |
 | 0011 | [Release commit and tag format](0011-release-commit-and-tag-format.md)                 | Accepted |
 | 0012 | [Verify Org-mode semantics against upstream Elisp](0012-verify-org-semantics-against-upstream.md) | Accepted |
@@ -62,6 +62,7 @@ was decided, and the trade-offs that came with it.
 | 0025 | [The crate is a library; the CLI is a thin wrapper over it](0025-library-crate-with-thin-cli.md) | Accepted |
 | 0026 | [Several roots in one scan, and the `root` field that names them](0026-several-roots-in-one-scan.md) | Accepted |
 | 0027 | [A priority cookie is read wherever it is written, and removed only where org puts it](0027-priority-cookie-read-anywhere-removed-in-place.md) | Accepted |
+| 0028 | [A week has a first day, and a month has a grid](0028-week-start-and-the-month-grid.md) | Accepted |
 
 ## Adding a new ADR
 

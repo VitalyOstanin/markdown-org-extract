@@ -25,7 +25,7 @@ pub enum ColorMode {
 pub enum AgendaMode {
     /// Single-day agenda for `--date` (default: today)
     Day,
-    /// Week (Mon-Sun) containing `--date`, or `--from`..`--to` range
+    /// Week containing `--date` (starting on `--week-start`), or `--from`..`--to` range
     Week,
     /// Whole month containing `--date`, or `--from`..`--to` range
     Month,
@@ -180,6 +180,15 @@ pub struct Cli {
     /// edge. Not allowed in `--agenda tasks`.
     #[arg(long, value_parser = validate_date, help_heading = "Agenda")]
     pub current_date: Option<String>,
+
+    /// Which weekday a week begins on: a name (`monday` … `sunday`, or the
+    /// three-letter form) or `today` for a week beginning on the anchor day.
+    /// Default: `monday`. This is upstream's `org-agenda-start-on-weekday`,
+    /// and like it, reaches the week-shaped windows: `--agenda week` and the
+    /// columns of `--agenda month-grid`, which refuses `today`. Not allowed in
+    /// `--agenda tasks`.
+    #[arg(long, conflicts_with = "tasks", help_heading = "Agenda")]
+    pub week_start: Option<String>,
 
     /// Maximum number of tasks to extract before stopping (1..=10_000_000).
     /// Acts as a global cap on extracted tasks; the same value is reused as a

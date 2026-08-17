@@ -1103,6 +1103,74 @@ fn day_count_in_json(stdout: &str) -> usize {
     parsed.as_array().expect("top-level array").len()
 }
 
+/// The dates of the day-agendas in a JSON payload, in the order they were
+/// emitted. Used by the grid tests, which are about which days came back
+/// rather than how many.
+fn day_dates_in_json(stdout: &str) -> Vec<String> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(stdout).expect("stdout must be valid JSON");
+    parsed
+        .as_array()
+        .expect("top-level array")
+        .iter()
+        .map(|day| {
+            day.get("date")
+                .and_then(serde_json::Value::as_str)
+                .expect("every day carries a date")
+                .to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn agenda_week_start_shifts_the_week() {
+    // The same week read from Sunday starts a day earlier. Pinned from the CLI
+    // because the flag is what a client passes; the window itself is unit
+    // tested in agenda.rs.
+    let out = bin()
+        .args([
+            "--dir",
+            "examples",
+            "--agenda",
+            "week",
+            "--week-start",
+            "sunday",
+            "--current-date",
+            "2026-08-19",
+            "--format",
+            "json",
+            "--quiet",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dates = day_dates_in_json(&String::from_utf8_lossy(&out.stdout));
+    assert_eq!(dates.first().map(String::as_str), Some("2026-08-16"));
+    assert_eq!(dates.last().map(String::as_str), Some("2026-08-22"));
+}
+
+#[test]
+fn agenda_week_start_rejects_a_name_that_is_not_a_weekday() {
+    bin()
+        .args([
+            "--dir",
+            "examples",
+            "--agenda",
+            "week",
+            "--week-start",
+            "payday",
+            "--current-date",
+            "2026-08-19",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("week-start"));
+}
+
 #[test]
 fn agenda_day_with_from_to_emits_multi_day() {
     // --from/--to in day mode is no longer ignored: each day in [from..to]

@@ -5,7 +5,7 @@
 //! anchored on [`AgendaDates::current_date`] rather than the host clock so the
 //! same input always renders the same output (ADR-0015).
 
-use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Weekday};
 use chrono_tz::Tz;
 
 use crate::error::AppError;
@@ -106,6 +106,17 @@ pub struct AgendaDates<'a> {
     /// deterministic testing and for rendering the agenda as it would look on
     /// a different day. Also the default for a missing `--from`/`--to` edge.
     pub current_date: Option<&'a str>,
+    /// Value of `--week-start`: which weekday a week begins on, as a name
+    /// (`monday` … `sunday`), or `today` for a week that begins on the anchor
+    /// day. Absent means Monday, which is what every window produced before
+    /// the argument existed.
+    ///
+    /// This is upstream's `org-agenda-start-on-weekday`, whose `nil` is spelled
+    /// `today` here (org-agenda.el:1181). Like upstream, it reaches the
+    /// week-shaped windows only: `Day` has no week to align, `Month` is a
+    /// calendar month whatever the week does, and `MonthGrid` draws columns
+    /// per weekday and therefore refuses `today`.
+    pub week_start: Option<&'a str>,
 }
 
 fn parse_date_arg(label: &str, value: &str) -> Result<NaiveDate, AppError> {
@@ -205,6 +216,7 @@ pub fn filter_agenda(
         from,
         to,
         current_date: current_date_override,
+        week_start,
     } = dates;
 
     let tz: Tz = tz
@@ -234,15 +246,23 @@ pub fn filter_agenda(
 
     // Tasks scope is task-based, not date-centric -- reject any date argument
     // up-front so a stray `--date 2026-01-01 --agenda tasks` is loud, not
-    // silently ignored. See ADR-0009 for the model.
+    // silently ignored. See ADR-0009 for the model. A week start is a window
+    // argument like the rest: the flat list has no window to begin.
     if scope == AgendaScope::Tasks
-        && (date.is_some() || from.is_some() || to.is_some() || current_date_override.is_some())
+        && (date.is_some()
+            || from.is_some()
+            || to.is_some()
+            || current_date_override.is_some()
+            || week_start.is_some())
     {
         return Err(AppError::DateRange(
-            "tasks mode does not accept date arguments (--date, --from, --to, --current-date)"
+            "tasks mode does not accept date arguments (--date, --from, --to, --current-date, --week-start)"
                 .to_string(),
         ));
     }
+
+
+    let week_start = parse_week_start(week_start)?;
 
     // Reference instant for `timestamp_next`: the local wall-clock now, so a
     // timed occurrence earlier today is recognised as past. Under a
@@ -285,9 +305,9 @@ pub fn filter_agenda(
             let (start_date, end_date) = if let Some(range) = parse_range(from, to, today)? {
                 range
             } else if let Some(date_str) = date {
-                get_week_for_date(parse_date_arg("date", date_str)?)
+                get_week_for_date(parse_date_arg("date", date_str)?, week_start)
             } else {
-                get_week_for_date(today)
+                get_week_for_date(today, week_start)
             };
 
             Ok(AgendaOutput::Days(build_week_agenda(
@@ -810,13 +830,40 @@ fn build_week_agenda(
     result
 }
 
-/// Get week boundaries (Monday to Sunday) for a specific date
-fn get_week_for_date(date: NaiveDate) -> (NaiveDate, NaiveDate) {
-    let weekday = date.weekday();
-    let days_from_monday = weekday.num_days_from_monday();
-    let monday = date - chrono::Duration::days(days_from_monday as i64);
-    let sunday = monday + chrono::Duration::days(6);
-    (monday, sunday)
+/// Read `--week-start` into the weekday a week begins on.
+///
+/// `None` in the answer is upstream's `nil`: the week has no fixed first day
+/// and begins wherever the anchor stands. `None` in the argument — the flag
+/// left out — is Monday, the week every window produced before the flag
+/// existed.
+fn parse_week_start(value: Option<&str>) -> Result<Option<Weekday>, AppError> {
+    let Some(raw) = value else {
+        return Ok(Some(Weekday::Mon));
+    };
+    let name = raw.trim().to_ascii_lowercase();
+    if name == "today" {
+        return Ok(None);
+    }
+    // `Weekday::from_str` takes the three-letter abbreviations as well as the
+    // full names, so `mon` and `monday` both land here.
+    name.parse::<Weekday>().map(Some).map_err(|_| {
+        AppError::DateRange(format!(
+            "week-start '{raw}' is not a weekday name or 'today'"
+        ))
+    })
+}
+
+/// Get week boundaries for a specific date: seven days beginning on
+/// `week_start`, or on `date` itself when the week has no fixed first day.
+fn get_week_for_date(date: NaiveDate, week_start: Option<Weekday>) -> (NaiveDate, NaiveDate) {
+    let start = match week_start {
+        Some(first) => {
+            let offset = date.weekday().days_since(first);
+            date - chrono::Duration::days(offset as i64)
+        }
+        None => date,
+    };
+    (start, start + chrono::Duration::days(6))
 }
 
 /// Get month boundaries (first to last day) for a specific date
@@ -2985,5 +3032,69 @@ mod tests {
             0,
             "CLOSED-typed timestamps must never enter the upcoming bucket"
         );
+    }
+
+    // ---- week start and the month grid ----
+
+    #[test]
+    fn week_start_defaults_to_monday() {
+        // No `--week-start` is the behaviour every existing caller has, so it
+        // has to stay the Monday-to-Sunday week the scope always produced.
+        let (start, end) = get_week_for_date(ymd(2026, 8, 19), Some(Weekday::Mon));
+        assert_eq!((start, end), (ymd(2026, 8, 17), ymd(2026, 8, 23)));
+    }
+
+    #[test]
+    fn week_start_sunday_moves_both_edges_back_a_day() {
+        let (start, end) = get_week_for_date(ymd(2026, 8, 19), Some(Weekday::Sun));
+        assert_eq!((start, end), (ymd(2026, 8, 16), ymd(2026, 8, 22)));
+    }
+
+    #[test]
+    fn week_start_today_begins_the_window_on_the_anchor() {
+        // Upstream's `org-agenda-start-on-weekday` set to nil: the seven days
+        // start where the reader is rather than on a fixed weekday.
+        let (start, end) = get_week_for_date(ymd(2026, 8, 19), None);
+        assert_eq!((start, end), (ymd(2026, 8, 19), ymd(2026, 8, 25)));
+    }
+
+    #[test]
+    fn parse_week_start_reads_a_weekday_or_the_anchor() {
+        assert_eq!(parse_week_start(None).unwrap(), Some(Weekday::Mon));
+        assert_eq!(
+            parse_week_start(Some("sunday")).unwrap(),
+            Some(Weekday::Sun)
+        );
+        assert_eq!(
+            parse_week_start(Some("MONDAY")).unwrap(),
+            Some(Weekday::Mon)
+        );
+        assert_eq!(parse_week_start(Some("today")).unwrap(), None);
+        assert!(parse_week_start(Some("payday")).is_err());
+    }
+
+
+    #[test]
+    fn week_scope_honours_the_first_day_of_the_week() {
+        let output = filter_agenda(
+            vec![],
+            AgendaScope::Week,
+            AgendaDates {
+                current_date: Some("2026-08-19"),
+                week_start: Some("sunday"),
+                ..AgendaDates::default()
+            },
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect("filter_agenda");
+
+        let AgendaOutput::Days(days) = output else {
+            panic!("week scope must produce days");
+        };
+        assert_eq!(days.first().map(|d| d.date.as_str()), Some("2026-08-16"));
+        assert_eq!(days.last().map(|d| d.date.as_str()), Some("2026-08-22"));
     }
 }

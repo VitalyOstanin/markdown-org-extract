@@ -35,6 +35,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--week-start` names the weekday a week begins on: a name (`monday` …
+  `sunday`, or the three-letter form), or `today` for a week beginning on the
+  anchor day. This is upstream's `org-agenda-start-on-weekday`, whose `nil` is
+  spelled `today` here, and like upstream it reaches the week-shaped windows
+  only. Left out, it is Monday — the week every window produced before the
+  argument existed, so nothing changes for a caller that does not pass it.
 ## [0.16.0] — 2026-08-16
 
 ### Fixed

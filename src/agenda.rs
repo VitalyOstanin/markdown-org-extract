@@ -691,6 +691,37 @@ fn format_repeating_timestamp(
     }
 }
 
+/// The occurrence after the one being drawn: what `timestamp_next_after`
+/// carries.
+///
+/// Read from the task's own date rather than from `day_date`, for the reason
+/// [`annotate_next_occurrences`] gives — a monthly repeater anchored on the
+/// 31st is truncated to 28.02 by `bracket_month` and never climbs back once
+/// restarted from there. The clock time plays no part: the question is which
+/// day comes next, and the day being drawn is excluded by asking from the day
+/// after it.
+fn next_after_day(
+    task: &Task,
+    repeater: &crate::timestamp::Repeater,
+    day_date: NaiveDate,
+) -> Option<String> {
+    // Only where the now-relative field was filled in. Both exist for the same
+    // consumer and only the JSON renderer prints either, so the caller that
+    // skipped `annotate_next_occurrences` is not made to pay for this one --
+    // on a month of a few thousand repeating tasks that is the difference
+    // between 107 ms and 137 ms of `--format md`.
+    task.timestamp_next.as_ref()?;
+
+    let base = task
+        .timestamp_date
+        .as_deref()
+        .and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok())?;
+    let after = day_date.succ_opt()?;
+
+    next_occurrence(base, repeater, None, after.and_time(NaiveTime::MIN))
+        .map(|date| date.format("%Y-%m-%d").to_string())
+}
+
 fn push_scheduled_occurrence(
     task: &Task,
     repeater: &crate::timestamp::Repeater,
@@ -698,6 +729,7 @@ fn push_scheduled_occurrence(
     agenda: &mut DayAgenda,
 ) {
     let mut task_copy = task.clone();
+    task_copy.timestamp_next_after = next_after_day(task, repeater, day_date);
     task_copy.timestamp_date = Some(day_date.format("%Y-%m-%d").to_string());
 
     if let Some(ref ts_type) = task.timestamp_type {
@@ -1303,6 +1335,7 @@ mod tests {
             timestamp_end_time: None,
             timestamp_repeater: None,
             timestamp_next: None,
+            timestamp_next_after: None,
             clocks: None,
             total_clock_time: None,
             properties: None,
@@ -1336,6 +1369,7 @@ mod tests {
             timestamp_end_time: None,
             timestamp_repeater: None,
             timestamp_next: None,
+            timestamp_next_after: None,
             clocks: None,
             total_clock_time: None,
             properties: None,
@@ -1456,6 +1490,7 @@ mod tests {
             timestamp_end_time: None,
             timestamp_repeater: None,
             timestamp_next: None,
+            timestamp_next_after: None,
             clocks: None,
             total_clock_time: None,
             properties: None,
@@ -1732,6 +1767,7 @@ mod tests {
             timestamp_end_time: None,
             timestamp_repeater: None,
             timestamp_next: None,
+            timestamp_next_after: None,
             clocks: None,
             total_clock_time: None,
             properties: None,
@@ -1767,6 +1803,7 @@ mod tests {
             timestamp_end_time: None,
             timestamp_repeater: None,
             timestamp_next: None,
+            timestamp_next_after: None,
             clocks: None,
             total_clock_time: None,
             properties: None,
@@ -2836,6 +2873,7 @@ mod tests {
             timestamp_end_time: None,
             timestamp_repeater: None,
             timestamp_next: None,
+            timestamp_next_after: None,
             clocks: None,
             total_clock_time: None,
             properties: None,
@@ -3196,6 +3234,147 @@ mod tests {
         assert!(
             err.to_string().contains("week-start"),
             "the message must name the argument at fault, got: {err}"
+        );
+    }
+
+    /// The date each scheduled cell carries, paired with the occurrence it
+    /// says comes after it.
+    fn collect_dated_next_after(output: &AgendaOutput) -> Vec<(String, Option<String>)> {
+        let AgendaOutput::Days(days) = output else {
+            panic!("expected a dated payload");
+        };
+        days.iter()
+            .flat_map(|day| day.scheduled_timed.iter().chain(&day.scheduled_no_time))
+            .map(|item| {
+                (
+                    item.task.timestamp_date.clone().unwrap_or_default(),
+                    item.task.timestamp_next_after.clone(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn next_after_names_the_occurrence_following_the_cell() {
+        // The tooltip question is "when is the next one after the day I am
+        // reading", so each cell has to answer for itself rather than repeat
+        // the now-relative `timestamp_next`.
+        let output = filter_agenda(
+            vec![repeating_task("2026-08-17 Mon", "+1d", Some("12:00"))],
+            AgendaScope::Week,
+            AgendaDates {
+                current_date: Some("2026-08-17"),
+                date: Some("2026-08-17"),
+                ..AgendaDates::default()
+            },
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect("filter_agenda");
+
+        let pairs = collect_dated_next_after(&output);
+        assert_eq!(
+            pairs
+                .iter()
+                .find(|(date, _)| date == "2026-08-18")
+                .map(|(_, next)| next.as_deref()),
+            Some(Some("2026-08-19")),
+            "the cell of the 18th must name the 19th, not today; got {pairs:?}"
+        );
+        assert_eq!(
+            pairs
+                .iter()
+                .find(|(date, _)| date == "2026-08-17")
+                .map(|(_, next)| next.as_deref()),
+            Some(Some("2026-08-18"))
+        );
+    }
+
+    #[test]
+    fn next_after_keeps_month_end_for_a_monthly_repeater() {
+        // Anchored on the 31st: computed from the rewritten date, February
+        // would truncate the anchor to the 28th and never climb back.
+        let output = filter_agenda(
+            vec![repeating_task("2026-01-31 Sat", "++1m", None)],
+            AgendaScope::Month,
+            AgendaDates {
+                current_date: Some("2026-03-01"),
+                date: Some("2026-03-01"),
+                ..AgendaDates::default()
+            },
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect("filter_agenda");
+
+        let pairs = collect_dated_next_after(&output);
+        assert_eq!(
+            pairs
+                .iter()
+                .find(|(date, _)| date == "2026-03-31")
+                .map(|(_, next)| next.as_deref()),
+            Some(Some("2026-04-30")),
+            "a monthly repeater must keep naming month-end; got {pairs:?}"
+        );
+    }
+
+    #[test]
+    fn next_after_is_absent_from_the_borrowed_buckets() {
+        // Overdue and upcoming are copies borrowed into today's agenda; there
+        // the question is still "next from now", which `timestamp_next`
+        // answers, so the per-cell field stays out of them.
+        let output = filter_agenda(
+            vec![repeating_task("2026-08-10 Mon", "+1d", None)],
+            AgendaScope::Day,
+            AgendaDates {
+                current_date: Some("2026-08-17"),
+                date: Some("2026-08-17"),
+                ..AgendaDates::default()
+            },
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect("filter_agenda");
+
+        let AgendaOutput::Days(days) = &output else {
+            panic!("expected a dated payload");
+        };
+        assert!(
+            days.iter()
+                .flat_map(|day| day.overdue.iter().chain(&day.upcoming))
+                .all(|item| item.task.timestamp_next_after.is_none()),
+            "borrowed copies must not carry the per-cell field"
+        );
+    }
+
+    #[test]
+    fn next_after_is_absent_without_a_repeater() {
+        let output = filter_agenda(
+            vec![create_test_task("2026-08-18 Tue", None, TaskType::Todo)],
+            AgendaScope::Day,
+            AgendaDates {
+                current_date: Some("2026-08-18"),
+                date: Some("2026-08-18"),
+                ..AgendaDates::default()
+            },
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect("filter_agenda");
+
+        assert!(
+            collect_dated_next_after(&output)
+                .iter()
+                .all(|(_, next)| next.is_none()),
+            "a task with no repeater has no occurrence after this one"
         );
     }
 

@@ -393,6 +393,7 @@ fn finalize_task(path: &Path, info: HeadingInfo, ts_warning_counter: &mut usize)
         // Populated later by `annotate_next_occurrences` (needs the agenda
         // reference date, which the parser does not have).
         timestamp_next: None,
+        timestamp_next_after: None,
         clocks: clocks_opt,
         total_clock_time: total_time,
         properties,

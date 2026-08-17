@@ -332,6 +332,24 @@ pub struct Task {
     /// repeat tooltip so "next" never names a past occurrence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_next: Option<String>,
+    /// Resolved next occurrence date (`YYYY-MM-DD`) **after the day this copy
+    /// is dated to**, for a repeating task rendered on one of its occurrences.
+    /// Where `timestamp_next` answers "when is the next one from now" and
+    /// carries the same value in every cell, this answers "when is the one
+    /// after this" and differs per cell.
+    ///
+    /// Present only on the scheduled buckets, which are the cells a task is
+    /// drawn on its own date. It is absent from `overdue` and `upcoming`,
+    /// whose entries are copies borrowed into today's agenda: there the
+    /// question is still "when next from now", which `timestamp_next` answers.
+    ///
+    /// Anchored on the task's own date rather than on the rewritten one, for
+    /// the reason `annotate_next_occurrences` documents: a monthly repeater
+    /// anchored on the 31st loses its day-of-month if it is restarted from a
+    /// truncated 28.02. Added as a non-breaking optional field under
+    /// ADR-0015; see ADR-0029.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp_next_after: Option<String>,
     /// `CLOCK:` entries recorded in the task body, in file order.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clocks: Option<Vec<ClockEntry>>,
@@ -755,6 +773,7 @@ mod tests {
             timestamp_end_time: None,
             timestamp_repeater: None,
             timestamp_next: None,
+            timestamp_next_after: None,
             clocks: None,
             total_clock_time: None,
             properties: None,

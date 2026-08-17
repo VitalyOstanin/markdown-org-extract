@@ -50,6 +50,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   touches, not a fixed six: February 2027 read from a Monday is four weeks
   and borrows nothing. `--agenda month` is unchanged — it stays the calendar
   month. See [ADR-0028](docs/adr/0028-week-start-and-the-month-grid.md).
+- `timestamp_next_after` — a second date on a repeating task, naming the
+  occurrence that follows the day the cell is dated to. `timestamp_next`
+  reads the same in every cell, which is right for a flat list and for the
+  rows an agenda borrows into today, but under the cursor it made a `+1d`
+  task on the 18th say "next 17.08" — a date behind its own row. The new
+  field says `2026-08-19` there, and is filled only in the scheduled
+  buckets, where a task is drawn on a day of its own; `overdue` and
+  `upcoming` keep answering from now with `timestamp_next`. Anchored on the
+  task's own timestamp, so a monthly repeater on the 31st keeps naming
+  month-end, and computed only where `timestamp_next` was. See
+  [ADR-0029](docs/adr/0029-next-occurrence-after-the-rendered-day.md).
 
 ## [0.16.0] — 2026-08-16
 

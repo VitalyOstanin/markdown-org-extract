@@ -1110,6 +1110,17 @@ rolling is deterministic). It is absent for non-repeating tasks and
 `--tasks` mode never carries it. See
 [ADR-0023](docs/adr/0023-next-occurrence-field.md).
 
+A repeating task drawn on a day of its own — the `scheduled_timed` and
+`scheduled_no_time` buckets — carries a second date,
+`timestamp_next_after` (`YYYY-MM-DD`): the first occurrence *after* that
+cell's day, whatever "now" is. A `+1d` task read in the cell of the 18th
+gives `2026-08-19` there and `2026-08-20` in the cell of the 19th, while
+`timestamp_next` stays the same in both. The `overdue` and `upcoming`
+buckets do not carry it — their rows are borrowed into the reference day
+rather than drawn on their own date, so "next from now" is still the
+question there. See
+[ADR-0029](docs/adr/0029-next-occurrence-after-the-rendered-day.md).
+
 #### Markdown
 
 File paths and timestamps are wrapped in inline code (`` `...` ``) to
@@ -1167,6 +1178,11 @@ To let downstream consumers render agendas without re-parsing the
   `YYYY-MM-DD`, for repeating tasks in the `day`/`week`/`month` agenda
   modes only (see [Repeating tasks](#repeating-tasks) and
   [ADR-0023](docs/adr/0023-next-occurrence-field.md))
+- `timestamp_next_after` — the occurrence following this cell's own day
+  as `YYYY-MM-DD`, for repeating tasks in the scheduled buckets only
+  (see [Occurrence after this
+  one](#occurrence-after-this-one-timestamp_next_after) and
+  [ADR-0029](docs/adr/0029-next-occurrence-after-the-rendered-day.md))
 
 #### Task properties
 
@@ -1239,6 +1255,30 @@ applies. The field is absent for non-repeating tasks, for a repeater the
 parser rejects, and in the date-less `--tasks` mode (ADR-0009), which
 stays deterministic. See
 [ADR-0023](docs/adr/0023-next-occurrence-field.md).
+
+### Occurrence after this one (`timestamp_next_after`)
+
+`timestamp_next` answers "when does this come round next" and reads the
+same in every cell. A reader looking at one particular day asks a
+different question — "and after this one?" — which
+`timestamp_next_after` answers:
+
+- it is the first occurrence strictly after the day the cell is dated to,
+  so a `+1d` task gives `2026-08-19` in the cell of the 18th and
+  `2026-08-20` in the cell of the 19th;
+- it is filled only in the scheduled buckets, where the task is drawn on
+  a day of its own. The `overdue` and `upcoming` rows are copies borrowed
+  into the reference day, so they keep `timestamp_next` and leave this
+  field out;
+- the clock time plays no part: the search starts at midnight of the day
+  after the cell, so a 14:00 task read at 22:00 still names the next day
+  rather than skipping one;
+- the anchor is the task's own timestamp, as for `timestamp_next`, so a
+  monthly repeater anchored on the 31st keeps naming month-end.
+
+A consumer rendering a repeat tooltip reads `timestamp_next_after` on a
+dated row and `timestamp_next` on an overdue or upcoming one. See
+[ADR-0029](docs/adr/0029-next-occurrence-after-the-rendered-day.md).
 
 ### Working days
 

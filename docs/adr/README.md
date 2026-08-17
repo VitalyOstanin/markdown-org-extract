@@ -63,6 +63,7 @@ was decided, and the trade-offs that came with it.
 | 0026 | [Several roots in one scan, and the `root` field that names them](0026-several-roots-in-one-scan.md) | Accepted |
 | 0027 | [A priority cookie is read wherever it is written, and removed only where org puts it](0027-priority-cookie-read-anywhere-removed-in-place.md) | Accepted |
 | 0028 | [A week has a first day, and a month has a grid](0028-week-start-and-the-month-grid.md) | Accepted |
+| 0029 | [`timestamp_next_after` — the occurrence after the day being drawn](0029-next-occurrence-after-the-rendered-day.md) | Accepted |
 
 ## Adding a new ADR
 

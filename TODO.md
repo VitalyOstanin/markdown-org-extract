@@ -67,15 +67,46 @@ from the user.
 
 ## Property-based and fuzz tests
 
-Risk areas:
+The suite is 110 CLI tests and some 285 unit tests, all of them by example.
+The parts that carry the most arithmetic -- the calendar and the repeaters --
+are exactly the parts an example set covers thinnest, because a wrong answer
+there needs a particular date to show itself.
 
-- `closest_date` across all combinations of `value`, `unit`, and
-  `prefer` — invariant `Past <= current <= Future`.
-- `parse_repeater(format(...))` round-trip.
-- `add_months` associativity.
+Two separate pieces of work, and the first is much the cheaper.
 
-Tools: `proptest` or `quickcheck`. `cargo-fuzz` for the regexes under
-`timestamp/*`.
+### Properties (`proptest`)
+
+One dev-dependency, tests run inside the ordinary `cargo test`, nothing new on
+CI. Invariants worth stating:
+
+| # | Where | Property |
+|---|-------|----------|
+| 1 | `get_month_grid_for_date` (`src/agenda.rs`) | the grid is whole weeks, begins on the requested `week_start`, and holds every day of the anchor month exactly once |
+| 2 | `next_after_day` (`src/agenda.rs`) | the occurrence returned is strictly after the day asked about, belongs to the rule, and does not change when the same question is asked twice |
+| 3 | the agenda ordering (`src/agenda.rs`, the `cmp` chain) | the order is total and antisymmetric: no three rows form a cycle |
+| 4 | `extract_tasks` / `parse_heading_line` (`src/parser.rs`) | arbitrary markdown neither panics nor loses a line, and every offset reported lands inside the input |
+| 5 | `compile_bounded` (`src/regex_limits.rs`) | input of any length finishes within the bound the module exists to enforce |
+| 6 | `closest_date` | across all combinations of `value`, `unit`, `prefer`: `Past <= current <= Future` |
+| 7 | `parse_repeater(format(...))` | round-trip |
+| 8 | `add_months` | associativity |
+
+### Fuzzing (`cargo-fuzz`)
+
+The target is real: the tool reads markdown it did not write, from files whose
+names are arbitrary non-NUL bytes on Linux (`src/scan.rs`, `src/types.rs`
+already say so). Worth pointing at `extract_tasks` and the timestamp parsing,
+not at the CLI as a whole.
+
+What it costs, and what it will not find: a nightly toolchain, a `fuzz/`
+directory with a manifest of its own (outside the workspace), a corpus to keep
+somewhere, and a run long enough to be worth starting -- so a scheduled job or
+a manual one, not every push. Safe Rust with bounds checks rules out the whole
+class of findings fuzzing is run for in C; what is left to catch here is
+panics, overflow in the date arithmetic, and inputs that take pathologically
+long.
+
+Order: properties first (they cover the calendar and the repeaters, where the
+mistakes have actually been), fuzzing second and only for the parser.
 
 ## Coverage reporting and threshold
 

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [\[Unreleased\]](#unreleased)
+- [\[0.18.0\] — 2026-08-21](#0180--2026-08-21)
 - [\[0.17.0\] — 2026-08-17](#0170--2026-08-17)
 - [\[0.16.0\] — 2026-08-16](#0160--2026-08-16)
 - [\[0.15.0\] — 2026-08-11](#0150--2026-08-11)
@@ -36,17 +37,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-08-21
+
 ### Added
 
 - Exceptions to a repeating entry, in the shape iCalendar settled on and
-  written with the `org-properties` keys of ADR-0020 (ADR-0031):
+  written with the `org-properties` keys of ADR-0020 (ADR-0031, ADR-0032):
   - `EXDATE: 2026-08-20, 2026-08-27` on a repeating entry names occurrences
     the series does not have. They are gone from the day cells, from the
-    arrears, and from `timestamp_next` / `timestamp_next_after`.
+    arrears, from the deadlines coming up, and from `timestamp_next` /
+    `timestamp_next_after`; every one of those names the next occurrence that
+    still stands, so a cancelled one moves the answer along instead of
+    emptying it.
   - An entry carrying `SERIES_ID` and `RECURRENCE_ID: 2026-08-20 15:00`
     stands in for the one occurrence it names, and needs no `EXDATE` beside
     it — a replacement is not a cancellation. It is an ordinary entry
-    otherwise, with its own state, body and clocks.
+    otherwise, with its own state, body and clocks, and it carries that
+    occurrence's debt: the series is not owed for a date that moved, only for
+    one that never was.
   - Both reach the JSON as fields of their own: `excluded_dates`,
     `recurrence_id`, `series_id` (additive under ADR-0015).
 

@@ -10,8 +10,8 @@ use chrono_tz::Tz;
 
 use crate::error::AppError;
 use crate::exceptions::{ExcludedOccurrences, OccurrenceExceptions};
-use crate::timestamp::{parse_org_timestamp, ParsedTimestamp};
 use crate::types::{DayAgenda, Task, TaskType, TaskWithOffset};
+use crate::timestamp::{parse_org_timestamp, DatePreference, ParsedTimestamp};
 
 const DEADLINE_WARNING_DAYS: i64 = 14;
 
@@ -496,7 +496,7 @@ fn next_occurrence(
     now: NaiveDateTime,
     excluded: &ExcludedOccurrences,
 ) -> Option<NaiveDate> {
-    use crate::timestamp::{closest_date, DatePreference};
+    use crate::timestamp::closest_date;
 
     let today = now.date();
     let next = closest_date(base, today, DatePreference::Future, repeater);
@@ -508,60 +508,90 @@ fn next_occurrence(
     } else {
         next
     };
-    skip_excluded(base, repeater, next, excluded)
+    skip_excluded(base, repeater, next, excluded, Walk::Upcoming)
 }
 
-/// Walk forward past the occurrences an entry does not have (ADR-0031).
+/// Which way a walk over a series runs, and what an occurrence that moved
+/// means to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Walk {
+    /// Forward, to the occurrence that is coming up. Both reasons take an
+    /// occurrence out of the day it would have fallen on, so the walk steps
+    /// past either and answers with the next one that still stands.
+    Upcoming,
+    /// Backward, to the occurrence the entry is in arrears for. A cancelled
+    /// occurrence never was, so the walk carries on past it; a replaced one
+    /// did take place — in the entry that replaced it, which owes the debt
+    /// itself — so the walk ends there rather than reaching further back and
+    /// making the series look older than it was before the move (ADR-0032).
+    Arrears,
+}
+
+impl Walk {
+    /// Which side of a day this walk looks for an occurrence on.
+    fn prefer(self) -> DatePreference {
+        match self {
+            Walk::Upcoming => DatePreference::Future,
+            Walk::Arrears => DatePreference::Past,
+        }
+    }
+
+    /// The day past `date` the next candidate is bracketed from.
+    ///
+    /// A step of one day rather than none, because `closest_date` answers with
+    /// the day itself when the series falls on it: asked again from `date`,
+    /// the walk would stand still on the occurrence it has just rejected.
+    fn beyond(self, date: NaiveDate) -> Option<NaiveDate> {
+        match self {
+            Walk::Upcoming => date.succ_opt(),
+            Walk::Arrears => date.pred_opt(),
+        }
+    }
+
+    /// Whether meeting a replaced occurrence ends this walk rather than being
+    /// stepped over.
+    fn ends_at_a_replacement(self) -> bool {
+        matches!(self, Walk::Arrears)
+    }
+}
+
+/// Walk past the occurrences an entry does not have, the way `walk` asks for
+/// (ADR-0031, ADR-0032).
 ///
-/// Bounded by the number of exceptions: every step consumes one of them, so a
-/// series cannot be walked in circles by a corpus that lists the same date
-/// twice or by a repeater that fails to advance.
+/// One body for both directions: the bound below is the part worth keeping in
+/// one place, and a mirrored copy of it could drift from this one without the
+/// compiler noticing.
+///
+/// Bounded by the number of exceptions, and the bound cannot be reached: every
+/// step lands strictly past the candidate before it — that is the contract of
+/// `closest_date` — so `excluded.len() + 1` candidates cannot all be
+/// exceptions of a set holding `excluded.len()` of them. The bound is what
+/// makes that argument safe to rely on rather than a fallback: without it, a
+/// repeater that failed to advance would be walked in circles. The `None`
+/// after the loop is therefore unreachable, and the answers of `None` that do
+/// happen are the two `?` inside it — the end of the calendar, and a series
+/// with no occurrence on that side of the day at all.
 fn skip_excluded(
     base: NaiveDate,
     repeater: &crate::timestamp::Repeater,
     from: Option<NaiveDate>,
     excluded: &ExcludedOccurrences,
+    walk: Walk,
 ) -> Option<NaiveDate> {
-    use crate::timestamp::{closest_date, DatePreference};
+    use crate::timestamp::closest_date;
 
     let mut candidate = from?;
     for _ in 0..=excluded.len() {
-        if !excluded.contains(&candidate) {
-            return Some(candidate);
-        }
-        let after = candidate.succ_opt()?;
-        candidate = closest_date(base, after, DatePreference::Future, repeater)?;
-    }
-    None
-}
-
-/// Walk backward past the occurrences an entry does not have, to the arrears.
-///
-/// The mirror of [`skip_excluded`] only as far as the two reasons agree. A
-/// cancelled occurrence never was, so the debt is whichever earlier one still
-/// stands and the walk carries on. A replaced one did take place — in the
-/// entry that replaced it, which carries the debt itself — so the series owes
-/// nothing and the walk ends there rather than reaching further back and
-/// making the series look older than it was before the move (ADR-0031).
-fn skip_excluded_backwards(
-    base: NaiveDate,
-    repeater: &crate::timestamp::Repeater,
-    from: Option<NaiveDate>,
-    excluded: &ExcludedOccurrences,
-) -> Option<NaiveDate> {
-    use crate::timestamp::{closest_date, DatePreference};
-
-    let mut candidate = from?;
-    for _ in 0..=excluded.len() {
-        if excluded.is_replaced(&candidate) {
+        if walk.ends_at_a_replacement() && excluded.is_replaced(&candidate) {
             return None;
         }
         if !excluded.contains(&candidate) {
             return Some(candidate);
         }
-        let before = candidate.pred_opt()?;
-        candidate = closest_date(base, before, DatePreference::Past, repeater)?;
+        candidate = closest_date(base, walk.beyond(candidate)?, walk.prefer(), repeater)?;
     }
+    // Unreachable by the bound above. Left as an answer rather than a panic:
+    // an invariant that holds by construction is not worth ending a run over.
     None
 }
 
@@ -931,19 +961,20 @@ fn handle_repeating_task(
     excluded: &ExcludedOccurrences,
     agenda: &mut DayAgenda,
 ) {
-    use crate::timestamp::{closest_date, DatePreference};
+    use crate::timestamp::closest_date;
 
     let base_date = parsed.date;
     let is_today = day_date == current_date;
 
     // An occurrence that was cancelled or moved is not owed. Which one is
     // owed instead depends on why it is missing, and that is what
-    // `skip_excluded_backwards` reads apart (ADR-0032).
-    let deadline = skip_excluded_backwards(
+    // `Walk::Arrears` reads apart (ADR-0032).
+    let deadline = skip_excluded(
         base_date,
         repeater,
         closest_date(base_date, current_date, DatePreference::Past, repeater),
         excluded,
+        Walk::Arrears,
     );
     // `repeat` is "should this exact day show the recurring task?" — that
     // question is local to `day_date`, not to `current_date`, otherwise past
@@ -1019,7 +1050,13 @@ fn handle_repeating_task(
                     // and what is coming up is the next one that does. Dropping
                     // it here would contradict `timestamp_next`, which names
                     // that occurrence in the same payload.
-                    skip_excluded(base_date, repeater, Some(base_date), excluded)
+                    skip_excluded(
+                        base_date,
+                        repeater,
+                        Some(base_date),
+                        excluded,
+                        Walk::Upcoming,
+                    )
                 } else {
                     None
                 };
@@ -1601,6 +1638,129 @@ mod tests {
             "only the replacement is owed; the series must not be owed for an occurrence that moved"
         );
     }
+
+    /// The occurrences one entry misses, as a run works them out: the dates it
+    /// cancels itself, and the ones entries of their own stand in for.
+    fn exceptions(cancelled: &[&str], replaced: &[&str]) -> ExcludedOccurrences {
+        let mut series = series_task("2026-08-13 Thu", "+1w", None, "series-1");
+        series.excluded_dates = Some(cancelled.iter().map(|d| (*d).to_string()).collect());
+        let run: Vec<Task> = replaced
+            .iter()
+            .map(|date| replacement_task(date, "18:00", "series-1", date))
+            .collect();
+        OccurrenceExceptions::from_tasks(&run).dates_for(&series)
+    }
+
+    #[test]
+    fn a_run_of_cancelled_occurrences_is_walked_past_in_one_answer() {
+        // Two Thursdays in a row are cancelled. One answer is all an entry
+        // has -- `timestamp_next` is a single field -- so the walk has to step
+        // over both of them in it; stopping at the first exception would name
+        // a date the series does not have.
+        let rep = parse_repeater("+1w").unwrap();
+        let next = next_occurrence(
+            ymd(2026, 8, 13),
+            &rep,
+            None,
+            dt(2026, 8, 17, 10, 0),
+            &exceptions(&["2026-08-20", "2026-08-27"], &[]),
+        );
+        assert_eq!(next, Some(ymd(2026, 9, 3)));
+    }
+
+    #[test]
+    fn a_cancelled_occurrence_and_a_moved_one_are_both_walked_past() {
+        // The two reasons part ways over a debt, not over whether the day
+        // holds the series (ADR-0032). Forward, each of them takes its
+        // occurrence out, and the answer is the first one that still stands --
+        // however the run happens to mix them.
+        let rep = parse_repeater("+1w").unwrap();
+        let next = next_occurrence(
+            ymd(2026, 8, 13),
+            &rep,
+            None,
+            dt(2026, 8, 17, 10, 0),
+            &exceptions(&["2026-08-20"], &["2026-08-27"]),
+        );
+        assert_eq!(next, Some(ymd(2026, 9, 3)));
+    }
+
+    #[test]
+    fn a_cancelled_date_the_series_never_falls_on_changes_nothing() {
+        // `EXDATE` is written by hand and can name a Saturday of a series that
+        // runs on Thursdays. Such a date widens the walk and must do nothing
+        // else: the next Thursday is still the next Thursday.
+        let rep = parse_repeater("+1w").unwrap();
+        let next = next_occurrence(
+            ymd(2026, 8, 13),
+            &rep,
+            None,
+            dt(2026, 8, 17, 10, 0),
+            &exceptions(&["2026-08-22"], &[]),
+        );
+        assert_eq!(next, Some(ymd(2026, 8, 20)));
+    }
+
+    #[test]
+    fn a_long_run_of_cancelled_occurrences_still_names_the_one_that_follows() {
+        // The walk is bounded by the number of exceptions, and the bound has
+        // to be one step wider than that number: ten cancelled Thursdays take
+        // ten steps, and the eleventh candidate is the answer. A bound short
+        // by one would answer with nothing here, and the entry would lose its
+        // next occurrence instead of skipping the ones it does not have.
+        let dates: Vec<String> = (0..10)
+            .map(|week| {
+                (ymd(2026, 8, 20) + chrono::Duration::weeks(week))
+                    .format("%Y-%m-%d")
+                    .to_string()
+            })
+            .collect();
+        let cancelled: Vec<&str> = dates.iter().map(String::as_str).collect();
+        let rep = parse_repeater("+1w").unwrap();
+        let next = next_occurrence(
+            ymd(2026, 8, 13),
+            &rep,
+            None,
+            dt(2026, 8, 17, 10, 0),
+            &exceptions(&cancelled, &[]),
+        );
+        assert_eq!(next, Some(ymd(2026, 10, 29)));
+    }
+
+    #[test]
+    fn arrears_are_walked_back_over_every_occurrence_that_was_cancelled() {
+        // Two cancelled Thursdays in a row: what is owed on the 24th is the
+        // 6th, the last occurrence that still stands, and not the later of the
+        // two dates the series does not have.
+        let mut task = repeating_task("2026-08-06 Thu", "+1w", None);
+        task.heading = "Water the flowers".to_string();
+        task.excluded_dates = Some(vec!["2026-08-13".to_string(), "2026-08-20".to_string()]);
+
+        let output = filter_agenda(
+            vec![task],
+            AgendaScope::Day,
+            AgendaDates {
+                current_date: Some("2026-08-24"),
+                ..AgendaDates::default()
+            },
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect("filter_agenda");
+
+        let AgendaOutput::Days(days) = &output else {
+            panic!("day scope must produce days");
+        };
+        let owed: Vec<Option<i64>> = days[0].overdue.iter().map(|o| o.days_offset).collect();
+        assert_eq!(
+            owed,
+            vec![Some(-18)],
+            "the debt is the 6th, both Thursdays after it having been cancelled"
+        );
+    }
+
     #[test]
     fn timestamp_next_anchors_on_the_task_date_not_the_rendered_occurrence() {
         // The agenda rewrites `timestamp_date` to the occurrence it renders

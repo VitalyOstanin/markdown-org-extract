@@ -41,25 +41,39 @@ pub const ID_KEY: &str = "ID";
 /// the value was written in and holds one entry per date, whichever way the
 /// value spelled it.
 ///
-/// A field that does not parse as a date is handed to `on_rejected` as it is
-/// met rather than collected: the value is only as short as the file makes it,
-/// and one written entirely of rubbish would otherwise be held twice over —
-/// once in the file, once in a vector — for a caller that reports the first
-/// few and drops the rest.
+/// A time right after a date is that date's time, not another field: RFC 5545
+/// writes an `EXDATE` of a timed series that way, and so does a calendar
+/// export. It is read and left out — occurrences are matched by day here
+/// (ADR-0031) — while a time with no date before it is a field like any
+/// other and is rejected.
+///
+/// A field that does not parse is handed to `on_rejected` as it is met rather
+/// than collected: the value is only as short as the file makes it, and one
+/// written entirely of rubbish would otherwise be held twice over — once in
+/// the file, once in a vector — for a caller that reports the first few and
+/// drops the rest.
 pub fn parse_excluded_dates(raw: &str, mut on_rejected: impl FnMut(&str)) -> Vec<String> {
     let mut dates = Vec::new();
     // A set of what has been seen, rather than a scan of what has been kept:
     // the scan is linear per date and so quadratic over the value, which on a
     // long `EXDATE` is the difference between a pass and a stall.
     let mut seen = HashSet::new();
+    let mut after_date = false;
     for field in raw.split([',', ' ', '\t']).filter(|f| !f.is_empty()) {
         match NaiveDate::parse_from_str(field, "%Y-%m-%d") {
             Ok(date) => {
+                after_date = true;
                 if seen.insert(date) {
                     dates.push(date.format("%Y-%m-%d").to_string());
                 }
             }
-            Err(_) => on_rejected(field),
+            Err(_) => {
+                let is_time_of_that_date = after_date && parse_clock(field).is_some();
+                after_date = false;
+                if !is_time_of_that_date {
+                    on_rejected(field);
+                }
+            }
         }
     }
     dates
@@ -69,19 +83,38 @@ pub fn parse_excluded_dates(raw: &str, mut on_rejected: impl FnMut(&str)) -> Vec
 /// by a clock time.
 ///
 /// Returns the value normalised (`YYYY-MM-DD` or `YYYY-MM-DD HH:MM`), or
-/// `None` when the date does not parse. A trailing field that is not a time
-/// is dropped and the date kept: the date is what the resolver matches on,
-/// and losing the exception over a stray word would be the worse failure.
-pub fn parse_recurrence_id(raw: &str) -> Option<String> {
+/// `None` when the date does not parse. Anything after the date that is not a
+/// time is dropped and the date kept: the date is what the resolver matches
+/// on, and losing the exception over a stray word would be the worse failure.
+/// What was dropped is handed to `on_dropped` rather than passed over in
+/// silence -- it is text the file wrote and this value no longer carries, and
+/// an export built from the field will not carry it either.
+pub fn parse_recurrence_id(raw: &str, mut on_dropped: impl FnMut(&str)) -> Option<String> {
     let mut fields = raw.split_whitespace();
     let date = NaiveDate::parse_from_str(fields.next()?, "%Y-%m-%d").ok()?;
-    let time = fields
-        .next()
-        .and_then(|t| chrono::NaiveTime::parse_from_str(t, "%H:%M").ok());
+    let rest: Vec<&str> = fields.collect();
+    let time = rest.first().copied().and_then(parse_clock);
+    let dropped = if time.is_some() {
+        &rest[1..]
+    } else {
+        &rest[..]
+    };
+    if !dropped.is_empty() {
+        on_dropped(&dropped.join(" "));
+    }
     Some(match time {
         Some(t) => format!("{} {}", date.format("%Y-%m-%d"), t.format("%H:%M")),
         None => date.format("%Y-%m-%d").to_string(),
     })
+}
+
+/// The clock time of a `RECURRENCE_ID`: written to the minute, or with the
+/// seconds a calendar export adds. Occurrences are named to the minute here,
+/// so the seconds are read and then left out of the normalised value.
+fn parse_clock(field: &str) -> Option<chrono::NaiveTime> {
+    chrono::NaiveTime::parse_from_str(field, "%H:%M")
+        .or_else(|_| chrono::NaiveTime::parse_from_str(field, "%H:%M:%S"))
+        .ok()
 }
 
 /// The date half of a `RECURRENCE_ID`, which is what occurrences match on.
@@ -98,6 +131,7 @@ pub fn recurrence_id_date(value: &str) -> Option<NaiveDate> {
 #[derive(Debug, Default, Clone)]
 pub struct OccurrenceExceptions {
     replaced: HashMap<String, HashSet<NaiveDate>>,
+    unknown_series: Vec<String>,
 }
 
 impl OccurrenceExceptions {
@@ -114,7 +148,33 @@ impl OccurrenceExceptions {
                 replaced.entry(series.to_string()).or_default().insert(date);
             }
         }
-        Self { replaced }
+        // A `SERIES_ID` nothing answers to suppresses nothing, and the day
+        // ends up holding both the series occurrence and the entry that meant
+        // to stand in for it. Both entries are in this run, so the mismatch is
+        // decidable right here -- unlike the one exception ADR-0031 allows to
+        // pass in silence, where the replacement is in a file the scan never
+        // reached.
+        let known: HashSet<&str> = tasks.iter().filter_map(task_id).collect();
+        let mut unknown_series: Vec<String> = replaced
+            .keys()
+            .filter(|id| !known.contains(id.as_str()))
+            .cloned()
+            .collect();
+        // Sorted so a run reports them the same way twice over.
+        unknown_series.sort();
+        Self {
+            replaced,
+            unknown_series,
+        }
+    }
+
+    /// The `SERIES_ID` values of this run that name no entry in it.
+    ///
+    /// Kept rather than reported here: this is built once per pass over the
+    /// task list, and the caller that draws the agenda is the one place that
+    /// can say it once per run.
+    pub fn unknown_series(&self) -> &[String] {
+        &self.unknown_series
     }
 
     /// Every occurrence `task` does not have: what it cancelled itself, and
@@ -134,8 +194,7 @@ impl OccurrenceExceptions {
             // and one bad string must not take the whole list with it.
             .filter_map(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
             .collect();
-        let replaced = self
-            .task_id(task)
+        let replaced = task_id(task)
             .and_then(|id| self.replaced.get(id))
             .cloned()
             .unwrap_or_default();
@@ -144,10 +203,11 @@ impl OccurrenceExceptions {
             replaced,
         }
     }
+}
 
-    fn task_id<'a>(&self, task: &'a Task) -> Option<&'a str> {
-        task.properties.as_ref()?.get(ID_KEY).map(String::as_str)
-    }
+/// A task's own identifier, the one a `SERIES_ID` names (ADR-0020).
+fn task_id(task: &Task) -> Option<&str> {
+    task.properties.as_ref()?.get(ID_KEY).map(String::as_str)
 }
 
 /// The occurrences one entry does not have, kept apart by reason.
@@ -209,6 +269,12 @@ mod tests {
         parse_excluded_dates(raw, |field| panic!("unexpected reject: {field:?}"))
     }
 
+    /// The occurrence a `RECURRENCE_ID` names, for a test that expects the
+    /// whole value to read.
+    fn occurrence_of(raw: &str) -> Option<String> {
+        parse_recurrence_id(raw, |dropped| panic!("unexpected drop: {dropped:?}"))
+    }
+
     fn series(id: &str) -> Task {
         let mut props = BTreeMap::new();
         props.insert(ID_KEY.to_string(), id.to_string());
@@ -257,6 +323,33 @@ mod tests {
     }
 
     #[test]
+    fn a_time_after_a_date_belongs_to_that_date() {
+        // The form RFC 5545 uses for a timed series, and the one a calendar
+        // export writes. The day is what an occurrence is matched on, so the
+        // time is read and left out -- and not reported as a field nothing
+        // can read, which is what a correct value would otherwise be called.
+        assert_eq!(
+            dates_of("2026-08-20 15:00, 2026-08-27 15:00:00"),
+            ["2026-08-20", "2026-08-27"]
+        );
+    }
+
+    #[test]
+    fn a_time_with_no_date_before_it_is_a_field_like_any_other() {
+        let mut rejected = Vec::new();
+        let dates = parse_excluded_dates("15:00, 2026-08-20 15:00 16:00", |field| {
+            rejected.push(field.to_string());
+        });
+
+        assert_eq!(dates, ["2026-08-20"]);
+        assert_eq!(
+            rejected,
+            ["15:00", "16:00"],
+            "one time belongs to the date before it; a second one belongs to nothing"
+        );
+    }
+
+    #[test]
     fn excluded_dates_keep_one_copy_of_a_repeated_date() {
         assert_eq!(dates_of("2026-08-20 2026-08-20"), ["2026-08-20"]);
     }
@@ -293,26 +386,79 @@ mod tests {
     #[test]
     fn a_recurrence_id_keeps_the_time_when_it_carries_one() {
         assert_eq!(
-            parse_recurrence_id("2026-08-20 15:00").as_deref(),
+            occurrence_of("2026-08-20 15:00").as_deref(),
             Some("2026-08-20 15:00")
         );
-        assert_eq!(
-            parse_recurrence_id("2026-08-20").as_deref(),
-            Some("2026-08-20")
-        );
+        assert_eq!(occurrence_of("2026-08-20").as_deref(), Some("2026-08-20"));
     }
 
     #[test]
     fn a_recurrence_id_without_a_date_is_no_recurrence_id() {
-        assert_eq!(parse_recurrence_id("thursday 15:00"), None);
+        assert_eq!(parse_recurrence_id("thursday 15:00", |_| {}), None);
     }
 
     #[test]
-    fn a_trailing_field_that_is_not_a_time_leaves_the_date_standing() {
+    fn a_trailing_field_that_is_not_a_time_leaves_the_date_standing_and_is_told() {
+        let mut dropped = Vec::new();
+        let occurrence = parse_recurrence_id("2026-08-20 afternoon", |text| {
+            dropped.push(text.to_string());
+        });
+
+        assert_eq!(occurrence.as_deref(), Some("2026-08-20"));
         assert_eq!(
-            parse_recurrence_id("2026-08-20 afternoon").as_deref(),
-            Some("2026-08-20")
+            dropped,
+            ["afternoon"],
+            "the text the value no longer carries is named"
         );
+    }
+
+    #[test]
+    fn a_recurrence_id_written_with_seconds_keeps_the_time_it_names() {
+        // The form a calendar export writes. Occurrences are named to the
+        // minute here, so the seconds go and the time stays.
+        assert_eq!(
+            occurrence_of("2026-08-20 15:00:00").as_deref(),
+            Some("2026-08-20 15:00")
+        );
+    }
+
+    #[test]
+    fn whatever_follows_the_time_is_dropped_and_named() {
+        let mut dropped = Vec::new();
+        let occurrence = parse_recurrence_id("2026-08-20 15:00 sharp", |text| {
+            dropped.push(text.to_string());
+        });
+
+        assert_eq!(occurrence.as_deref(), Some("2026-08-20 15:00"));
+        assert_eq!(dropped, ["sharp"]);
+    }
+
+    #[test]
+    fn a_replacement_that_names_no_series_of_the_run_is_reported() {
+        // A typo in the identifier leaves both entries standing on the day,
+        // which is exactly what an exception is written to avoid. Both are in
+        // this run, so the mismatch is decidable and is not one of the silences
+        // ADR-0031 allows.
+        let english = series("series-1");
+        let moved = replacement("seires-1", "2026-08-20");
+
+        let exceptions = OccurrenceExceptions::from_tasks(&[english.clone(), moved]);
+
+        assert_eq!(exceptions.unknown_series(), ["seires-1".to_string()]);
+        assert!(
+            exceptions.dates_for(&english).is_empty(),
+            "and nothing is suppressed, which is what the report is about"
+        );
+    }
+
+    #[test]
+    fn a_replacement_naming_a_series_of_the_run_is_not_reported() {
+        let english = series("series-1");
+        let moved = replacement("series-1", "2026-08-20");
+
+        let exceptions = OccurrenceExceptions::from_tasks(&[english, moved]);
+
+        assert!(exceptions.unknown_series().is_empty());
     }
 
     #[test]

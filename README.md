@@ -1348,7 +1348,9 @@ RECURRENCE_ID: 2026-08-20 15:00
 ````
 
 - `EXDATE` lists dates the series does not occur on, separated by commas
-  and/or whitespace. The 27th above simply has no class.
+  and/or whitespace. The 27th above simply has no class. A date may carry a
+  time (`2026-08-20 15:00`, the way RFC 5545 writes it for a timed series);
+  the time is read and left out, since occurrences are matched by day.
 - A separate entry carrying `SERIES_ID` (the `ID` of the series) and
   `RECURRENCE_ID` (the start the occurrence *would* have had) takes the place
   of that one occurrence — the agenda draws the 20th at 18:00 and not at
@@ -1359,7 +1361,17 @@ RECURRENCE_ID: 2026-08-20 15:00
   series per day; the clock time in `RECURRENCE_ID` is carried for the reader
   and for calendar export.
 - All three keys reach the JSON as `excluded_dates`, `recurrence_id` and
-  `series_id`.
+  `series_id`, normalised: dates as `YYYY-MM-DD`, `RECURRENCE_ID` as
+  `YYYY-MM-DD` or `YYYY-MM-DD HH:MM`, and a date listed twice in `EXDATE` kept
+  once. A `RECURRENCE_ID` written with seconds (`2026-08-20 15:00:00`, the
+  form a calendar export uses) is read and normalised to the minute. The
+  properties themselves stay in `properties` exactly as the file wrote them.
+- An exception that cannot work is reported on stderr rather than passed over:
+  a date nothing can read, an `EXDATE` with no usable date in it, a
+  `RECURRENCE_ID` whose time is dropped, half a pair, and a `SERIES_ID` that
+  names no entry of the run. The last of these is the one ADR-0031 calls out —
+  it leaves both entries standing on the day — and it can only be reported
+  when the file holding the series is part of the same run.
 
 ## Project layout
 

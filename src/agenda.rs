@@ -10,8 +10,8 @@ use chrono_tz::Tz;
 
 use crate::error::AppError;
 use crate::exceptions::{ExcludedOccurrences, OccurrenceExceptions};
-use crate::types::{DayAgenda, Task, TaskType, TaskWithOffset};
 use crate::timestamp::{parse_org_timestamp, DatePreference, ParsedTimestamp};
+use crate::types::{DayAgenda, Task, TaskType, TaskWithOffset, MAX_DIAGNOSTIC_ITEMS};
 
 const DEADLINE_WARNING_DAYS: i64 = 14;
 
@@ -35,6 +35,7 @@ struct PreparedTask<'a> {
 
 fn prepare_tasks(tasks: &[Task]) -> Vec<PreparedTask<'_>> {
     let exceptions = OccurrenceExceptions::from_tasks(tasks);
+    warn_about_unknown_series(&exceptions);
     // ADR-0014 invariant: inactive `[...]` timestamps never feed the
     // agenda. Filtering at the parse step keeps the rest of the agenda
     // logic bracket-form-agnostic — every downstream bucket already
@@ -55,6 +56,35 @@ fn prepare_tasks(tasks: &[Task]) -> Vec<PreparedTask<'_>> {
             excluded: exceptions.dates_for(t),
         })
         .collect()
+}
+
+/// Say which replacements name a series no entry of this run carries.
+///
+/// The parser reports an exception that cannot be read; this is the one an
+/// entry alone cannot see, because the two halves live in two entries and
+/// possibly in two files. A `SERIES_ID` nothing answers to replaces nothing,
+/// and the day it names keeps both the series occurrence and the entry that
+/// meant to stand in for it — the failure ADR-0031 calls out by name.
+///
+/// One record for the lot, listing the first [`MAX_DIAGNOSTIC_ITEMS`] of
+/// them, in the shape the run summary already uses: a corpus with hundreds of
+/// broken replacements says so once rather than a hundred times.
+fn warn_about_unknown_series(exceptions: &OccurrenceExceptions) {
+    let unknown = exceptions.unknown_series();
+    if unknown.is_empty() {
+        return;
+    }
+    let named: Vec<&str> = unknown
+        .iter()
+        .take(MAX_DIAGNOSTIC_ITEMS)
+        .map(String::as_str)
+        .collect();
+    tracing::warn!(
+        series = ?named,
+        series_count = unknown.len(),
+        series_shown = named.len(),
+        "a replacement names a series no entry of this run has; the occurrence it names is not replaced"
+    );
 }
 
 /// Result of running [`filter_agenda`]. The variant is determined by the

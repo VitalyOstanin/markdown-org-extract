@@ -70,6 +70,43 @@ fn warn_invalid_property_line(counter: &mut usize, path: &Path, line: u32, raw: 
     }
 }
 
+// Mirror of `warn_invalid_property_line` for an exception key whose value
+// cannot be used as written (ADR-0031): a date in `EXDATE` that does not
+// read, a `RECURRENCE_ID` that names no occurrence, half a pair. It shares
+// the `org-properties` counter -- typically
+// `ProcessingStats::prop_warnings_emitted` -- because the mistake is in a
+// property and not in the entry's timestamp: a file full of unreadable
+// `EXDATE` values must not spend the budget that warns about the timestamps
+// of every file after it, and a run summary must not file property mistakes
+// under timestamps. `key` and `problem` tell the classes apart inside the
+// shared channel.
+fn warn_unusable_exception(
+    counter: &mut usize,
+    path: &Path,
+    line: u32,
+    key: &str,
+    value: &str,
+    problem: &str,
+) {
+    let n = *counter;
+    *counter = counter.saturating_add(1);
+    if n < MAX_DIAGNOSTIC_ITEMS {
+        tracing::warn!(
+            file = %path.display(),
+            line,
+            key,
+            value = value.trim(),
+            problem,
+            "exception property cannot be used as written"
+        );
+    } else if n == MAX_DIAGNOSTIC_ITEMS {
+        tracing::warn!(
+            limit = MAX_DIAGNOSTIC_ITEMS,
+            "more unusable exception properties suppressed (showed first {MAX_DIAGNOSTIC_ITEMS})"
+        );
+    }
+}
+
 /// Optional TODO/DONE/CANCELLED/CANCELED keyword anchored to the start of a
 /// heading.
 ///
@@ -151,7 +188,7 @@ pub fn extract_tasks_with_counter(
 
     // Flush remaining heading
     if let Some(info) = current_heading.take() {
-        if let Some(task) = finalize_task(path, info, ts_warning_counter) {
+        if let Some(task) = finalize_task(path, info, ts_warning_counter, prop_warning_counter) {
             tasks.push(task);
         }
     }
@@ -241,7 +278,9 @@ fn process_node<'a>(
         NodeValue::Heading(_) => {
             // Finalize previous heading first
             if let Some(info) = current_heading.take() {
-                if let Some(task) = finalize_task(path, info, ts_warning_counter) {
+                if let Some(task) =
+                    finalize_task(path, info, ts_warning_counter, prop_warning_counter)
+                {
                     tasks.push(task);
                 }
             }
@@ -332,7 +371,12 @@ fn process_node<'a>(
     }
 }
 
-fn finalize_task(path: &Path, info: HeadingInfo, ts_warning_counter: &mut usize) -> Option<Task> {
+fn finalize_task(
+    path: &Path,
+    info: HeadingInfo,
+    ts_warning_counter: &mut usize,
+    prop_warning_counter: &mut usize,
+) -> Option<Task> {
     if info.task_type.is_none() && info.created.is_none() && info.timestamp.is_none() {
         return None;
     }
@@ -377,7 +421,7 @@ fn finalize_task(path: &Path, info: HeadingInfo, ts_warning_counter: &mut usize)
     // occur on this day" needs them parsed, and parsing them once here keeps
     // the string handling out of the agenda.
     let (excluded_dates, recurrence_id, series_id) =
-        exception_fields(path, line, properties.as_ref(), ts_warning_counter);
+        exception_fields(path, line, properties.as_ref(), prop_warning_counter);
 
     Some(Task {
         file: path.display().to_string(),
@@ -412,15 +456,21 @@ fn finalize_task(path: &Path, info: HeadingInfo, ts_warning_counter: &mut usize)
 
 /// Read the ADR-0031 exception keys out of a task's properties.
 ///
-/// A date that does not parse is dropped and reported through the same capped
-/// path as an invalid timestamp: it is the same class of mistake — a date
-/// written in a way nothing can read — and sharing the budget keeps a hostile
-/// file from flooding the log through a second door.
+/// Every way an exception can fail to work is reported, because each of them
+/// leaves an entry that reads like an exception and behaves like none: a date
+/// that cannot be read, a key that yields no date at all, a `RECURRENCE_ID`
+/// whose time is lost, and half a pair. The one silence ADR-0031 does allow —
+/// a replacement in a file the scan never reached — cannot be seen from here
+/// and is answered where the run's task list is whole (see
+/// [`crate::exceptions::OccurrenceExceptions::unknown_series`]).
+///
+/// Reported through the capped `org-properties` channel: see
+/// `warn_unusable_exception` for why that one rather than the timestamp one.
 fn exception_fields(
     path: &Path,
     line: u32,
     properties: Option<&BTreeMap<String, String>>,
-    ts_warning_counter: &mut usize,
+    prop_warning_counter: &mut usize,
 ) -> (Option<Vec<String>>, Option<String>, Option<String>) {
     use crate::exceptions::{
         parse_excluded_dates, parse_recurrence_id, EXDATE_KEY, RECURRENCE_ID_KEY, SERIES_ID_KEY,
@@ -431,16 +481,55 @@ fn exception_fields(
     };
 
     let excluded = props.get(EXDATE_KEY).map(|raw| {
-        parse_excluded_dates(raw, |field| {
-            warn_invalid_timestamp(ts_warning_counter, path, line, field);
-        })
+        let mut rejected = 0_usize;
+        let dates = parse_excluded_dates(raw, |field| {
+            rejected += 1;
+            warn_unusable_exception(
+                prop_warning_counter,
+                path,
+                line,
+                EXDATE_KEY,
+                field,
+                "not a date in YYYY-MM-DD form",
+            );
+        });
+        // Said once for a value that held nothing to reject either — an empty
+        // key, or one written of separators. A value whose fields were all
+        // rejected has been reported field by field already.
+        if dates.is_empty() && rejected == 0 {
+            warn_unusable_exception(
+                prop_warning_counter,
+                path,
+                line,
+                EXDATE_KEY,
+                raw,
+                "no date to cancel an occurrence on",
+            );
+        }
+        dates
     });
     let excluded = excluded.filter(|dates| !dates.is_empty());
 
     let recurrence = props.get(RECURRENCE_ID_KEY).and_then(|raw| {
-        let parsed = parse_recurrence_id(raw);
+        let parsed = parse_recurrence_id(raw, |dropped| {
+            warn_unusable_exception(
+                prop_warning_counter,
+                path,
+                line,
+                RECURRENCE_ID_KEY,
+                dropped,
+                "not a time in HH:MM form, so the date alone is kept",
+            );
+        });
         if parsed.is_none() {
-            warn_invalid_timestamp(ts_warning_counter, path, line, raw);
+            warn_unusable_exception(
+                prop_warning_counter,
+                path,
+                line,
+                RECURRENCE_ID_KEY,
+                raw,
+                "not a date, optionally followed by a time",
+            );
         }
         parsed
     });
@@ -450,7 +539,63 @@ fn exception_fields(
         .map(|raw| raw.trim().to_string())
         .filter(|id| !id.is_empty());
 
+    warn_about_half_a_pair(
+        path,
+        line,
+        props,
+        series.as_deref(),
+        recurrence.as_deref(),
+        prop_warning_counter,
+    );
+
     (excluded, recurrence, series)
+}
+
+/// Report an entry carrying one half of `SERIES_ID` / `RECURRENCE_ID`.
+///
+/// The pair names one occurrence of one series, and half of it replaces
+/// nothing: the day keeps both the series occurrence and the entry that meant
+/// to stand in for it. What is compared is the keys as written against the
+/// values that survived, so a key present but empty, or one whose value did
+/// not read, counts as the half that is missing.
+fn warn_about_half_a_pair(
+    path: &Path,
+    line: u32,
+    props: &BTreeMap<String, String>,
+    series: Option<&str>,
+    recurrence: Option<&str>,
+    prop_warning_counter: &mut usize,
+) {
+    use crate::exceptions::{RECURRENCE_ID_KEY, SERIES_ID_KEY};
+
+    let incomplete = match (
+        props.contains_key(SERIES_ID_KEY),
+        props.contains_key(RECURRENCE_ID_KEY),
+    ) {
+        (true, true) => series.is_none() || recurrence.is_none(),
+        (true, false) | (false, true) => true,
+        (false, false) => false,
+    };
+    if !incomplete {
+        return;
+    }
+
+    let (key, value) = match (series, recurrence) {
+        (Some(id), None) => (SERIES_ID_KEY, id),
+        (None, Some(occurrence)) => (RECURRENCE_ID_KEY, occurrence),
+        // Both keys written and neither usable. Each value has been reported
+        // on its own already; what is left to say is that the pair is not
+        // there.
+        _ => (SERIES_ID_KEY, ""),
+    };
+    warn_unusable_exception(
+        prop_warning_counter,
+        path,
+        line,
+        key,
+        value,
+        "an exception needs both SERIES_ID and RECURRENCE_ID, and only one of them is usable here",
+    );
 }
 
 /// Parse heading text to extract task type, priority, and title.
@@ -1437,6 +1582,134 @@ Second paragraph.\n\
                 .map(String::as_str),
             Some("")
         );
+    }
+
+    /// Parse one file and report what each diagnostic budget spent on it:
+    /// the timestamp one, and the `org-properties` one that the exception
+    /// keys share.
+    fn counted(content: &str) -> (Vec<Task>, usize, usize) {
+        let mut timestamps = 0_usize;
+        let mut properties = 0_usize;
+        let tasks = extract_tasks_with_counter(
+            Path::new("t.md"),
+            content,
+            &[],
+            DEFAULT_MAX_TASKS,
+            &mut timestamps,
+            &mut properties,
+        );
+        (tasks, timestamps, properties)
+    }
+
+    /// A task with the given `org-properties` block under it.
+    fn with_properties(properties: &str) -> String {
+        format!(
+            "### TODO T\n`SCHEDULED: <2026-08-13 Thu +1w>`\n```org-properties\n{properties}\n```\n"
+        )
+    }
+
+    #[test]
+    fn a_date_in_an_exdate_that_cannot_be_read_is_not_a_broken_timestamp() {
+        // A property value is not an entry's timestamp, and telling the two
+        // apart is what lets a run say which of them is wrong. Sharing the
+        // timestamp budget also let a file full of unreadable `EXDATE` values
+        // silence the warnings about real timestamps in every file after it.
+        let (tasks, timestamps, properties) =
+            counted(&with_properties("EXDATE: 2026-08-20, next-thursday"));
+
+        assert_eq!(
+            tasks[0].excluded_dates.as_deref(),
+            Some(["2026-08-20".to_string()].as_slice()),
+            "the date that reads is kept"
+        );
+        assert_eq!(timestamps, 0, "nothing here is a timestamp");
+        assert_eq!(properties, 1, "the field that does not read is reported");
+    }
+
+    #[test]
+    fn an_exdate_that_holds_no_date_at_all_is_reported() {
+        // The key was written on purpose and cancels nothing. Without a word
+        // about it, the entry looks like one carrying an exception and behaves
+        // like one that does not.
+        let (tasks, _, properties) = counted(&with_properties("EXDATE:"));
+
+        assert_eq!(tasks[0].excluded_dates, None);
+        assert_eq!(properties, 1, "a key with nothing usable in it is reported");
+    }
+
+    #[test]
+    fn an_exdate_of_separators_alone_is_reported() {
+        let (tasks, _, properties) = counted(&with_properties("EXDATE: , ,"));
+
+        assert_eq!(tasks[0].excluded_dates, None);
+        assert_eq!(properties, 1);
+    }
+
+    #[test]
+    fn half_of_an_exception_pair_is_reported() {
+        // `SERIES_ID` alone replaces nothing: the day keeps both the series
+        // occurrence and the entry that meant to stand in for it.
+        let (tasks, _, properties) = counted(&with_properties("SERIES_ID: series-1"));
+
+        assert_eq!(tasks[0].series_id.as_deref(), Some("series-1"));
+        assert_eq!(tasks[0].recurrence_id, None);
+        assert_eq!(properties, 1, "the missing half is reported");
+    }
+
+    #[test]
+    fn the_other_half_of_an_exception_pair_is_reported_too() {
+        let (tasks, _, properties) = counted(&with_properties("RECURRENCE_ID: 2026-08-20 15:00"));
+
+        assert_eq!(tasks[0].recurrence_id.as_deref(), Some("2026-08-20 15:00"));
+        assert_eq!(tasks[0].series_id, None);
+        assert_eq!(properties, 1, "the missing half is reported");
+    }
+
+    #[test]
+    fn an_empty_series_id_leaves_the_pair_incomplete_and_is_reported() {
+        let (tasks, _, properties) =
+            counted(&with_properties("SERIES_ID:\nRECURRENCE_ID: 2026-08-20"));
+
+        assert_eq!(tasks[0].series_id, None, "an empty id names no series");
+        assert_eq!(properties, 1);
+    }
+
+    #[test]
+    fn a_time_in_a_recurrence_id_that_cannot_be_read_is_reported() {
+        // The date is what an occurrence is matched on, so it is kept; the
+        // time the file wrote is dropped, and the export built from this field
+        // will not carry it. That is worth a word.
+        let (tasks, _, properties) = counted(&with_properties(
+            "SERIES_ID: series-1\nRECURRENCE_ID: 2026-08-20 15-00",
+        ));
+
+        assert_eq!(tasks[0].recurrence_id.as_deref(), Some("2026-08-20"));
+        assert_eq!(properties, 1, "the dropped time is reported");
+    }
+
+    #[test]
+    fn a_recurrence_id_written_with_seconds_keeps_its_time() {
+        // The form a calendar exports. The seconds are dropped -- occurrences
+        // are named to the minute here -- and the time survives.
+        let (tasks, _, properties) = counted(&with_properties(
+            "SERIES_ID: series-1\nRECURRENCE_ID: 2026-08-20 15:00:00",
+        ));
+
+        assert_eq!(tasks[0].recurrence_id.as_deref(), Some("2026-08-20 15:00"));
+        assert_eq!(properties, 0, "nothing was lost, so nothing is reported");
+    }
+
+    #[test]
+    fn a_recurrence_id_that_is_not_a_date_is_reported_as_the_broken_pair_it_leaves() {
+        // Two things went wrong and each is worth its own line: the value does
+        // not read, and what is left is half a pair, which replaces nothing.
+        let (tasks, timestamps, properties) = counted(&with_properties(
+            "SERIES_ID: series-1\nRECURRENCE_ID: whenever",
+        ));
+
+        assert_eq!(tasks[0].recurrence_id, None);
+        assert_eq!(timestamps, 0, "a property value is not a timestamp");
+        assert_eq!(properties, 2, "the unreadable value, then the broken pair");
     }
 
     #[test]

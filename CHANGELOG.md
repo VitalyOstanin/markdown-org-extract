@@ -37,6 +37,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- An exception that cannot work is now reported instead of being passed over
+  in silence: a date in `EXDATE` that cannot be read, an `EXDATE` with no
+  usable date in it at all, a `RECURRENCE_ID` whose time is dropped, an entry
+  carrying only one half of the `SERIES_ID` / `RECURRENCE_ID` pair, and a
+  `SERIES_ID` that names no entry of the run. Each of these leaves an entry
+  that reads like an exception and behaves like none — most visibly the last,
+  where the day keeps both the series occurrence and the entry that meant to
+  replace it.
+- `RECURRENCE_ID` written with seconds (`2026-08-20 15:00:00`, the form a
+  calendar export uses) is read and normalised to the minute, instead of
+  losing its time.
+- `EXDATE` written the way RFC 5545 writes it for a timed series
+  (`2026-08-20 15:00`) is read as one date with a time on it. The time is left
+  out — occurrences are matched by day — and is no longer reported as a field
+  nothing can read.
+
+### Changed
+
+- Diagnostics about the exception keys are counted against the
+  `org-properties` budget rather than the timestamp one, and say which key and
+  what is wrong with it. A file full of unreadable `EXDATE` values no longer
+  spends the budget that warns about the timestamps of every file after it,
+  and a mistake in a property is no longer reported as `cannot parse
+  timestamp`.
+
 ## [0.18.0] — 2026-08-21
 
 ### Added

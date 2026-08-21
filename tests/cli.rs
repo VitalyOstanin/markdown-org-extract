@@ -3709,3 +3709,105 @@ fn a_replacement_entry_stands_in_for_the_occurrence_it_names() {
         "the occurrence it replaces must not be drawn beside it: {stdout}"
     );
 }
+
+#[test]
+fn a_replacement_naming_no_series_of_the_run_is_reported_and_replaces_nothing() {
+    // A typo in `SERIES_ID` is indistinguishable from a working exception
+    // until the day arrives and holds two entries: the series occurrence and
+    // the entry that meant to stand in for it (ADR-0031). Both entries are in
+    // this run, so the run says so.
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("series.md"),
+        "### TODO English\n`SCHEDULED: <2026-08-13 Thu 15:00 +1w>`\n```org-properties\nID: series-1\n```\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("moved.md"),
+        "### TODO English, moved\n`SCHEDULED: <2026-08-20 Thu 18:00>`\n```org-properties\nSERIES_ID: seires-1\nRECURRENCE_ID: 2026-08-20 15:00\n```\n",
+    )
+    .unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--agenda",
+            "day",
+            "--date",
+            "2026-08-20",
+            "--current-date",
+            "2026-08-20",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(
+        stderr.contains("names a series no entry of this run has"),
+        "the mismatch must be reported; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("seires-1"),
+        "the report must name the identifier nothing answers to; stderr: {stderr}"
+    );
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let headings: Vec<&str> = parsed[0]["scheduled_timed"]
+        .as_array()
+        .expect("scheduled_timed")
+        .iter()
+        .map(|item| item["heading"].as_str().expect("heading"))
+        .collect();
+    assert_eq!(
+        headings,
+        ["English", "English, moved"],
+        "nothing is replaced, so the day holds both: {stdout}"
+    );
+}
+
+#[test]
+fn an_exception_that_cannot_be_used_is_reported_as_a_property_and_not_as_a_timestamp() {
+    // Two mistakes in one entry: a date in `EXDATE` nothing can read, and a
+    // `SERIES_ID` with no `RECURRENCE_ID` beside it. Each is reported, and
+    // neither is filed under timestamps -- an entry whose own timestamp is
+    // fine must not be described as having a broken one.
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("t.md"),
+        "### TODO English\n`SCHEDULED: <2026-08-13 Thu 15:00 +1w>`\n```org-properties\nEXDATE: next-thursday\nSERIES_ID: series-1\n```\n",
+    )
+    .unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(
+        stderr.contains("exception property cannot be used as written"),
+        "both mistakes must be reported; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("not a date in YYYY-MM-DD form"),
+        "the unreadable EXDATE field must be named; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("an exception needs both SERIES_ID and RECURRENCE_ID"),
+        "the missing half of the pair must be named; stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("cannot parse timestamp"),
+        "a property is not a timestamp; stderr: {stderr}"
+    );
+}

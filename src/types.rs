@@ -438,10 +438,16 @@ pub struct ProcessingStats {
     /// silent. Owned by `ProcessingStats` so the budget spans every file in
     /// the run without resorting to process-global state.
     pub ts_warnings_emitted: usize,
-    /// Cumulative count of malformed `org-properties` lines (a line with
-    /// no `:`) encountered during the scan. Gated by `MAX_DIAGNOSTIC_ITEMS`
-    /// exactly like `ts_warnings_emitted`, and owned here so the budget
-    /// spans every file in the run. See ADR-0020.
+    /// Cumulative count of `org-properties` diagnostics: a malformed line
+    /// (one with no `:`), and a value of an exception key that cannot be used
+    /// as written — an unreadable date in `EXDATE`, a `RECURRENCE_ID` that
+    /// names no occurrence, half a `SERIES_ID` / `RECURRENCE_ID` pair
+    /// (ADR-0020, ADR-0031). Kept apart from `ts_warnings_emitted` because a
+    /// mistake in a property is not a mistake in an entry's timestamp: a file
+    /// full of unreadable `EXDATE` values must not spend the budget that
+    /// warns about the timestamps of every file after it. Gated by
+    /// `MAX_DIAGNOSTIC_ITEMS` exactly like `ts_warnings_emitted`, and owned
+    /// here so the budget spans every file in the run.
     pub prop_warnings_emitted: usize,
     /// Scan was aborted by SIGINT/SIGTERM before all entries were visited.
     /// Surfaced in the summary so the user knows the output reflects only the

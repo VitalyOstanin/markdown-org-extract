@@ -45,6 +45,7 @@
 pub mod agenda;
 pub mod clock;
 pub mod error;
+pub mod exceptions;
 pub mod holidays;
 pub mod locale;
 pub mod parser;

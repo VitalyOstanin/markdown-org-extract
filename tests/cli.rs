@@ -3600,3 +3600,112 @@ fn a_missing_dir_among_several_fails_the_run() {
         .failure()
         .stderr(contains("directory does not exist"));
 }
+
+/// ADR-0031: an `EXDATE` on a repeating entry removes that occurrence.
+#[test]
+fn an_exdate_removes_the_occurrence_from_the_agenda() {
+    let dir = tempdir().unwrap();
+    let content = "### TODO English\n`SCHEDULED: <2026-08-13 Thu 15:00 +1w>`\n```org-properties\nID: series-1\nEXDATE: 2026-08-20\n```\n\nBody.\n";
+    fs::write(dir.path().join("english.md"), content).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--agenda",
+            "week",
+            "--date",
+            "2026-08-17",
+            "--current-date",
+            "2026-08-17",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let thursday = parsed
+        .as_array()
+        .expect("array of days")
+        .iter()
+        .find(|day| day["date"] == "2026-08-20")
+        .expect("the week holds the 20th");
+    assert_eq!(
+        thursday["scheduled_timed"],
+        serde_json::json!([]),
+        "the excluded occurrence must not be drawn on its date: {stdout}"
+    );
+}
+
+/// ADR-0031: the excluded dates reach the wire as a field of their own.
+#[test]
+fn tasks_json_carries_the_excluded_dates() {
+    let dir = tempdir().unwrap();
+    let content = "### TODO English\n`SCHEDULED: <2026-08-13 Thu 15:00 +1w>`\n```org-properties\nID: series-1\nEXDATE: 2026-08-20, 2026-08-27\n```\n\nBody.\n";
+    fs::write(dir.path().join("english.md"), content).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let task = &parsed.as_array().expect("array of tasks")[0];
+    assert_eq!(
+        task["excluded_dates"],
+        serde_json::json!(["2026-08-20", "2026-08-27"]),
+        "excluded_dates must carry both dates: {stdout}"
+    );
+}
+
+/// ADR-0031: an entry naming an occurrence takes that occurrence's place,
+/// without an `EXDATE` beside it — a replacement is not a cancellation.
+#[test]
+fn a_replacement_entry_stands_in_for_the_occurrence_it_names() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("english.md"),
+        "### TODO English\n`SCHEDULED: <2026-08-13 Thu 15:00 +1w>`\n```org-properties\nID: series-1\n```\n\nBody.\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("moved.md"),
+        "### TODO English, moved to the evening\n`SCHEDULED: <2026-08-20 Thu 18:00>`\n```org-properties\nSERIES_ID: series-1\nRECURRENCE_ID: 2026-08-20 15:00\n```\n\nBody.\n",
+    )
+    .unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--agenda",
+            "day",
+            "--date",
+            "2026-08-20",
+            "--current-date",
+            "2026-08-20",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("moved to the evening"),
+        "the replacement must be drawn on the day: {stdout}"
+    );
+    assert!(
+        !stdout.contains("\"heading\":\"English\""),
+        "the occurrence it replaces must not be drawn beside it: {stdout}"
+    );
+}

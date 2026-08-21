@@ -372,6 +372,13 @@ fn finalize_task(path: &Path, info: HeadingInfo, ts_warning_counter: &mut usize)
         Some(info.properties)
     };
 
+    // The exception keys of ADR-0031, lifted out of the property map into
+    // fields of their own: every consumer that answers "does this series
+    // occur on this day" needs them parsed, and parsing them once here keeps
+    // the string handling out of the agenda.
+    let (excluded_dates, recurrence_id, series_id) =
+        exception_fields(path, line, properties.as_ref(), ts_warning_counter);
+
     Some(Task {
         file: path.display().to_string(),
         // Filled in by the scan when it walked several roots: the parser is
@@ -397,7 +404,55 @@ fn finalize_task(path: &Path, info: HeadingInfo, ts_warning_counter: &mut usize)
         clocks: clocks_opt,
         total_clock_time: total_time,
         properties,
+        excluded_dates,
+        recurrence_id,
+        series_id,
     })
+}
+
+/// Read the ADR-0031 exception keys out of a task's properties.
+///
+/// A date that does not parse is dropped and reported through the same capped
+/// path as an invalid timestamp: it is the same class of mistake — a date
+/// written in a way nothing can read — and sharing the budget keeps a hostile
+/// file from flooding the log through a second door.
+fn exception_fields(
+    path: &Path,
+    line: u32,
+    properties: Option<&BTreeMap<String, String>>,
+    ts_warning_counter: &mut usize,
+) -> (Option<Vec<String>>, Option<String>, Option<String>) {
+    use crate::exceptions::{
+        parse_excluded_dates, parse_recurrence_id, EXDATE_KEY, RECURRENCE_ID_KEY, SERIES_ID_KEY,
+    };
+
+    let Some(props) = properties else {
+        return (None, None, None);
+    };
+
+    let excluded = props.get(EXDATE_KEY).map(|raw| {
+        let (dates, rejected) = parse_excluded_dates(raw);
+        for field in rejected {
+            warn_invalid_timestamp(ts_warning_counter, path, line, &field);
+        }
+        dates
+    });
+    let excluded = excluded.filter(|dates| !dates.is_empty());
+
+    let recurrence = props.get(RECURRENCE_ID_KEY).and_then(|raw| {
+        let parsed = parse_recurrence_id(raw);
+        if parsed.is_none() {
+            warn_invalid_timestamp(ts_warning_counter, path, line, raw);
+        }
+        parsed
+    });
+
+    let series = props
+        .get(SERIES_ID_KEY)
+        .map(|raw| raw.trim().to_string())
+        .filter(|id| !id.is_empty());
+
+    (excluded, recurrence, series)
 }
 
 /// Parse heading text to extract task type, priority, and title.

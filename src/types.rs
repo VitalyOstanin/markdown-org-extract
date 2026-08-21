@@ -255,7 +255,7 @@ pub struct ClockEntry {
 ///
 /// All optional fields are skipped on serialization when `None`, so the JSON
 /// output stays compact and stable.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Task {
     /// Path to the file the task was found in — relative to the scanned root
     /// unless [`ScanOptions::absolute_paths`] was set.
@@ -363,6 +363,23 @@ pub struct Task {
     /// deterministic key order for snapshot/JSON assertions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub properties: Option<BTreeMap<String, String>>,
+    /// Occurrences this repeating entry does not have, as `YYYY-MM-DD`,
+    /// read from the `EXDATE` property (ADR-0031). `None` when the entry
+    /// declares none; an unparsable date is dropped on the way in, so what
+    /// is here is always a date the agenda can compare against.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub excluded_dates: Option<Vec<String>>,
+    /// The occurrence this entry replaces, as `YYYY-MM-DD` optionally
+    /// followed by ` HH:MM` — the start that occurrence *would* have had,
+    /// not the date this entry carries. Read from `RECURRENCE_ID`
+    /// (ADR-0031); meaningful only together with [`Task::series_id`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recurrence_id: Option<String>,
+    /// The `ID` of the series this entry replaces an occurrence of, read
+    /// from `SERIES_ID` (ADR-0031). This is RFC 5545's `UID` half of the
+    /// (`UID`, `RECURRENCE-ID`) pair.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub series_id: Option<String>,
 }
 
 /// Maximum file size to process (10 MB)
@@ -777,6 +794,9 @@ mod tests {
             clocks: None,
             total_clock_time: None,
             properties: None,
+            excluded_dates: None,
+            recurrence_id: None,
+            series_id: None,
         }
     }
 

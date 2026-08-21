@@ -5,10 +5,13 @@
 //! anchored on [`AgendaDates::current_date`] rather than the host clock so the
 //! same input always renders the same output (ADR-0015).
 
+use std::collections::HashSet;
+
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Weekday};
 use chrono_tz::Tz;
 
 use crate::error::AppError;
+use crate::exceptions::OccurrenceExceptions;
 use crate::timestamp::{parse_org_timestamp, ParsedTimestamp};
 use crate::types::{DayAgenda, Task, TaskType, TaskWithOffset};
 
@@ -25,9 +28,15 @@ const NO_PRIORITY_ORDER: u32 = u32::MAX;
 struct PreparedTask<'a> {
     task: &'a Task,
     parsed: Option<ParsedTimestamp>,
+    /// Occurrences this entry does not have (ADR-0031): the dates of its own
+    /// `EXDATE`, plus the ones another entry of the run replaces. Empty for
+    /// all but the few entries that carry an exception, which is why it is a
+    /// set per task rather than a lookup on every day of every week.
+    excluded: HashSet<NaiveDate>,
 }
 
 fn prepare_tasks(tasks: &[Task]) -> Vec<PreparedTask<'_>> {
+    let exceptions = OccurrenceExceptions::from_tasks(tasks);
     // ADR-0014 invariant: inactive `[...]` timestamps never feed the
     // agenda. Filtering at the parse step keeps the rest of the agenda
     // logic bracket-form-agnostic — every downstream bucket already
@@ -45,6 +54,7 @@ fn prepare_tasks(tasks: &[Task]) -> Vec<PreparedTask<'_>> {
                 .as_deref()
                 .and_then(|ts| parse_org_timestamp(ts, None))
                 .filter(|p| p.active),
+            excluded: exceptions.dates_for(t),
         })
         .collect()
 }
@@ -486,18 +496,69 @@ fn next_occurrence(
     repeater: &crate::timestamp::Repeater,
     time: Option<NaiveTime>,
     now: NaiveDateTime,
+    excluded: &HashSet<NaiveDate>,
 ) -> Option<NaiveDate> {
     use crate::timestamp::{closest_date, DatePreference};
 
     let today = now.date();
     let next = closest_date(base, today, DatePreference::Future, repeater);
     let slot_passed_today = next == Some(today) && time.is_some_and(|t| t < now.time());
-    if slot_passed_today {
-        if let Some(tomorrow) = today.succ_opt() {
-            return closest_date(base, tomorrow, DatePreference::Future, repeater);
+    let next = if slot_passed_today {
+        today
+            .succ_opt()
+            .and_then(|tomorrow| closest_date(base, tomorrow, DatePreference::Future, repeater))
+    } else {
+        next
+    };
+    skip_excluded(base, repeater, next, excluded)
+}
+
+/// Walk forward past the occurrences an entry does not have (ADR-0031).
+///
+/// Bounded by the number of exceptions: every step consumes one of them, so a
+/// series cannot be walked in circles by a corpus that lists the same date
+/// twice or by a repeater that fails to advance.
+fn skip_excluded(
+    base: NaiveDate,
+    repeater: &crate::timestamp::Repeater,
+    from: Option<NaiveDate>,
+    excluded: &HashSet<NaiveDate>,
+) -> Option<NaiveDate> {
+    use crate::timestamp::{closest_date, DatePreference};
+
+    let mut candidate = from?;
+    for _ in 0..=excluded.len() {
+        if !excluded.contains(&candidate) {
+            return Some(candidate);
         }
+        let after = candidate.succ_opt()?;
+        candidate = closest_date(base, after, DatePreference::Future, repeater)?;
     }
-    next
+    None
+}
+
+/// Walk backward past the occurrences an entry does not have.
+///
+/// The mirror of [`skip_excluded`], for the arrears bucket: an occurrence that
+/// was cancelled or moved is not owed, and the debt is whichever earlier one
+/// still stands.
+fn skip_excluded_backwards(
+    base: NaiveDate,
+    repeater: &crate::timestamp::Repeater,
+    from: Option<NaiveDate>,
+    excluded: &HashSet<NaiveDate>,
+) -> Option<NaiveDate> {
+    use crate::timestamp::{closest_date, DatePreference};
+
+    let mut candidate = from?;
+    for _ in 0..=excluded.len() {
+        if !excluded.contains(&candidate) {
+            return Some(candidate);
+        }
+        let before = candidate.pred_opt()?;
+        candidate = closest_date(base, before, DatePreference::Past, repeater)?;
+    }
+    None
 }
 
 /// Set `timestamp_next` on every repeating task to its next still-upcoming
@@ -518,13 +579,18 @@ fn next_occurrence(
 /// Non-repeating tasks and tasks whose date or repeater cannot be parsed are
 /// left untouched, so the field is absent from their JSON.
 fn annotate_next_occurrences(tasks: &mut [Task], now: NaiveDateTime) {
+    // Built before the walk, from the list as it stands: a replacement names
+    // the series it replaces an occurrence of, so the answer for one task
+    // depends on the others (ADR-0031).
+    let exceptions = OccurrenceExceptions::from_tasks(tasks);
     for task in tasks {
-        set_next_occurrence(task, now);
+        let excluded = exceptions.dates_for(task);
+        set_next_occurrence(task, now, &excluded);
     }
 }
 
 /// Fill one task's `timestamp_next`; see [`annotate_next_occurrences`].
-fn set_next_occurrence(task: &mut Task, now: NaiveDateTime) {
+fn set_next_occurrence(task: &mut Task, now: NaiveDateTime, excluded: &HashSet<NaiveDate>) {
     use crate::timestamp::parse_repeater;
 
     let (Some(date_str), Some(rep_str)) = (
@@ -564,7 +630,7 @@ fn set_next_occurrence(task: &mut Task, now: NaiveDateTime) {
         );
     }
     task.timestamp_next =
-        next_occurrence(base, &rep, time, now).map(|d| d.format("%Y-%m-%d").to_string());
+        next_occurrence(base, &rep, time, now, excluded).map(|d| d.format("%Y-%m-%d").to_string());
     if task.timestamp_next.is_none() {
         tracing::debug!(
             file = %task.file,
@@ -592,7 +658,15 @@ fn build_day_agenda_prepared(
         let task = entry.task;
         if let Some(ref parsed) = entry.parsed {
             if let Some(ref repeater) = parsed.repeater {
-                handle_repeating_task(task, parsed, repeater, day_date, current_date, &mut agenda);
+                handle_repeating_task(
+                    task,
+                    parsed,
+                    repeater,
+                    day_date,
+                    current_date,
+                    &entry.excluded,
+                    &mut agenda,
+                );
             } else {
                 handle_non_repeating_task(task, parsed, day_date, current_date, &mut agenda);
             }
@@ -754,11 +828,18 @@ fn next_after_day(
     base: NaiveDate,
     repeater: &crate::timestamp::Repeater,
     day_date: NaiveDate,
+    excluded: &HashSet<NaiveDate>,
 ) -> Option<String> {
     let after = day_date.succ_opt()?;
 
-    next_occurrence(base, repeater, None, after.and_time(NaiveTime::MIN))
-        .map(|date| date.format("%Y-%m-%d").to_string())
+    next_occurrence(
+        base,
+        repeater,
+        None,
+        after.and_time(NaiveTime::MIN),
+        excluded,
+    )
+    .map(|date| date.format("%Y-%m-%d").to_string())
 }
 
 /// Put a repeating task into the cell of the day it recurs on.
@@ -775,6 +856,7 @@ fn push_scheduled_occurrence(
     parsed: &crate::timestamp::ParsedTimestamp,
     repeater: &crate::timestamp::Repeater,
     day_date: NaiveDate,
+    excluded: &HashSet<NaiveDate>,
     agenda: &mut DayAgenda,
 ) {
     let mut task_copy = task.clone();
@@ -783,7 +865,7 @@ fn push_scheduled_occurrence(
     // Markdown and HTML paths -- which pass `annotate_next = false` and leave
     // `timestamp_next` empty -- never reach the computation below.
     if task.timestamp_next.is_some() {
-        task_copy.timestamp_next_after = next_after_day(parsed.date, repeater, day_date);
+        task_copy.timestamp_next_after = next_after_day(parsed.date, repeater, day_date, excluded);
     }
     task_copy.timestamp_date = Some(day_date.format("%Y-%m-%d").to_string());
 
@@ -842,6 +924,7 @@ fn handle_repeating_task(
     repeater: &crate::timestamp::Repeater,
     day_date: NaiveDate,
     current_date: NaiveDate,
+    excluded: &HashSet<NaiveDate>,
     agenda: &mut DayAgenda,
 ) {
     use crate::timestamp::{closest_date, DatePreference};
@@ -849,7 +932,14 @@ fn handle_repeating_task(
     let base_date = parsed.date;
     let is_today = day_date == current_date;
 
-    let deadline = closest_date(base_date, current_date, DatePreference::Past, repeater);
+    // An occurrence that was cancelled or moved is not owed, so the arrears
+    // are whichever earlier occurrence still stands (ADR-0031).
+    let deadline = skip_excluded_backwards(
+        base_date,
+        repeater,
+        closest_date(base_date, current_date, DatePreference::Past, repeater),
+        excluded,
+    );
     // `repeat` is "should this exact day show the recurring task?" — that
     // question is local to `day_date`, not to `current_date`, otherwise past
     // occurrence days in a week/month agenda would be silently empty.
@@ -862,14 +952,20 @@ fn handle_repeating_task(
     // Show task on its occurrence day. If base_date is in the future,
     // deadline may be None; in that case use base_date as the first occurrence.
     let mut shown_on_day = false;
+    let day_is_excluded = excluded.contains(&day_date);
     if let Some(repeat_date) = repeat {
-        if day_date == repeat_date {
-            push_scheduled_occurrence(task, parsed, repeater, day_date, agenda);
+        if day_date == repeat_date && !day_is_excluded {
+            push_scheduled_occurrence(task, parsed, repeater, day_date, excluded, agenda);
             shown_on_day = true;
         }
     }
-    if !shown_on_day && deadline.is_none() && current_date < base_date && day_date == base_date {
-        push_scheduled_occurrence(task, parsed, repeater, day_date, agenda);
+    if !shown_on_day
+        && !day_is_excluded
+        && deadline.is_none()
+        && current_date < base_date
+        && day_date == base_date
+    {
+        push_scheduled_occurrence(task, parsed, repeater, day_date, excluded, agenda);
     }
 
     // DONE tasks and CLOSED-typed timestamps never appear in overdue or
@@ -913,7 +1009,7 @@ fn handle_repeating_task(
         if let Some(ref ts_type) = task.timestamp_type {
             if ts_type == "DEADLINE" {
                 let next_due = if repeat.is_none() && current_date < base_date {
-                    Some(base_date)
+                    Some(base_date).filter(|d| !excluded.contains(d))
                 } else {
                     None
                 };
@@ -1078,18 +1174,35 @@ mod tests {
         NaiveTime::from_hms_opt(hh, mm, 0).unwrap()
     }
 
+    /// A run with no exception in it, which is what almost every test wants.
+    fn no_exceptions() -> HashSet<NaiveDate> {
+        HashSet::new()
+    }
+
     #[test]
     fn next_occurrence_rolls_a_past_date_forward() {
         // Weekly ++7d anchored on Tue 21.07; "now" is Fri 24.07 -> next is 28.07.
         let rep = parse_repeater("++7d").unwrap();
-        let next = next_occurrence(ymd(2026, 7, 21), &rep, None, dt(2026, 7, 24, 10, 0));
+        let next = next_occurrence(
+            ymd(2026, 7, 21),
+            &rep,
+            None,
+            dt(2026, 7, 24, 10, 0),
+            &no_exceptions(),
+        );
         assert_eq!(next, Some(ymd(2026, 7, 28)));
     }
 
     #[test]
     fn next_occurrence_monthly_rolls_month_by_month() {
         let rep = parse_repeater("++1m").unwrap();
-        let next = next_occurrence(ymd(2026, 1, 15), &rep, None, dt(2026, 7, 24, 10, 0));
+        let next = next_occurrence(
+            ymd(2026, 1, 15),
+            &rep,
+            None,
+            dt(2026, 7, 24, 10, 0),
+            &no_exceptions(),
+        );
         assert_eq!(next, Some(ymd(2026, 8, 15)));
     }
 
@@ -1097,7 +1210,13 @@ mod tests {
     fn next_occurrence_all_day_today_stays_today_even_late() {
         // An untimed occurrence on today is still "next" late in the evening.
         let rep = parse_repeater("++1w").unwrap();
-        let next = next_occurrence(ymd(2026, 7, 24), &rep, None, dt(2026, 7, 24, 22, 3));
+        let next = next_occurrence(
+            ymd(2026, 7, 24),
+            &rep,
+            None,
+            dt(2026, 7, 24, 22, 3),
+            &no_exceptions(),
+        );
         assert_eq!(next, Some(ymd(2026, 7, 24)));
     }
 
@@ -1109,6 +1228,7 @@ mod tests {
             &rep,
             Some(hm(14, 0)),
             dt(2026, 7, 24, 9, 0),
+            &no_exceptions(),
         );
         assert_eq!(next, Some(ymd(2026, 7, 24)));
     }
@@ -1122,6 +1242,7 @@ mod tests {
             &rep,
             Some(hm(14, 0)),
             dt(2026, 7, 24, 22, 3),
+            &no_exceptions(),
         );
         assert_eq!(next, Some(ymd(2026, 7, 31)));
     }
@@ -1129,7 +1250,13 @@ mod tests {
     #[test]
     fn next_occurrence_future_anchor_is_returned_as_is() {
         let rep = parse_repeater("++7d").unwrap();
-        let next = next_occurrence(ymd(2026, 8, 12), &rep, None, dt(2026, 7, 24, 22, 3));
+        let next = next_occurrence(
+            ymd(2026, 8, 12),
+            &rep,
+            None,
+            dt(2026, 7, 24, 22, 3),
+            &no_exceptions(),
+        );
         assert_eq!(next, Some(ymd(2026, 8, 12)));
     }
 
@@ -1141,7 +1268,13 @@ mod tests {
         // future change to that rule is a deliberate one.
         for kind in ["+7d", "++7d", ".+7d"] {
             let rep = parse_repeater(kind).expect(kind);
-            let next = next_occurrence(ymd(2026, 7, 21), &rep, None, dt(2026, 7, 24, 10, 0));
+            let next = next_occurrence(
+                ymd(2026, 7, 21),
+                &rep,
+                None,
+                dt(2026, 7, 24, 10, 0),
+                &no_exceptions(),
+            );
             assert_eq!(next, Some(ymd(2026, 7, 28)), "repeater kind {kind}");
         }
     }
@@ -1151,14 +1284,26 @@ mod tests {
         // `wd` counts working days, so from Fri 24.07 the next one-workday
         // occurrence is Mon 27.07, not Sat 25.07.
         let rep = parse_repeater("++1wd").unwrap();
-        let next = next_occurrence(ymd(2026, 7, 24), &rep, None, dt(2026, 7, 25, 10, 0));
+        let next = next_occurrence(
+            ymd(2026, 7, 24),
+            &rep,
+            None,
+            dt(2026, 7, 25, 10, 0),
+            &no_exceptions(),
+        );
         assert_eq!(next, Some(ymd(2026, 7, 27)));
     }
 
     #[test]
     fn next_occurrence_yearly_unit_rolls_to_the_next_anniversary() {
         let rep = parse_repeater("++1y").unwrap();
-        let next = next_occurrence(ymd(2020, 3, 9), &rep, None, dt(2026, 7, 24, 10, 0));
+        let next = next_occurrence(
+            ymd(2020, 3, 9),
+            &rep,
+            None,
+            dt(2026, 7, 24, 10, 0),
+            &no_exceptions(),
+        );
         assert_eq!(next, Some(ymd(2027, 3, 9)));
     }
 
@@ -1173,6 +1318,7 @@ mod tests {
             &rep,
             Some(hm(9, 0)),
             dt(2026, 7, 24, 10, 0),
+            &no_exceptions(),
         );
         assert_eq!(next, Some(ymd(2026, 7, 25)));
     }
@@ -1204,6 +1350,169 @@ mod tests {
                 .collect(),
             AgendaOutput::Tasks(tasks) => tasks.iter().map(|t| t.timestamp_next.clone()).collect(),
         }
+    }
+
+    /// A series with an `ID`, so a replacement has something to name.
+    fn series_task(date_str: &str, repeater: &str, time: Option<&str>, id: &str) -> Task {
+        let mut task = repeating_task(date_str, repeater, time);
+        let mut props = std::collections::BTreeMap::new();
+        props.insert("ID".to_string(), id.to_string());
+        task.properties = Some(props);
+        task
+    }
+
+    /// The entry that stands in for one occurrence of `series_id`.
+    fn replacement_task(date_str: &str, time: &str, series_id: &str, recurrence: &str) -> Task {
+        let mut task = create_test_task(date_str, Some(time), TaskType::Todo);
+        task.heading = "English, moved".to_string();
+        task.file = "moved.md".to_string();
+        task.series_id = Some(series_id.to_string());
+        task.recurrence_id = Some(recurrence.to_string());
+        task
+    }
+
+    /// The headings drawn on the days they are dated to, in order.
+    ///
+    /// The arrears and the deadlines coming up are left out on purpose: they
+    /// are copies borrowed into today, and a test about which occurrences a
+    /// series has should read the cells the series is drawn in.
+    fn collect_scheduled_headings(output: &AgendaOutput) -> Vec<String> {
+        match output {
+            AgendaOutput::Days(days) => days
+                .iter()
+                .flat_map(|day| day.scheduled_timed.iter().chain(&day.scheduled_no_time))
+                .map(|item| item.task.heading.clone())
+                .collect(),
+            AgendaOutput::Tasks(tasks) => tasks.iter().map(|t| t.heading.clone()).collect(),
+        }
+    }
+
+    fn week_from(tasks: Vec<Task>, current: &str) -> AgendaOutput {
+        filter_agenda(
+            tasks,
+            AgendaScope::Week,
+            AgendaDates {
+                current_date: Some(current),
+                date: Some(current),
+                ..AgendaDates::default()
+            },
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect("filter_agenda")
+    }
+
+    #[test]
+    fn an_excluded_date_drops_that_occurrence_and_keeps_the_rest() {
+        // Weekly class on Thursdays; the 20th is cancelled (ADR-0031).
+        let mut task = repeating_task("2026-08-13 Thu", "+1w", Some("15:00"));
+        task.heading = "English".to_string();
+        task.excluded_dates = Some(vec!["2026-08-20".to_string()]);
+
+        let output = week_from(vec![task], "2026-08-17");
+
+        let AgendaOutput::Days(days) = &output else {
+            panic!("week scope must produce days");
+        };
+        let drawn: Vec<String> = days
+            .iter()
+            .filter(|day| !day.scheduled_timed.is_empty())
+            .map(|day| day.date.clone())
+            .collect();
+        assert!(
+            drawn.is_empty(),
+            "the week of the 17th holds only the excluded occurrence, so nothing is drawn: {drawn:?}"
+        );
+    }
+
+    #[test]
+    fn a_replacement_takes_the_place_of_the_occurrence_it_names() {
+        let series = series_task("2026-08-13 Thu", "+1w", Some("15:00"), "series-1");
+        let moved = replacement_task("2026-08-20 Thu", "18:00", "series-1", "2026-08-20 15:00");
+
+        let headings = collect_scheduled_headings(&week_from(vec![series, moved], "2026-08-17"));
+
+        assert_eq!(
+            headings,
+            vec!["English, moved".to_string()],
+            "the day must hold the replacement alone, not both it and the series"
+        );
+    }
+
+    #[test]
+    fn a_replacement_of_another_series_does_not_disturb_this_one() {
+        let series = series_task("2026-08-13 Thu", "+1w", Some("15:00"), "series-1");
+        let mut moved = replacement_task("2026-08-20 Thu", "18:00", "series-2", "2026-08-20 15:00");
+        moved.heading = "Someone else's class".to_string();
+
+        let headings = collect_scheduled_headings(&week_from(vec![series, moved], "2026-08-17"));
+
+        assert_eq!(
+            headings,
+            vec!["Test task".to_string(), "Someone else's class".to_string()],
+            "an unrelated replacement leaves the series occurrence standing"
+        );
+    }
+
+    #[test]
+    fn the_next_occurrence_steps_over_an_excluded_one() {
+        let mut task = repeating_task("2026-08-13 Thu", "+1w", Some("15:00"));
+        task.excluded_dates = Some(vec!["2026-08-20".to_string()]);
+
+        let output = filter_agenda(
+            vec![task],
+            AgendaScope::Day,
+            AgendaDates {
+                current_date: Some("2026-08-17"),
+                ..AgendaDates::default()
+            },
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect("filter_agenda");
+
+        assert_eq!(
+            collect_next(&output),
+            vec![Some("2026-08-27".to_string())],
+            "the 20th is not an occurrence, so the next one is the 27th"
+        );
+    }
+
+    #[test]
+    fn arrears_are_owed_from_the_last_occurrence_that_still_stands() {
+        // Scheduled weekly from the 6th; the 20th was cancelled, so on the
+        // 24th what is owed is the 13th, not the 20th.
+        let mut task = repeating_task("2026-08-06 Thu", "+1w", None);
+        task.heading = "Water the flowers".to_string();
+        task.excluded_dates = Some(vec!["2026-08-20".to_string()]);
+
+        let output = filter_agenda(
+            vec![task],
+            AgendaScope::Day,
+            AgendaDates {
+                current_date: Some("2026-08-24"),
+                ..AgendaDates::default()
+            },
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect("filter_agenda");
+
+        let AgendaOutput::Days(days) = &output else {
+            panic!("day scope must produce days");
+        };
+        let owed: Vec<Option<i64>> = days[0].overdue.iter().map(|o| o.days_offset).collect();
+        assert_eq!(
+            owed,
+            vec![Some(-11)],
+            "the debt is the 13th (eleven days back), the 20th having been cancelled"
+        );
     }
 
     #[test]
@@ -1434,6 +1743,9 @@ mod tests {
             clocks: None,
             total_clock_time: None,
             properties: None,
+            excluded_dates: None,
+            recurrence_id: None,
+            series_id: None,
         }
     }
 
@@ -1468,6 +1780,9 @@ mod tests {
             clocks: None,
             total_clock_time: None,
             properties: None,
+            excluded_dates: None,
+            recurrence_id: None,
+            series_id: None,
         }
     }
 
@@ -1589,6 +1904,9 @@ mod tests {
             clocks: None,
             total_clock_time: None,
             properties: None,
+            excluded_dates: None,
+            recurrence_id: None,
+            series_id: None,
         };
 
         // Deliberately scrambled input order: highest priority arrives second,
@@ -1866,6 +2184,9 @@ mod tests {
             clocks: None,
             total_clock_time: None,
             properties: None,
+            excluded_dates: None,
+            recurrence_id: None,
+            series_id: None,
         }
     }
 
@@ -1902,6 +2223,9 @@ mod tests {
             clocks: None,
             total_clock_time: None,
             properties: None,
+            excluded_dates: None,
+            recurrence_id: None,
+            series_id: None,
         }
     }
 
@@ -2972,6 +3296,9 @@ mod tests {
             clocks: None,
             total_clock_time: None,
             properties: None,
+            excluded_dates: None,
+            recurrence_id: None,
+            series_id: None,
         }
     }
 

@@ -1324,6 +1324,43 @@ during compilation rather than at runtime.
 `SCHEDULED: <2025-12-05 Thu +2wd>`
 ```
 
+### One occurrence that differs
+
+A repeating timestamp describes an endless series, and there is nowhere in
+that line to say that one occurrence is cancelled or happens at another time.
+Two properties say it instead, in the shape iCalendar uses (see
+[ADR-0031](docs/adr/0031-exceptions-to-a-repeating-entry.md)):
+
+````markdown
+### TODO English
+`SCHEDULED: <2026-08-13 Thu 15:00 +1w>`
+```org-properties
+ID: series-1
+EXDATE: 2026-08-27
+```
+
+### TODO English, moved to the evening
+`SCHEDULED: <2026-08-20 Thu 18:00>`
+```org-properties
+SERIES_ID: series-1
+RECURRENCE_ID: 2026-08-20 15:00
+```
+````
+
+- `EXDATE` lists dates the series does not occur on, separated by commas
+  and/or whitespace. The 27th above simply has no class.
+- A separate entry carrying `SERIES_ID` (the `ID` of the series) and
+  `RECURRENCE_ID` (the start the occurrence *would* have had) takes the place
+  of that one occurrence — the agenda draws the 20th at 18:00 and not at
+  15:00. No `EXDATE` is needed for it: a replacement is not a cancellation.
+- The replacing entry is an ordinary entry: its own `TODO` state, body,
+  priority and clocks stay with it rather than with the series.
+- Matching is by date, because the agenda draws at most one occurrence of a
+  series per day; the clock time in `RECURRENCE_ID` is carried for the reader
+  and for calendar export.
+- All three keys reach the JSON as `excluded_dates`, `recurrence_id` and
+  `series_id`.
+
 ## Project layout
 
 ```

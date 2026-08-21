@@ -417,6 +417,9 @@ mod tests {
             clocks: None,
             total_clock_time: None,
             properties: None,
+            excluded_dates: None,
+            recurrence_id: None,
+            series_id: None,
         }];
 
         let output = render_markdown(&tasks);
@@ -462,6 +465,9 @@ mod tests {
             clocks: None,
             total_clock_time: None,
             properties: None,
+            excluded_dates: None,
+            recurrence_id: None,
+            series_id: None,
         }];
         let out = render_markdown(&tasks);
         assert!(
@@ -492,6 +498,9 @@ mod tests {
             clocks: None,
             total_clock_time: None,
             properties: None,
+            excluded_dates: None,
+            recurrence_id: None,
+            series_id: None,
         }
     }
 
@@ -585,6 +594,9 @@ Body text.\n\n";
             clocks: None,
             total_clock_time: None,
             properties: None,
+            excluded_dates: None,
+            recurrence_id: None,
+            series_id: None,
         }];
 
         let output = render_html(&tasks);

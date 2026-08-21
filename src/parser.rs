@@ -431,11 +431,9 @@ fn exception_fields(
     };
 
     let excluded = props.get(EXDATE_KEY).map(|raw| {
-        let (dates, rejected) = parse_excluded_dates(raw);
-        for field in rejected {
-            warn_invalid_timestamp(ts_warning_counter, path, line, &field);
-        }
-        dates
+        parse_excluded_dates(raw, |field| {
+            warn_invalid_timestamp(ts_warning_counter, path, line, field);
+        })
     });
     let excluded = excluded.filter(|dates| !dates.is_empty());
 

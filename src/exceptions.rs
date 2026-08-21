@@ -11,6 +11,10 @@
 //!   one occurrence it names, and needs no `EXDATE` beside it — that is RFC
 //!   5545's split between an occurrence that is gone and one that moved.
 //!
+//! The two reasons are kept apart all the way to the agenda, because they part
+//! ways over a debt: nothing is owed for an occurrence that never was, and
+//! what is owed for one that moved is owed by the entry it moved to.
+//!
 //! Matching is at day granularity, because the agenda draws at most one
 //! occurrence of a series per day; the clock time a `RECURRENCE_ID` may carry
 //! is kept for the reader and for export, and is not matched on.
@@ -33,24 +37,32 @@ pub const ID_KEY: &str = "ID";
 /// The dates listed in an `EXDATE` value, normalised to `YYYY-MM-DD`.
 ///
 /// Separators are commas and whitespace, in any mix — a list is written for a
-/// person to read, and both are what people write. A field that does not
-/// parse as a date is dropped rather than guessed at; the caller reports it.
-/// The result keeps the order the value was written in and drops duplicates.
-pub fn parse_excluded_dates(raw: &str) -> (Vec<String>, Vec<String>) {
+/// person to read, and both are what people write. The result keeps the order
+/// the value was written in and holds one entry per date, whichever way the
+/// value spelled it.
+///
+/// A field that does not parse as a date is handed to `on_rejected` as it is
+/// met rather than collected: the value is only as short as the file makes it,
+/// and one written entirely of rubbish would otherwise be held twice over —
+/// once in the file, once in a vector — for a caller that reports the first
+/// few and drops the rest.
+pub fn parse_excluded_dates(raw: &str, mut on_rejected: impl FnMut(&str)) -> Vec<String> {
     let mut dates = Vec::new();
-    let mut rejected = Vec::new();
+    // A set of what has been seen, rather than a scan of what has been kept:
+    // the scan is linear per date and so quadratic over the value, which on a
+    // long `EXDATE` is the difference between a pass and a stall.
+    let mut seen = HashSet::new();
     for field in raw.split([',', ' ', '\t']).filter(|f| !f.is_empty()) {
         match NaiveDate::parse_from_str(field, "%Y-%m-%d") {
             Ok(date) => {
-                let text = date.format("%Y-%m-%d").to_string();
-                if !dates.contains(&text) {
-                    dates.push(text);
+                if seen.insert(date) {
+                    dates.push(date.format("%Y-%m-%d").to_string());
                 }
             }
-            Err(_) => rejected.push(field.to_string()),
+            Err(_) => on_rejected(field),
         }
     }
-    (dates, rejected)
+    dates
 }
 
 /// The occurrence a `RECURRENCE_ID` value names: a date, optionally followed
@@ -105,50 +117,80 @@ impl OccurrenceExceptions {
         Self { replaced }
     }
 
-    /// Whether `task` skips its occurrence on `date`.
-    ///
-    /// Two reasons, and the caller needs neither to tell them apart: the
-    /// entry lists the date in its own `EXDATE`, or some other entry of the
-    /// run replaces that occurrence.
-    pub fn excludes(&self, task: &Task, date: NaiveDate) -> bool {
-        if let Some(dates) = task.excluded_dates.as_deref() {
-            let text = date.format("%Y-%m-%d").to_string();
-            if dates.iter().any(|d| d == &text) {
-                return true;
-            }
-        }
-        self.task_id(task)
-            .and_then(|id| self.replaced.get(id))
-            .is_some_and(|dates| dates.contains(&date))
-    }
-
-    /// Every occurrence `task` does not have: what it excluded itself, and
+    /// Every occurrence `task` does not have: what it cancelled itself, and
     /// what other entries of the run replace.
     ///
-    /// Collected per task once, so the day-by-day walk of a week or a month
-    /// answers from a set instead of re-reading properties on every cell.
-    pub fn dates_for(&self, task: &Task) -> HashSet<NaiveDate> {
-        let mut dates: HashSet<NaiveDate> = task
+    /// The one place that answers the question, and it answers it once per
+    /// task: the day-by-day walk of a week or a month reads a set instead of
+    /// re-reading properties on every cell.
+    pub fn dates_for(&self, task: &Task) -> ExcludedOccurrences {
+        let cancelled = task
             .excluded_dates
             .as_deref()
             .unwrap_or_default()
             .iter()
+            // A date nothing can read is dropped here as it was dropped at
+            // the parser: a `Task` can also be built by a library caller,
+            // and one bad string must not take the whole list with it.
             .filter_map(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
             .collect();
-        if let Some(replaced) = self.task_id(task).and_then(|id| self.replaced.get(id)) {
-            dates.extend(replaced.iter().copied());
+        let replaced = self
+            .task_id(task)
+            .and_then(|id| self.replaced.get(id))
+            .cloned()
+            .unwrap_or_default();
+        ExcludedOccurrences {
+            cancelled,
+            replaced,
         }
-        dates
-    }
-
-    /// Whether the run holds any exception at all — the fast path for the
-    /// overwhelmingly common case of a corpus without one.
-    pub fn is_empty(&self) -> bool {
-        self.replaced.is_empty()
     }
 
     fn task_id<'a>(&self, task: &'a Task) -> Option<&'a str> {
         task.properties.as_ref()?.get(ID_KEY).map(String::as_str)
+    }
+}
+
+/// The occurrences one entry does not have, kept apart by reason.
+///
+/// Both reasons take the occurrence out of the day it would have fallen on.
+/// They part ways over the arrears: a cancelled occurrence never was, so the
+/// debt is whichever earlier one still stands, while a replaced occurrence did
+/// take place — elsewhere — and its debt travels with the entry that replaced
+/// it (ADR-0031).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ExcludedOccurrences {
+    cancelled: HashSet<NaiveDate>,
+    replaced: HashSet<NaiveDate>,
+}
+
+impl ExcludedOccurrences {
+    /// Whether the series skips `date`, for either reason.
+    pub fn contains(&self, date: &NaiveDate) -> bool {
+        self.cancelled.contains(date) || self.replaced.contains(date)
+    }
+
+    /// Whether another entry of the run stands in for the occurrence on
+    /// `date`.
+    ///
+    /// Asked where the two reasons differ, which is the arrears bucket. A
+    /// date named by both is treated as replaced: the occurrence is somewhere,
+    /// and an `EXDATE` beside a replacement is redundant rather than
+    /// contradictory.
+    pub fn is_replaced(&self, date: &NaiveDate) -> bool {
+        self.replaced.contains(date)
+    }
+
+    /// Whether this entry misses no occurrence at all — the fast path for the
+    /// overwhelmingly common case of an entry without an exception.
+    pub fn is_empty(&self) -> bool {
+        self.cancelled.is_empty() && self.replaced.is_empty()
+    }
+
+    /// How many occurrences are missing, counting a date named by both
+    /// reasons twice. An upper bound is all the walks over a series need, and
+    /// an exact count would cost a pass over the smaller set.
+    pub fn len(&self) -> usize {
+        self.cancelled.len() + self.replaced.len()
     }
 }
 
@@ -161,11 +203,24 @@ mod tests {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
     }
 
+    /// The dates of an `EXDATE` value, for a test that expects all of them to
+    /// read.
+    fn dates_of(raw: &str) -> Vec<String> {
+        parse_excluded_dates(raw, |field| panic!("unexpected reject: {field:?}"))
+    }
+
     fn series(id: &str) -> Task {
         let mut props = BTreeMap::new();
         props.insert(ID_KEY.to_string(), id.to_string());
         Task {
             properties: Some(props),
+            ..Task::default()
+        }
+    }
+
+    fn cancelling(dates: &[&str]) -> Task {
+        Task {
+            excluded_dates: Some(dates.iter().map(|d| (*d).to_string()).collect()),
             ..Task::default()
         }
     }
@@ -180,22 +235,59 @@ mod tests {
 
     #[test]
     fn excluded_dates_take_commas_and_spaces_alike() {
-        let (dates, rejected) = parse_excluded_dates("2026-08-20, 2026-08-27 2026-09-03");
-        assert_eq!(dates, ["2026-08-20", "2026-08-27", "2026-09-03"]);
-        assert!(rejected.is_empty(), "nothing to reject: {rejected:?}");
+        assert_eq!(
+            dates_of("2026-08-20, 2026-08-27 2026-09-03"),
+            ["2026-08-20", "2026-08-27", "2026-09-03"]
+        );
     }
 
     #[test]
     fn excluded_dates_drop_what_is_not_a_date_and_say_so() {
-        let (dates, rejected) = parse_excluded_dates("2026-08-20, next thursday");
+        let mut rejected = Vec::new();
+        let dates = parse_excluded_dates("2026-08-20, next thursday", |field| {
+            rejected.push(field.to_string());
+        });
+
         assert_eq!(dates, ["2026-08-20"]);
-        assert_eq!(rejected, ["next", "thursday"]);
+        assert_eq!(
+            rejected,
+            ["next", "thursday"],
+            "each field is reported as it is met"
+        );
     }
 
     #[test]
     fn excluded_dates_keep_one_copy_of_a_repeated_date() {
-        let (dates, _) = parse_excluded_dates("2026-08-20 2026-08-20");
-        assert_eq!(dates, ["2026-08-20"]);
+        assert_eq!(dates_of("2026-08-20 2026-08-20"), ["2026-08-20"]);
+    }
+
+    #[test]
+    fn excluded_dates_keep_one_copy_however_the_date_was_spelled() {
+        assert_eq!(dates_of("2026-8-20, 2026-08-20"), ["2026-08-20"]);
+    }
+
+    #[test]
+    fn a_long_exdate_costs_one_pass_and_not_one_per_date_already_seen() {
+        // A value is only as short as the file makes it, and a linear scan of
+        // what is already collected turns that length into its square: 20 000
+        // dates are 2*10^8 string comparisons, seconds of a test run, and on a
+        // file of the size the scanner accepts, an entry nothing finishes
+        // reading.
+        const DATES: i64 = 20_000;
+        let first = ymd(2000, 1, 1);
+        let raw = (0..DATES)
+            .map(|i| {
+                (first + chrono::Duration::days(i))
+                    .format("%Y-%m-%d")
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let dates = dates_of(&raw);
+
+        assert_eq!(dates.len(), DATES as usize, "every date is kept, once");
+        assert_eq!(dates[0], "2000-01-01", "in the order it was written");
     }
 
     #[test]
@@ -225,41 +317,100 @@ mod tests {
 
     #[test]
     fn an_entry_skips_the_date_it_lists_itself() {
-        let task = Task {
-            excluded_dates: Some(vec!["2026-08-20".to_string()]),
-            ..Task::default()
-        };
-        let exceptions = OccurrenceExceptions::from_tasks(std::slice::from_ref(&task));
+        let task = cancelling(&["2026-08-20"]);
+        let missing =
+            OccurrenceExceptions::from_tasks(std::slice::from_ref(&task)).dates_for(&task);
 
-        assert!(exceptions.excludes(&task, ymd(2026, 8, 20)));
-        assert!(!exceptions.excludes(&task, ymd(2026, 8, 27)));
+        assert!(missing.contains(&ymd(2026, 8, 20)));
+        assert!(!missing.contains(&ymd(2026, 8, 27)));
+        assert!(
+            !missing.is_replaced(&ymd(2026, 8, 20)),
+            "an EXDATE cancels an occurrence, it does not move it"
+        );
+    }
+
+    #[test]
+    fn a_date_in_an_exdate_that_cannot_be_read_is_dropped_and_the_rest_kept() {
+        // Reachable through the library, where a `Task` is built by hand and
+        // not by the parser that normalises what it writes.
+        let task = cancelling(&["last thursday", "2026-08-27"]);
+        let missing =
+            OccurrenceExceptions::from_tasks(std::slice::from_ref(&task)).dates_for(&task);
+
+        assert!(missing.contains(&ymd(2026, 8, 27)));
+        assert_eq!(missing.len(), 1);
     }
 
     #[test]
     fn a_replacement_suppresses_the_occurrence_it_names() {
         let english = series("series-1");
         let moved = replacement("series-1", "2026-08-20 15:00");
-        let exceptions = OccurrenceExceptions::from_tasks(&[english.clone(), moved]);
+        let missing =
+            OccurrenceExceptions::from_tasks(&[english.clone(), moved]).dates_for(&english);
 
-        assert!(exceptions.excludes(&english, ymd(2026, 8, 20)));
-        assert!(!exceptions.excludes(&english, ymd(2026, 8, 27)));
+        assert!(missing.contains(&ymd(2026, 8, 20)));
+        assert!(!missing.contains(&ymd(2026, 8, 27)));
+        assert!(
+            missing.is_replaced(&ymd(2026, 8, 20)),
+            "the occurrence moved: its debt is the replacement's"
+        );
+    }
+
+    #[test]
+    fn both_reasons_meet_in_one_answer_and_stay_apart_in_it() {
+        let mut english = series("series-1");
+        english.excluded_dates = Some(vec!["2026-08-13".to_string()]);
+        let moved = replacement("series-1", "2026-08-20 15:00");
+        let missing =
+            OccurrenceExceptions::from_tasks(&[english.clone(), moved]).dates_for(&english);
+
+        assert_eq!(missing.len(), 2);
+        assert!(missing.contains(&ymd(2026, 8, 13)) && missing.contains(&ymd(2026, 8, 20)));
+        assert!(!missing.is_replaced(&ymd(2026, 8, 13)), "the 13th is gone");
+        assert!(missing.is_replaced(&ymd(2026, 8, 20)), "the 20th moved");
     }
 
     #[test]
     fn a_replacement_of_another_series_leaves_this_one_alone() {
         let english = series("series-1");
         let moved = replacement("series-2", "2026-08-20");
-        let exceptions = OccurrenceExceptions::from_tasks(&[english.clone(), moved]);
+        let missing =
+            OccurrenceExceptions::from_tasks(&[english.clone(), moved]).dates_for(&english);
 
-        assert!(!exceptions.excludes(&english, ymd(2026, 8, 20)));
+        assert!(missing.is_empty());
     }
 
     #[test]
     fn a_series_without_an_id_cannot_be_replaced() {
         let anonymous = Task::default();
         let moved = replacement("series-1", "2026-08-20");
-        let exceptions = OccurrenceExceptions::from_tasks(&[anonymous.clone(), moved]);
+        let missing =
+            OccurrenceExceptions::from_tasks(&[anonymous.clone(), moved]).dates_for(&anonymous);
 
-        assert!(!exceptions.excludes(&anonymous, ymd(2026, 8, 20)));
+        assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn an_entry_whose_only_exception_is_an_exdate_is_not_an_entry_without_any() {
+        let task = cancelling(&["2026-08-20"]);
+        let missing =
+            OccurrenceExceptions::from_tasks(std::slice::from_ref(&task)).dates_for(&task);
+
+        assert!(
+            !missing.is_empty(),
+            "an EXDATE is an exception: an entry holding one is not an entry without any"
+        );
+    }
+
+    #[test]
+    fn one_definition_answers_whatever_the_date_is_written_like() {
+        // `2026-8-20` is what a person writes and what chrono reads. One
+        // definition of "is this occurrence missing" means one answer,
+        // whichever way the value spelled the day.
+        let task = cancelling(&["2026-8-20"]);
+        let missing =
+            OccurrenceExceptions::from_tasks(std::slice::from_ref(&task)).dates_for(&task);
+
+        assert!(missing.contains(&ymd(2026, 8, 20)));
     }
 }

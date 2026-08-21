@@ -66,6 +66,7 @@ was decided, and the trade-offs that came with it.
 | 0029 | [`timestamp_next_after` — the occurrence after the day being drawn](0029-next-occurrence-after-the-rendered-day.md) | Accepted |
 | 0030 | [An explicit window in the month grid is grown to whole weeks](0030-explicit-window-in-the-month-grid.md) | Accepted |
 | 0031 | [Exceptions to a repeating entry, in the iCalendar shape](0031-exceptions-to-a-repeating-entry.md) | Accepted |
+| 0032 | [What a missing occurrence owes, and what comes after it](0032-what-a-missing-occurrence-owes.md) | Accepted |
 
 ## Adding a new ADR
 

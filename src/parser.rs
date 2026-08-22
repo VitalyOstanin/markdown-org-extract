@@ -1780,4 +1780,50 @@ Second paragraph.\n\
         assert_eq!(props.get("K").map(String::as_str), Some("two"));
         assert_eq!(props.get("L").map(String::as_str), Some("three"));
     }
+
+    // Two answers the cases above do not reach: an `EXDATE` where nothing at
+    // all reads, and the per-field count of what was reported. Both are about
+    // the field the parser leaves behind rather than the line it logs.
+
+    #[test]
+    fn an_exdate_of_nothing_readable_leaves_no_field_at_all() {
+        // Not `Some([])`. The field is skipped on serialisation when it is
+        // None, so an empty list would reach a client as a series announcing
+        // exceptions and naming none -- a state every client would then have
+        // to answer for. The value is reported field by field regardless.
+        let (tasks, _, properties) = counted(&with_properties("EXDATE: next-thursday, sometime"));
+
+        assert_eq!(tasks[0].excluded_dates, None);
+        assert_eq!(properties, 2, "each field that does not read is reported");
+    }
+
+    #[test]
+    fn the_budget_for_unusable_exceptions_spans_the_file() {
+        // ADR-0020's cap is per run, not per task: two entries whose `EXDATE`
+        // does not read advance one counter. Pinned because the counter is
+        // threaded through `finalize_task` by hand, and a fresh one per task
+        // would look the same in every single-task test above.
+        let content = format!(
+            "{}{}",
+            with_properties("EXDATE: never"),
+            with_properties("EXDATE: sometime, whenever")
+        );
+        let (tasks, timestamps, properties) = counted(&content);
+
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(timestamps, 0);
+        assert_eq!(
+            properties, 3,
+            "one field in the first entry, two in the second"
+        );
+    }
+
+    #[test]
+    fn a_task_without_properties_asks_nothing_of_the_exception_keys() {
+        let mut counter = 0_usize;
+        let fields = exception_fields(Path::new("t.md"), 1, None, &mut counter);
+
+        assert_eq!(fields, ExceptionFields::default());
+        assert_eq!(counter, 0);
+    }
 }

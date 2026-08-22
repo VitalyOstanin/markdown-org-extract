@@ -4133,6 +4133,50 @@ mod tests {
     }
 
     #[test]
+    fn next_after_steps_over_an_occurrence_the_series_does_not_have() {
+        // ADR-0031 names three passes that have to agree on which occurrences
+        // a series has: the day cells, `timestamp_next`, and this one. It is
+        // the only one of the three read per cell rather than per entry, and
+        // the only one whose exception set is threaded down through
+        // `push_scheduled_occurrence` -- so it is also the one where a
+        // regression is invisible outside the JSON payload.
+        //
+        // Both reasons an occurrence can be missing are here: the 19th is
+        // cancelled by the series itself, the 20th is taken by an entry of its
+        // own. Neither is an occurrence, so the cell of the 18th names the
+        // 21st.
+        let mut series = series_task("2026-08-17 Mon", "+1d", Some("12:00"), "series-1");
+        series.excluded_dates = Some(vec!["2026-08-19".to_string()]);
+        let output = filter_agenda(
+            vec![
+                series,
+                replacement_task("2026-08-20 Thu", "18:00", "series-1", "2026-08-20"),
+            ],
+            AgendaScope::Week,
+            AgendaDates {
+                current_date: Some("2026-08-17"),
+                date: Some("2026-08-17"),
+                ..AgendaDates::default()
+            },
+            "UTC",
+            false,
+            false,
+            true,
+        )
+        .expect("filter_agenda");
+
+        let pairs = collect_dated_next_after(&output);
+        assert_eq!(
+            pairs
+                .iter()
+                .find(|(date, _)| date == "2026-08-18")
+                .map(|(_, next)| next.as_deref()),
+            Some(Some("2026-08-21")),
+            "the cell of the 18th must step over both the 19th and the 20th; got {pairs:?}"
+        );
+    }
+
+    #[test]
     fn next_after_keeps_month_end_for_a_monthly_repeater() {
         // Anchored on the 31st: computed from the rewritten date, February
         // would truncate the anchor to the 28th and never climb back.

@@ -3667,6 +3667,48 @@ fn tasks_json_carries_the_excluded_dates() {
     );
 }
 
+/// The other half of the wire contract: what a replacement carries. The
+/// fields exist so a consumer outside this process can match a replacement to
+/// its series — the Google Calendar export withholds the occurrence from the
+/// series it names — which only works if both leave the run as written, the
+/// time normalised to the minute occurrences are matched on.
+#[test]
+fn tasks_json_carries_the_series_and_the_occurrence_a_replacement_names() {
+    let dir = tempdir().unwrap();
+    let content = "### TODO English, moved to the evening\n`SCHEDULED: <2026-08-20 Thu 18:00>`\n```org-properties\nSERIES_ID: series-1\nRECURRENCE_ID: 2026-08-20 15:00:00\n```\n\nBody.\n";
+    fs::write(dir.path().join("moved.md"), content).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let task = &parsed.as_array().expect("array of tasks")[0];
+    assert_eq!(
+        task["series_id"],
+        serde_json::json!("series-1"),
+        "series_id must name the series being replaced: {stdout}"
+    );
+    assert_eq!(
+        task["recurrence_id"],
+        serde_json::json!("2026-08-20 15:00"),
+        "recurrence_id must name the occurrence, cut to the minute: {stdout}"
+    );
+    assert_eq!(
+        task["excluded_dates"],
+        serde_json::Value::Null,
+        "a replacement cancels nothing, so the key is absent: {stdout}"
+    );
+}
+
 /// ADR-0031: an entry naming an occurrence takes that occurrence's place,
 /// without an `EXDATE` beside it — a replacement is not a cancellation.
 #[test]

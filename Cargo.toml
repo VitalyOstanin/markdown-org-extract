@@ -44,6 +44,11 @@ chrono = { version = "0.4.44", default-features = false }
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"
+# Properties over the parsers that read a value someone else wrote (TODO.md,
+# "Property-based and fuzz tests"). `default-features = false` with `std`
+# leaves out the fork/timeout machinery, which needs `rusty-fork` and a
+# temporary file per case: the properties here return, they do not hang.
+proptest = { version = "1.11", default-features = false, features = ["std"] }
 tempfile = "3.27"
 
 # Optimised release profile for a CLI binary: thin LTO + single codegen unit

@@ -69,6 +69,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   twice. A `SERIES_ID` naming no entry of the run is likewise reported once,
   and now also in `--tasks` mode, where the mismatch is the same mistake.
 
+### Documentation
+
+- The test section of README describes `tests/properties.rs` — what a property
+  says that an example cannot, and that a failing case saved to
+  `tests/properties.proptest-regressions` is committed rather than left for the
+  next reader to find again. `TODO.md` marks the row of its plan this covers.
 ## [0.18.0] — 2026-08-21
 
 ### Added

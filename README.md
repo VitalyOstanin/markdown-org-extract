@@ -167,6 +167,21 @@ command that mirrors the CI configuration; running `cargo test` alone
 will not catch `rustfmt` or `yamllint` regressions that block CI on a
 subsequent push.
 
+#### Properties
+
+`tests/properties.rs` states what has to hold for *every* input of the parsers
+that read a value someone else wrote — the `EXDATE` and `RECURRENCE_ID` of a
+repeating series (see [One occurrence that
+differs](#one-occurrence-that-differs)). They run inside the ordinary `cargo
+test`; `proptest` is a dev-dependency and CI needs nothing added.
+
+A failing case is written to `tests/properties.proptest-regressions` and re-run
+before any new case on the next run. **That file is committed**: it is the
+shortest input that showed the bug, and leaving it out of the repository would
+mean the next person has to find it again. A file that appears after a
+deliberately broken build — a mutation run to check that a property has teeth —
+is not a finding and is deleted with the mutation.
+
 #### Workday handling
 
 Workday-aware scheduling is exercised by tests across three modules:

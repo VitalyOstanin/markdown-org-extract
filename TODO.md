@@ -67,17 +67,25 @@ from the user.
 
 ## Property-based and fuzz tests
 
-The suite is 110 CLI tests and some 285 unit tests, all of them by example.
-The parts that carry the most arithmetic -- the calendar and the repeaters --
-are exactly the parts an example set covers thinnest, because a wrong answer
-there needs a particular date to show itself.
+The suite is 116 CLI tests and some 391 unit tests, nearly all of them by
+example. The parts that carry the most arithmetic -- the calendar and the
+repeaters -- are exactly the parts an example set covers thinnest, because a
+wrong answer there needs a particular date to show itself.
 
 Two separate pieces of work, and the first is much the cheaper.
 
 ### Properties (`proptest`)
 
 One dev-dependency, tests run inside the ordinary `cargo test`, nothing new on
-CI. Invariants worth stating:
+CI. The dependency is in place and `tests/properties.rs` holds the first five
+properties, over the parsers of the exception keys — the newest reading surface
+and the one whose input another person writes. Row 9 below is what was done;
+the rest of the table is what is left, and the calendar rows are the ones the
+plan calls for next. A failing case lands in
+`tests/properties.proptest-regressions`, which is committed (see README,
+"Properties").
+
+Invariants worth stating:
 
 | # | Where | Property |
 |---|-------|----------|
@@ -89,6 +97,7 @@ CI. Invariants worth stating:
 | 6 | `closest_date` | across all combinations of `value`, `unit`, `prefer`: `Past <= current <= Future` |
 | 7 | `parse_repeater(format(...))` | round-trip |
 | 8 | `add_months` | associativity |
+| 9 | `parse_excluded_dates` / `parse_recurrence_id` (`src/exceptions.rs`) | **done**: every date returned reads back as one, no field is dropped in silence, one entry per date, a parsed `RECURRENCE_ID` always names a day, and a date with a time survives the round trip cut to the minute |
 
 ### Fuzzing (`cargo-fuzz`)
 

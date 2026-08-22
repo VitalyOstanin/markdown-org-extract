@@ -174,6 +174,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          # The ancestry check below needs history, not the tagged commit
+          # alone; a shallow checkout cannot answer whether it is on master.
+          fetch-depth: 0
+
+      - name: Refuse to publish a commit that is not on master
+        # Pushing a tag hands GitHub the commit with it, so `git push origin
+        # v0.19.0` alone is enough to start this workflow over a commit no
+        # branch of `origin` contains: crates.io would receive the release
+        # while `master` still stands where it did. The branch is deliberately
+        # unprotected (ADR-0017), so this is the barrier. Push order is
+        # `master` first, then the tag.
+        run: |
+          git fetch --depth=0 origin master
+          if ! git merge-base --is-ancestor HEAD origin/master; then
+            echo "::error::$(git rev-parse HEAD) is not on origin/master. Push the branch first, then the tag."
+            exit 1
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable as of 2026-07-16
@@ -211,7 +228,7 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Verify tag matches Cargo.toml and Cargo.lock versions
+      - name: Verify tag matches Cargo.toml, Cargo.lock and the README snippet
         env:
           TAG_VERSION: ${{ steps.tag.outputs.version }}
         run: |
@@ -233,6 +250,21 @@ jobs:
           LOCK_VERSION=$(awk '/^name = "markdown-org-extract"$/{getline; sub(/^version = "/, ""); sub(/"$/, ""); print; exit}' Cargo.lock)
           if [ "$LOCK_VERSION" != "$TAG_VERSION" ]; then
             echo "::error::Cargo.lock version $LOCK_VERSION does not match tag v$TAG_VERSION. Run \`cargo update -p markdown-org-extract\` and commit Cargo.lock."
+            exit 1
+          fi
+          # The "Use as a library" snippet in README tells a reader which
+          # version to depend on, and a `0.x` requirement pins the minor: a
+          # snippet left at an older minor hands out a build without the
+          # features the same README describes. It went unnoticed for four
+          # releases, so it is checked here rather than left to a checklist.
+          README_REQ=$(sed -nE 's/^markdown-org-extract = "([0-9]+\.[0-9]+)"$/\1/p' README.md | head -n 1)
+          TAG_MINOR=$(printf '%s' "$TAG_VERSION" | cut -d. -f1,2)
+          if [ -z "$README_REQ" ]; then
+            echo "::error::README.md has no \`markdown-org-extract = \"X.Y\"\` line to check against tag v$TAG_VERSION"
+            exit 1
+          fi
+          if [ "$README_REQ" != "$TAG_MINOR" ]; then
+            echo "::error::README.md depends on markdown-org-extract $README_REQ, but the tag is v$TAG_VERSION. Update the \"Use as a library\" snippet to \"$TAG_MINOR\"."
             exit 1
           fi
 
@@ -284,6 +316,22 @@ jobs:
           "$bin" --dir examples --agenda month-grid --date 2026-08-12 \
             --current-date 2026-08-12 --week-start sunday --format json --quiet \
             | jq -e 'length % 7 == 0 and .[0].date == "2026-07-26"' >/dev/null
+
+          # The exceptions of a repeating series (ADR-0031), on the profile
+          # users get. `examples/series-exceptions.md` cancels the class of
+          # 2026-09-03 and hands the one on 2026-08-20 to an entry of its own,
+          # so the first day holds no English at all and the second holds the
+          # replacement instead of the series.
+          "$bin" --dir examples --agenda day --date 2026-09-03 \
+            --current-date 2026-09-03 --format json --quiet \
+            | jq -e '[.[0].scheduled_timed[], .[0].scheduled_no_time[]]
+                     | map(select(.heading | startswith("English"))) | length == 0' >/dev/null
+
+          "$bin" --dir examples --agenda day --date 2026-08-20 \
+            --current-date 2026-08-20 --format json --quiet \
+            | jq -e '[.[0].scheduled_timed[], .[0].scheduled_no_time[]]
+                     | map(.heading) | map(select(startswith("English")))
+                     == ["English, moved to the evening"]' >/dev/null
 
       - name: cargo package --list
         run: cargo package --list

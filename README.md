@@ -201,7 +201,7 @@ required where processes cannot be spawned at all, such as Android.
 
 ```toml
 [dependencies]
-markdown-org-extract = "0.14"
+markdown-org-extract = "0.18"
 ```
 
 Scanning and agenda building are separate steps, so one scan can feed
@@ -653,6 +653,10 @@ Org-mode marker demonstrations:
 - `created-test.md` — using `CREATED:` for the creation date
 - `workdays-test.md` — workday repeaters (`+1wd`, `+2wd`) interacting
   with the holiday calendar
+- `series-exceptions.md` — a weekly series with one occurrence cancelled
+  (`EXDATE`) and one taken over by an entry of its own (`SERIES_ID` /
+  `RECURRENCE_ID`), the two shapes of [One occurrence that
+  differs](#one-occurrence-that-differs)
 
 CLOCK-block demonstrations (time tracking):
 
@@ -1438,6 +1442,20 @@ markdown-org-extract/
 The `scripts/` directory holds developer-facing helpers. None of them
 ship to end users on crates.io (the `Cargo.toml` `exclude` list omits
 the whole directory).
+
+Releases are pushed in two steps, **the branch first and the tag second**:
+
+```bash
+git push origin master
+git push origin vX.Y.Z
+```
+
+Pushing a tag hands GitHub the commit along with it, so a tag pushed on its own
+starts the release workflow over a commit no branch of `origin` contains — the
+crate would be published while `master` still stands where it did. The
+`publish` job checks the tagged commit is on `origin/master` and refuses
+otherwise, so the wrong order costs a failed run rather than a stranded
+release.
 
 | Script                          | Purpose                                                                |
 | ------------------------------- | ---------------------------------------------------------------------- |

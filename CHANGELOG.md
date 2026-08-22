@@ -71,6 +71,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- `examples/series-exceptions.md` shows the two shapes an exception takes — a
+  cancelled occurrence and one an entry of its own stands in for — and the
+  release smoke test asserts both on the profile that ships, where until now
+  nothing exercised the feature the 0.18.0 release was named for. The release
+  workflow also refuses to publish a tagged commit that is not on
+  `origin/master`, and README states the push order (branch first, tag second)
+  that keeps a release from stopping halfway.
 - The test section of README describes `tests/properties.rs` — what a property
   says that an example cannot, and that a failing case saved to
   `tests/properties.proptest-regressions` is committed rather than left for the

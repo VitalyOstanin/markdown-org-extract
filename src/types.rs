@@ -367,6 +367,13 @@ pub struct Task {
     /// read from the `EXDATE` property (ADR-0031). `None` when the entry
     /// declares none; an unparsable date is dropped on the way in, so what
     /// is here is always a date the agenda can compare against.
+    ///
+    /// It travels on the copy of the entry in every agenda cell as well,
+    /// where it says nothing that cell needs — the list belongs to the series
+    /// rather than to one occurrence of it. Kept there deliberately: taking a
+    /// field off an output that has emitted it is a breaking change under
+    /// ADR-0015, and the size it costs shows up only on a value nobody
+    /// writes by hand (a review measured 200 dates in one `EXDATE`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub excluded_dates: Option<Vec<String>>,
     /// The occurrence this entry replaces, as `YYYY-MM-DD` optionally
@@ -781,28 +788,8 @@ mod tests {
     fn empty_task() -> Task {
         Task {
             file: "t.md".into(),
-            root: None,
             line: 1,
-            heading: String::new(),
-            content: String::new(),
-            task_type: None,
-            priority: None,
-            created: None,
-            timestamp: None,
-            timestamp_type: None,
-            timestamp_active: None,
-            timestamp_date: None,
-            timestamp_time: None,
-            timestamp_end_time: None,
-            timestamp_repeater: None,
-            timestamp_next: None,
-            timestamp_next_after: None,
-            clocks: None,
-            total_clock_time: None,
-            properties: None,
-            excluded_dates: None,
-            recurrence_id: None,
-            series_id: None,
+            ..Task::default()
         }
     }
 

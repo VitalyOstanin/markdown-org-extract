@@ -63,6 +63,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   spends the budget that warns about the timestamps of every file after it,
   and a mistake in a property is no longer reported as `cannot parse
   timestamp`.
+- The index of which occurrences a run is missing is built once per run
+  instead of once per pass: the now-relative annotation and the day-by-day
+  walk shared no state, so every `EXDATE` was parsed back from its strings
+  twice. A `SERIES_ID` naming no entry of the run is likewise reported once,
+  and now also in `--tasks` mode, where the mismatch is the same mistake.
 
 ## [0.18.0] — 2026-08-21
 

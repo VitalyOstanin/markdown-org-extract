@@ -420,8 +420,7 @@ fn finalize_task(
     // fields of their own: every consumer that answers "does this series
     // occur on this day" needs them parsed, and parsing them once here keeps
     // the string handling out of the agenda.
-    let (excluded_dates, recurrence_id, series_id) =
-        exception_fields(path, line, properties.as_ref(), prop_warning_counter);
+    let exceptions = exception_fields(path, line, properties.as_ref(), prop_warning_counter);
 
     Some(Task {
         file: path.display().to_string(),
@@ -448,9 +447,9 @@ fn finalize_task(
         clocks: clocks_opt,
         total_clock_time: total_time,
         properties,
-        excluded_dates,
-        recurrence_id,
-        series_id,
+        excluded_dates: exceptions.excluded_dates,
+        recurrence_id: exceptions.recurrence_id,
+        series_id: exceptions.series_id,
     })
 }
 
@@ -466,18 +465,31 @@ fn finalize_task(
 ///
 /// Reported through the capped `org-properties` channel: see
 /// `warn_unusable_exception` for why that one rather than the timestamp one.
+/// What the exception keys of one entry read as. Named rather than a tuple:
+/// `recurrence_id` and `series_id` are both `Option<String>`, and swapping
+/// them at a call site would compile.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ExceptionFields {
+    /// Dates the entry cancels, from `EXDATE`.
+    excluded_dates: Option<Vec<String>>,
+    /// The occurrence the entry stands in for, from `RECURRENCE_ID`.
+    recurrence_id: Option<String>,
+    /// The series that occurrence belongs to, from `SERIES_ID`.
+    series_id: Option<String>,
+}
+
 fn exception_fields(
     path: &Path,
     line: u32,
     properties: Option<&BTreeMap<String, String>>,
     prop_warning_counter: &mut usize,
-) -> (Option<Vec<String>>, Option<String>, Option<String>) {
+) -> ExceptionFields {
     use crate::exceptions::{
         parse_excluded_dates, parse_recurrence_id, EXDATE_KEY, RECURRENCE_ID_KEY, SERIES_ID_KEY,
     };
 
     let Some(props) = properties else {
-        return (None, None, None);
+        return ExceptionFields::default();
     };
 
     let excluded = props.get(EXDATE_KEY).map(|raw| {
@@ -548,7 +560,11 @@ fn exception_fields(
         prop_warning_counter,
     );
 
-    (excluded, recurrence, series)
+    ExceptionFields {
+        excluded_dates: excluded,
+        recurrence_id: recurrence,
+        series_id: series,
+    }
 }
 
 /// Report an entry carrying one half of `SERIES_ID` / `RECURRENCE_ID`.

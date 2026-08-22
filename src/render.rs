@@ -398,28 +398,12 @@ mod tests {
     fn test_render_markdown_basic() {
         let tasks = vec![Task {
             file: "test.md".to_string(),
-            root: None,
             line: 1,
             heading: "Test Task".to_string(),
             content: "Description".to_string(),
             task_type: Some(TaskType::Todo),
             priority: Some(Priority::A),
-            created: None,
-            timestamp: None,
-            timestamp_type: None,
-            timestamp_active: None,
-            timestamp_date: None,
-            timestamp_time: None,
-            timestamp_end_time: None,
-            timestamp_repeater: None,
-            timestamp_next: None,
-            timestamp_next_after: None,
-            clocks: None,
-            total_clock_time: None,
-            properties: None,
-            excluded_dates: None,
-            recurrence_id: None,
-            series_id: None,
+            ..Task::default()
         }];
 
         let output = render_markdown(&tasks);
@@ -446,28 +430,9 @@ mod tests {
     fn test_render_markdown_escapes_heading() {
         let tasks = vec![Task {
             file: "test.md".to_string(),
-            root: None,
             line: 1,
             heading: "Fix *important* [#issue]".to_string(),
-            content: String::new(),
-            task_type: None,
-            priority: None,
-            created: None,
-            timestamp: None,
-            timestamp_type: None,
-            timestamp_active: None,
-            timestamp_date: None,
-            timestamp_time: None,
-            timestamp_end_time: None,
-            timestamp_repeater: None,
-            timestamp_next: None,
-            timestamp_next_after: None,
-            clocks: None,
-            total_clock_time: None,
-            properties: None,
-            excluded_dates: None,
-            recurrence_id: None,
-            series_id: None,
+            ..Task::default()
         }];
         let out = render_markdown(&tasks);
         assert!(
@@ -479,7 +444,6 @@ mod tests {
     fn fixture_task() -> Task {
         Task {
             file: "notes.md".to_string(),
-            root: None,
             line: 42,
             heading: "Test task".to_string(),
             content: "Body text.".to_string(),
@@ -490,17 +454,7 @@ mod tests {
             timestamp_type: Some("DEADLINE".to_string()),
             timestamp_active: Some(true),
             timestamp_date: Some("2025-10-01".to_string()),
-            timestamp_time: None,
-            timestamp_end_time: None,
-            timestamp_repeater: None,
-            timestamp_next: None,
-            timestamp_next_after: None,
-            clocks: None,
-            total_clock_time: None,
-            properties: None,
-            excluded_dates: None,
-            recurrence_id: None,
-            series_id: None,
+            ..Task::default()
         }
     }
 
@@ -575,28 +529,9 @@ Body text.\n\n";
     fn test_render_html_escapes() {
         let tasks = vec![Task {
             file: "<script>.md".to_string(),
-            root: None,
             line: 1,
             heading: "Test & Task".to_string(),
-            content: String::new(),
-            task_type: None,
-            priority: None,
-            created: None,
-            timestamp: None,
-            timestamp_type: None,
-            timestamp_active: None,
-            timestamp_date: None,
-            timestamp_time: None,
-            timestamp_end_time: None,
-            timestamp_repeater: None,
-            timestamp_next: None,
-            timestamp_next_after: None,
-            clocks: None,
-            total_clock_time: None,
-            properties: None,
-            excluded_dates: None,
-            recurrence_id: None,
-            series_id: None,
+            ..Task::default()
         }];
 
         let output = render_html(&tasks);

@@ -33,9 +33,10 @@ struct PreparedTask<'a> {
     excluded: ExcludedOccurrences,
 }
 
-fn prepare_tasks(tasks: &[Task]) -> Vec<PreparedTask<'_>> {
-    let exceptions = OccurrenceExceptions::from_tasks(tasks);
-    warn_about_unknown_series(&exceptions);
+fn prepare_tasks<'a>(
+    tasks: &'a [Task],
+    exceptions: &OccurrenceExceptions,
+) -> Vec<PreparedTask<'a>> {
     // ADR-0014 invariant: inactive `[...]` timestamps never feed the
     // agenda. Filtering at the parse step keeps the rest of the agenda
     // logic bracket-form-agnostic — every downstream bucket already
@@ -374,8 +375,16 @@ pub fn filter_agenda(
     // copies it renders, and the field must stay anchored on the task's own
     // date. See `annotate_next_occurrences`. Tasks scope stays date-less.
     let mut tasks = tasks;
+    // One index per run, built from the list as it stands: a replacement names
+    // the series it replaces an occurrence of, so the answer for one task
+    // depends on the others (ADR-0031). Both passes that need it — the
+    // now-relative one below and the day-by-day walk after it — read this one,
+    // and the mismatched `SERIES_ID` values are reported once rather than once
+    // per pass.
+    let exceptions = OccurrenceExceptions::from_tasks(&tasks);
+    warn_about_unknown_series(&exceptions);
     if annotate_next && scope != AgendaScope::Tasks {
-        annotate_next_occurrences(&mut tasks, now_dt);
+        annotate_next_occurrences(&mut tasks, now_dt, &exceptions);
     }
 
     match scope {
@@ -384,7 +393,11 @@ pub fn filter_agenda(
             // `today` (current_date or --current-date).
             if let Some((start_date, end_date)) = parse_range(from, to, today)? {
                 Ok(AgendaOutput::Days(build_week_agenda(
-                    &tasks, start_date, end_date, today,
+                    &tasks,
+                    start_date,
+                    end_date,
+                    today,
+                    &exceptions,
                 )))
             } else {
                 let target_date = match date {
@@ -395,6 +408,7 @@ pub fn filter_agenda(
                     &tasks,
                     target_date,
                     today,
+                    &exceptions,
                 )]))
             }
         }
@@ -417,7 +431,11 @@ pub fn filter_agenda(
             )?;
 
             Ok(AgendaOutput::Days(build_week_agenda(
-                &tasks, start_date, end_date, today,
+                &tasks,
+                start_date,
+                end_date,
+                today,
+                &exceptions,
             )))
         }
         AgendaScope::Month => {
@@ -427,7 +445,11 @@ pub fn filter_agenda(
                 })?;
 
             Ok(AgendaOutput::Days(build_week_agenda(
-                &tasks, start_date, end_date, today,
+                &tasks,
+                start_date,
+                end_date,
+                today,
+                &exceptions,
             )))
         }
         AgendaScope::MonthGrid => {
@@ -450,7 +472,11 @@ pub fn filter_agenda(
             )?;
 
             Ok(AgendaOutput::Days(build_week_agenda(
-                &tasks, start_date, end_date, today,
+                &tasks,
+                start_date,
+                end_date,
+                today,
+                &exceptions,
             )))
         }
         AgendaScope::Tasks => {
@@ -642,11 +668,11 @@ fn skip_excluded(
 ///
 /// Non-repeating tasks and tasks whose date or repeater cannot be parsed are
 /// left untouched, so the field is absent from their JSON.
-fn annotate_next_occurrences(tasks: &mut [Task], now: NaiveDateTime) {
-    // Built before the walk, from the list as it stands: a replacement names
-    // the series it replaces an occurrence of, so the answer for one task
-    // depends on the others (ADR-0031).
-    let exceptions = OccurrenceExceptions::from_tasks(tasks);
+fn annotate_next_occurrences(
+    tasks: &mut [Task],
+    now: NaiveDateTime,
+    exceptions: &OccurrenceExceptions,
+) {
     for task in tasks {
         let excluded = exceptions.dates_for(task);
         set_next_occurrence(task, now, &excluded);
@@ -706,8 +732,13 @@ fn set_next_occurrence(task: &mut Task, now: NaiveDateTime, excluded: &ExcludedO
     }
 }
 
-fn build_day_agenda(tasks: &[Task], day_date: NaiveDate, current_date: NaiveDate) -> DayAgenda {
-    let prepared = prepare_tasks(tasks);
+fn build_day_agenda(
+    tasks: &[Task],
+    day_date: NaiveDate,
+    current_date: NaiveDate,
+    exceptions: &OccurrenceExceptions,
+) -> DayAgenda {
+    let prepared = prepare_tasks(tasks, exceptions);
     build_day_agenda_prepared(&prepared, day_date, current_date)
 }
 
@@ -1047,65 +1078,110 @@ fn handle_repeating_task(
     let is_done = matches!(task.task_type, Some(TaskType::Done));
 
     if is_today && !is_done && keeps_a_missed_date(task) {
-        // Overdue: requires a past occurrence
-        if let Some(deadline_date) = deadline {
-            if deadline_date < current_date {
-                let should_show_overdue =
-                    if repeater.unit == crate::timestamp::RepeaterUnit::Workday {
-                        use crate::holidays::HolidayCalendar;
-                        HolidayCalendar::global().is_workday(current_date)
-                    } else {
-                        true
-                    };
+        let day = RepeatingDay {
+            task,
+            parsed,
+            repeater,
+            base_date,
+            current_date,
+            excluded,
+        };
+        push_overdue_if_owed(&day, deadline, agenda);
+        push_upcoming_deadline(&day, repeat, agenda);
+    }
+}
 
-                if should_show_overdue {
-                    push_overdue_occurrence(task, repeater, deadline_date, current_date, agenda);
-                }
-            }
-        }
+/// One repeating entry as the day pass has worked it out, handed to the two
+/// buckets that borrow it into today. Kept together rather than passed as
+/// eight arguments: every field below is read by both.
+struct RepeatingDay<'a> {
+    task: &'a Task,
+    parsed: &'a crate::timestamp::ParsedTimestamp,
+    repeater: &'a crate::timestamp::Repeater,
+    /// The date the entry's own timestamp carries, which anchors the series.
+    base_date: NaiveDate,
+    current_date: NaiveDate,
+    excluded: &'a ExcludedOccurrences,
+}
 
-        // Upcoming: DEADLINE within warning period.
-        //
-        // `repeat` here is `closest_date(..., DatePreference::Past, ...)` with
-        // anchor `day_date == current_date`, so when it is `Some(r)` we know
-        // `r <= current_date` — never a future occurrence, never a candidate
-        // for the upcoming bucket. The only way a repeating DEADLINE produces
-        // an upcoming entry is when there is no past occurrence yet and the
-        // base date itself is still ahead of `current_date`.
-        if let Some(ref ts_type) = task.timestamp_type {
-            if ts_type == "DEADLINE" {
-                let next_due = if repeat.is_none() && current_date < base_date {
-                    // The step every other pass takes, rather than a filter:
-                    // a cancelled first occurrence leaves the series standing,
-                    // and what is coming up is the next one that does. Dropping
-                    // it here would contradict `timestamp_next`, which names
-                    // that occurrence in the same payload.
-                    skip_excluded(
-                        base_date,
-                        repeater,
-                        Some(base_date),
-                        excluded,
-                        Walk::Upcoming,
-                    )
-                } else {
-                    None
-                };
-                if let Some(next_date) = next_due {
-                    let days_diff = (next_date - current_date).num_days();
-                    let window = parsed.warning_days.unwrap_or(DEADLINE_WARNING_DAYS);
-                    if days_diff > 0 && days_diff <= window {
-                        let mut task_copy = task.clone();
-                        task_copy.timestamp_time = None;
-                        task_copy.timestamp_end_time = None;
-                        agenda.upcoming.push(TaskWithOffset {
-                            task: task_copy,
-                            days_offset: Some(days_diff),
-                        });
-                    }
-                }
-            }
+/// The arrears of a repeating entry, drawn into today.
+///
+/// `deadline` is the occurrence the arrears walk stopped at (`Walk::Arrears`),
+/// so what is decided here is only whether it is behind and whether today is a
+/// day this repeater speaks about at all.
+fn push_overdue_if_owed(
+    day: &RepeatingDay<'_>,
+    deadline: Option<NaiveDate>,
+    agenda: &mut DayAgenda,
+) {
+    let Some(deadline_date) = deadline else {
+        return;
+    };
+    if deadline_date >= day.current_date {
+        return;
+    }
+    // A workday repeater says nothing on a day that is not a workday: the
+    // arrears of "every working day" are not owed on a Sunday.
+    if day.repeater.unit == crate::timestamp::RepeaterUnit::Workday {
+        use crate::holidays::HolidayCalendar;
+        if !HolidayCalendar::global().is_workday(day.current_date) {
+            return;
         }
     }
+    push_overdue_occurrence(
+        day.task,
+        day.repeater,
+        deadline_date,
+        day.current_date,
+        agenda,
+    );
+}
+
+/// A repeating DEADLINE coming due, drawn into today ahead of its date.
+///
+/// `repeat` is `closest_date(..., DatePreference::Past, ...)` anchored on
+/// today, so when it is `Some` the series already has an occurrence behind it
+/// — never a candidate for this bucket. The only way a repeating DEADLINE
+/// produces an upcoming entry is when there is no past occurrence yet and the
+/// base date itself is still ahead.
+fn push_upcoming_deadline(
+    day: &RepeatingDay<'_>,
+    repeat: Option<NaiveDate>,
+    agenda: &mut DayAgenda,
+) {
+    if day.task.timestamp_type.as_deref() != Some("DEADLINE") {
+        return;
+    }
+    if repeat.is_some() || day.current_date >= day.base_date {
+        return;
+    }
+    // The step every other pass takes, rather than a filter: a cancelled first
+    // occurrence leaves the series standing, and what is coming up is the next
+    // one that does. Dropping it here would contradict `timestamp_next`, which
+    // names that occurrence in the same payload.
+    let Some(next_date) = skip_excluded(
+        day.base_date,
+        day.repeater,
+        Some(day.base_date),
+        day.excluded,
+        Walk::Upcoming,
+    ) else {
+        return;
+    };
+
+    let days_diff = (next_date - day.current_date).num_days();
+    let window = day.parsed.warning_days.unwrap_or(DEADLINE_WARNING_DAYS);
+    if days_diff <= 0 || days_diff > window {
+        return;
+    }
+
+    let mut task_copy = day.task.clone();
+    task_copy.timestamp_time = None;
+    task_copy.timestamp_end_time = None;
+    agenda.upcoming.push(TaskWithOffset {
+        task: task_copy,
+        days_offset: Some(days_diff),
+    });
 }
 
 /// Build agenda for a range of days (week or month). Pre-parses every task's
@@ -1115,8 +1191,9 @@ fn build_week_agenda(
     start_date: NaiveDate,
     end_date: NaiveDate,
     current_date: NaiveDate,
+    exceptions: &OccurrenceExceptions,
 ) -> Vec<DayAgenda> {
-    let prepared = prepare_tasks(tasks);
+    let prepared = prepare_tasks(tasks, exceptions);
     let mut result = Vec::new();
     let mut current = start_date;
 
@@ -1254,6 +1331,34 @@ mod tests {
     /// A run with no exception in it, which is what almost every test wants.
     fn no_exceptions() -> ExcludedOccurrences {
         ExcludedOccurrences::default()
+    }
+
+    /// The day and the week builders with the run's exception index supplied
+    /// from the same task list, which is what `filter_agenda` does. Both
+    /// shadow the functions of the module above so a test reads the way it did
+    /// before the index became a parameter.
+    fn build_day_agenda(tasks: &[Task], day_date: NaiveDate, current_date: NaiveDate) -> DayAgenda {
+        super::build_day_agenda(
+            tasks,
+            day_date,
+            current_date,
+            &OccurrenceExceptions::from_tasks(tasks),
+        )
+    }
+
+    fn build_week_agenda(
+        tasks: &[Task],
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+        current_date: NaiveDate,
+    ) -> Vec<DayAgenda> {
+        super::build_week_agenda(
+            tasks,
+            start_date,
+            end_date,
+            current_date,
+            &OccurrenceExceptions::from_tasks(tasks),
+        )
     }
 
     #[test]
@@ -1433,7 +1538,7 @@ mod tests {
     fn series_task(date_str: &str, repeater: &str, time: Option<&str>, id: &str) -> Task {
         let mut task = repeating_task(date_str, repeater, time);
         let mut props = std::collections::BTreeMap::new();
-        props.insert("ID".to_string(), id.to_string());
+        props.insert(crate::exceptions::ID_KEY.to_string(), id.to_string());
         task.properties = Some(props);
         task
     }
@@ -2000,28 +2105,15 @@ mod tests {
 
         Task {
             file: "test.md".to_string(),
-            root: None,
             line: 1,
             heading: "Test task".to_string(),
-            content: String::new(),
             task_type: Some(task_type),
-            priority: None,
-            created: None,
             timestamp: Some(timestamp.clone()),
             timestamp_type: Some(ts_type.to_string()),
             timestamp_active: Some(true),
             timestamp_date: Some(date_str.split_whitespace().next().unwrap().to_string()),
             timestamp_time: time.map(|t| t.to_string()),
-            timestamp_end_time: None,
-            timestamp_repeater: None,
-            timestamp_next: None,
-            timestamp_next_after: None,
-            clocks: None,
-            total_clock_time: None,
-            properties: None,
-            excluded_dates: None,
-            recurrence_id: None,
-            series_id: None,
+            ..Task::default()
         }
     }
 
@@ -2037,28 +2129,14 @@ mod tests {
         let active = timestamp.starts_with('<');
         Task {
             file: "test.md".to_string(),
-            root: None,
             line: 1,
             heading: "Plain timestamp task".to_string(),
-            content: String::new(),
             task_type: Some(TaskType::Todo),
-            priority: None,
-            created: None,
             timestamp: Some(timestamp.to_string()),
             timestamp_type: Some("PLAIN".to_string()),
             timestamp_active: Some(active),
             timestamp_date: Some(date_str.to_string()),
-            timestamp_time: None,
-            timestamp_end_time: None,
-            timestamp_repeater: None,
-            timestamp_next: None,
-            timestamp_next_after: None,
-            clocks: None,
-            total_clock_time: None,
-            properties: None,
-            excluded_dates: None,
-            recurrence_id: None,
-            series_id: None,
+            ..Task::default()
         }
     }
 
@@ -2161,28 +2239,15 @@ mod tests {
         let day = NaiveDate::from_ymd_opt(2024, 12, 5).unwrap();
         let make = |heading: &str, prio: Option<Priority>, file: &str, line: u32| Task {
             file: file.to_string(),
-            root: None,
             line,
             heading: heading.to_string(),
-            content: String::new(),
             task_type: Some(TaskType::Todo),
             priority: prio,
-            created: None,
             timestamp: Some("SCHEDULED: <2024-12-05 Thu>".to_string()),
             timestamp_type: Some("SCHEDULED".to_string()),
             timestamp_active: Some(true),
             timestamp_date: Some("2024-12-05".to_string()),
-            timestamp_time: None,
-            timestamp_end_time: None,
-            timestamp_repeater: None,
-            timestamp_next: None,
-            timestamp_next_after: None,
-            clocks: None,
-            total_clock_time: None,
-            properties: None,
-            excluded_dates: None,
-            recurrence_id: None,
-            series_id: None,
+            ..Task::default()
         };
 
         // Deliberately scrambled input order: highest priority arrives second,
@@ -2441,28 +2506,15 @@ mod tests {
 
         Task {
             file: "test.md".to_string(),
-            root: None,
             line: 1,
             heading: "Test task".to_string(),
-            content: String::new(),
             task_type: Some(task_type),
-            priority: None,
-            created: None,
             timestamp: Some(timestamp.clone()),
             timestamp_type: Some("SCHEDULED".to_string()),
             timestamp_active: Some(true),
             timestamp_date: Some(date_str.split_whitespace().next().unwrap().to_string()),
             timestamp_time: time.map(|t| t.to_string()),
-            timestamp_end_time: None,
-            timestamp_repeater: None,
-            timestamp_next: None,
-            timestamp_next_after: None,
-            clocks: None,
-            total_clock_time: None,
-            properties: None,
-            excluded_dates: None,
-            recurrence_id: None,
-            series_id: None,
+            ..Task::default()
         }
     }
 
@@ -2480,28 +2532,15 @@ mod tests {
 
         Task {
             file: "test.md".to_string(),
-            root: None,
             line: 1,
             heading: "Test task".to_string(),
-            content: String::new(),
             task_type: Some(task_type),
-            priority: None,
-            created: None,
             timestamp: Some(timestamp.clone()),
             timestamp_type: Some("DEADLINE".to_string()),
             timestamp_active: Some(true),
             timestamp_date: Some(date_str.split_whitespace().next().unwrap().to_string()),
             timestamp_time: time.map(|t| t.to_string()),
-            timestamp_end_time: None,
-            timestamp_repeater: None,
-            timestamp_next: None,
-            timestamp_next_after: None,
-            clocks: None,
-            total_clock_time: None,
-            properties: None,
-            excluded_dates: None,
-            recurrence_id: None,
-            series_id: None,
+            ..Task::default()
         }
     }
 
@@ -3553,28 +3592,14 @@ mod tests {
         let timestamp = format!("{ts_type}: <{date_str} {repeater}>");
         Task {
             file: "test.md".to_string(),
-            root: None,
             line: 1,
             heading: "Test task".to_string(),
-            content: String::new(),
             task_type: Some(task_type),
-            priority: None,
-            created: None,
             timestamp: Some(timestamp),
             timestamp_type: Some(ts_type.to_string()),
             timestamp_active: Some(true),
             timestamp_date: Some(date_str.split_whitespace().next().unwrap().to_string()),
-            timestamp_time: None,
-            timestamp_end_time: None,
-            timestamp_repeater: None,
-            timestamp_next: None,
-            timestamp_next_after: None,
-            clocks: None,
-            total_clock_time: None,
-            properties: None,
-            excluded_dates: None,
-            recurrence_id: None,
-            series_id: None,
+            ..Task::default()
         }
     }
 

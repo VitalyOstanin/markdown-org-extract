@@ -196,8 +196,13 @@ jobs:
         # unprotected (ADR-0017), so this is the barrier. Push order is
         # `master` first, then the tag.
         run: |
-          git fetch --depth=0 origin master
-          if ! git merge-base --is-ancestor HEAD origin/master; then
+          # `--depth=0` is not "no limit" -- git rejects it outright ("depth 0
+          # is not a positive number"), which is how this step failed the first
+          # time it ever ran. The checkout above already fetched the full
+          # history; this fetch is here for the remote's current master, and
+          # FETCH_HEAD names it without depending on a remote-tracking ref.
+          git fetch --no-tags origin master
+          if ! git merge-base --is-ancestor HEAD FETCH_HEAD; then
             echo "::error::$(git rev-parse HEAD) is not on origin/master. Push the branch first, then the tag."
             exit 1
           fi

@@ -1508,6 +1508,22 @@ re-run rather than a version that can only be yanked
 Running the workflow by hand with `dry_run` exercises all of that except the
 last two jobs.
 
+Before the tag exists, run the workflow by hand with an **empty tag**: that
+rehearses the release on the branch the run was started from
+([ADR-0034](docs/adr/0034-a-release-is-rehearsed-before-it-is-tagged.md)). The
+version rehearsed is the one `Cargo.toml` carries, so prepare the release
+first — bump the version, move the `## [Unreleased]` section over, update the
+README snippet — and then ask whether a tag cut from this tree would go
+through:
+
+```bash
+gh workflow run release.yml --ref <branch>
+```
+
+Everything runs except what only a tag can answer: its format and its
+annotated body. `publish` and `release` do not run at all — there is nothing
+to publish.
+
 | Script                          | Purpose                                                                |
 | ------------------------------- | ---------------------------------------------------------------------- |
 | `scripts/check.sh`              | Full CI parity locally: `fmt --check` + `yamllint` + `clippy -D warnings` + `doc -D warnings` + `cargo test`. Run before every commit; CI runs the same steps |

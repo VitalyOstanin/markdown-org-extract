@@ -66,6 +66,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failed upload can be re-run without re-publishing. A `workflow_dispatch`
   dry run exercises everything up to the publication.
   See [ADR-0033](docs/adr/0033-nothing-irreversible-before-the-archives-are-checked.md).
+- A release can be rehearsed before the tag exists. `workflow_dispatch` with
+  an empty tag runs the whole pipeline over the branch it was started from:
+  the version comes from `Cargo.toml`, and every check that reads the tree —
+  the lock and the README snippet agreeing with it, the CHANGELOG being ready,
+  the release-profile smoke test, all four archives, `cargo publish
+  --dry-run` — runs as it would for a real release. Only what a tag alone can
+  answer is skipped, and nothing is published. Until now the manual run
+  demanded a tag that already existed, which meant it could only ever confirm
+  a release that had already shipped — and not even that, once a check newer
+  than the tag was added.
+  See [ADR-0034](docs/adr/0034-a-release-is-rehearsed-before-it-is-tagged.md).
 - Diagnostics about the exception keys are counted against the
   `org-properties` budget rather than the timestamp one, and say which key and
   what is wrong with it. A file full of unreadable `EXDATE` values no longer

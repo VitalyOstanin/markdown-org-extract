@@ -7,11 +7,15 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to publish (e.g. v0.1.7). Must already exist on the repository.'
-        required: true
+        description: >-
+          Tag to publish (e.g. v0.1.7); it must already exist. Leave empty to
+          rehearse the release on the branch this run was started from.
+        required: false
         type: string
       dry_run:
-        description: 'If true, skip the final cargo publish step.'
+        description: >-
+          If true, skip the final cargo publish step. A rehearsal (empty tag)
+          never publishes, whatever this is set to.
         required: false
         type: boolean
         default: false
@@ -180,6 +184,10 @@ jobs:
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       version: ${{ steps.tag.outputs.version }}
+      # `true` when this run is a rehearsal: a manual run with no tag, over
+      # a branch instead of a tagged commit. Read by the steps that can only
+      # be answered by a tag that exists.
+      rehearsal: ${{ steps.tag.outputs.rehearsal }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -189,6 +197,10 @@ jobs:
           fetch-depth: 0
 
       - name: Refuse to publish a commit that is not on master
+        # A rehearsal publishes nothing, and the branch it runs over is
+        # exactly what is being rehearsed — often one that is not `master`
+        # yet. The barrier belongs to the runs that can reach crates.io.
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.tag != '' }}
         # Pushing a tag hands GitHub the commit with it, so `git push origin
         # v0.19.0` alone is enough to start this workflow over a commit no
         # branch of `origin` contains: crates.io would receive the release
@@ -233,7 +245,18 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           TAG_INPUT: ${{ inputs.tag }}
         run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -z "$TAG_INPUT" ]; then
+            # A rehearsal. There is no tag to read the version off, so the
+            # manifest answers instead — which is the same source the tag
+            # would be checked against a step below, and the reason a
+            # rehearsal can say whether the next tag will pass. The tag is
+            # synthesised from it so every later step reads one shape of
+            # answer; `release-validate-tag.sh` then holds the manifest to
+            # the same `X.Y.Z` form a tag is held to.
+            TAG="v$(cargo pkgid | sed -E 's/.*#//')"
+            echo "rehearsal=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Rehearsing $TAG on ${GITHUB_REF#refs/heads/}; nothing will be published."
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             TAG="$TAG_INPUT"
           else
             TAG="${GITHUB_REF#refs/tags/}"
@@ -289,6 +312,11 @@ jobs:
         run: ./scripts/check-changelog.sh "${{ steps.tag.outputs.version }}"
 
       - name: Verify the annotated tag body mirrors CHANGELOG
+        # The one check a rehearsal cannot make: the tag it is rehearsing
+        # does not exist yet. Everything the body is checked against —
+        # the CHANGELOG section — has already been checked by the step
+        # above, so what is left for the real run is the tagging itself.
+        if: ${{ steps.tag.outputs.rehearsal != 'true' }}
         # ADR-0011: the tag is annotated and its body equals the CHANGELOG
         # section (subject `v<X.Y.Z>` + the `### ...` subheadings). Catches
         # the v0.5.0 regression where the default tag cleanup (`strip`)
@@ -490,8 +518,10 @@ jobs:
     needs: [verify, package-binaries]
     # A dry run stops here: everything up to this job has already run, which
     # is what makes `workflow_dispatch` with dry_run a rehearsal of the
-    # pipeline rather than of its first half.
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
+    # pipeline rather than of its first half. A run with no tag stops here
+    # for a plainer reason — there is no tag to publish, and the version in
+    # the manifest is one nobody has agreed to yet.
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.dry_run == false && inputs.tag != '') }}
     # Publishing writes to crates.io, not to the repository; the write scope
     # belongs to the job that creates the Release.
     permissions:

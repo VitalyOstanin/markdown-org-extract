@@ -298,7 +298,7 @@ markdown-org-extract-0.4.1-x86_64-pc-windows-msvc.zip
 
 `<version>` is the tag stripped of its leading `v`, identical to
 the `[package].version` field in `Cargo.toml` for that commit
-(the `publish` job in `.github/workflows/release.yml` fails the
+(the `verify` job in `.github/workflows/release.yml` fails the
 release if the two diverge).
 
 ### Archive layout
@@ -1495,9 +1495,18 @@ git push origin vX.Y.Z
 Pushing a tag hands GitHub the commit along with it, so a tag pushed on its own
 starts the release workflow over a commit no branch of `origin` contains — the
 crate would be published while `master` still stands where it did. The
-`publish` job checks the tagged commit is on `origin/master` and refuses
+`verify` job checks the tagged commit is on `origin/master` and refuses
 otherwise, so the wrong order costs a failed run rather than a stranded
 release.
+
+The workflow publishes last. `verify` runs every check that can refuse the
+release, `package-binaries` then builds and verifies one archive per target,
+`publish` pushes the crate to crates.io, and `release` creates the GitHub
+Release and attaches the archives to it — so a packaging failure costs a
+re-run rather than a version that can only be yanked
+([ADR-0033](docs/adr/0033-nothing-irreversible-before-the-archives-are-checked.md)).
+Running the workflow by hand with `dry_run` exercises all of that except the
+last two jobs.
 
 | Script                          | Purpose                                                                |
 | ------------------------------- | ---------------------------------------------------------------------- |

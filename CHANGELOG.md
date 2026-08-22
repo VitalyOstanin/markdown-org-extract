@@ -57,6 +57,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The release publishes last. Cross-platform archives used to be built and
+  checked against the downstream-packager contract *after* `cargo publish`,
+  so a packaging failure arrived when the version was already on crates.io
+  and could only be yanked or patched over. The pipeline now runs the checks,
+  then builds and verifies all four archives, and only then publishes the
+  crate; the GitHub Release and its assets are made by a job after that, so a
+  failed upload can be re-run without re-publishing. A `workflow_dispatch`
+  dry run exercises everything up to the publication.
+  See [ADR-0033](docs/adr/0033-nothing-irreversible-before-the-archives-are-checked.md).
 - Diagnostics about the exception keys are counted against the
   `org-properties` budget rather than the timestamp one, and say which key and
   what is wrong with it. A file full of unreadable `EXDATE` values no longer

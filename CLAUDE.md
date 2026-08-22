@@ -60,7 +60,7 @@ pointers to the full text and rationale.
   tags are not rewritten. The push order is `master` first, the tag
   second: pushing a tag hands GitHub the commit with it, so a tag
   pushed alone publishes from a commit no branch of `origin` holds.
-  The `publish` job refuses such a commit, but the order is what
+  The `verify` job refuses such a commit, but the order is what
   keeps a release from stopping halfway.
 - Org-mode semantics are verified against upstream Emacs Org-mode
   Elisp before code or tests are written, not by recall or by

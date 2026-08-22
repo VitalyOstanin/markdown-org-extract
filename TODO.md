@@ -27,7 +27,7 @@ Action:
 
 1. Pin the Linux runners to the current LTS image (`ubuntu-26.04` as of 2026-06,
    preview runner image) across `ci.yml` and `release.yml` (`test` matrix, `lint`,
-   `msrv`, `audit`, `publish`, `package-binaries`).
+   `msrv`, `audit`, `verify`, `publish`, `package-binaries`).
 2. Keep the previous LTS (`ubuntu-24.04`) in the `test` matrix for one cycle so a
    preview-image regression does not block CI.
 3. Bump the pin and drop the older LTS when a newer LTS ships.

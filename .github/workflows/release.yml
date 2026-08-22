@@ -33,9 +33,9 @@ jobs:
   # Same matrix the CI workflow uses on every master push. Repeated here
   # because release.yml is triggered by tag push, not by branch push, so
   # CI's success on the tagged commit is not authoritative for this
-  # workflow. Publication is gated on `needs: [test, lint, msrv, audit]`;
-  # any failing pre-publish job aborts cargo publish before it can ship a
-  # broken release.
+  # workflow. These four jobs gate `verify`, which in turn gates the
+  # packaging and, through it, publication: nothing irreversible happens
+  # until every check and every archive has passed.
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -161,15 +161,25 @@ jobs:
       - name: Run cargo audit
         run: cargo audit
 
-  publish:
-    name: Publish to crates.io
+  # Everything that can still be taken back. `cargo publish` is final --
+  # crates.io keeps the version forever and the only retreat is `cargo yank`
+  # or a follow-up patch (ADR-0010) -- so every check that could refuse the
+  # release lives here, ahead of it, and so does the packaging job this one
+  # gates.
+  verify:
+    name: Verify the release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: [test, lint, msrv, audit]
-    # The only job that needs to write to the repo: `gh release create` and
-    # `gh release upload` require `contents: write`.
+    # Reads the repository and talks to crates.io only through --dry-run;
+    # the write scope belongs to `publish` alone.
     permissions:
-      contents: write
+      contents: read
+    # The tag is resolved and validated once, here, and read from
+    # `needs.verify.outputs` by the two jobs that follow.
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -344,57 +354,19 @@ jobs:
         # the lock-version check above so a stale lock cannot reach crates.io.
         run: cargo publish --dry-run --locked
 
-      - name: cargo publish
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --locked
-
-      - name: Extract release notes from CHANGELOG.md
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
-        env:
-          VER: ${{ steps.tag.outputs.version }}
-        run: |
-          awk -v ver="$VER" '
-            $0 ~ "^## \\["ver"\\]" { flag=1; next }
-            flag && /^## \[/ { exit }
-            flag { print }
-          ' CHANGELOG.md | sed -e '1{/^$/d}' -e '$,${/^$/d}' > release-notes.md
-          if [ ! -s release-notes.md ]; then
-            echo "::warning::No CHANGELOG.md entry found for $VER; falling back to a placeholder note."
-            echo "_See git history._" > release-notes.md
-          fi
-
-      - name: Create GitHub Release
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.tag.outputs.tag }}
-        run: |
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG already exists, skipping create."
-            exit 0
-          fi
-          gh release create "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "$TAG" \
-            --notes-file release-notes.md \
-            --verify-tag
-
-  # Cross-platform prebuilt assets. Runs after `publish` so the GitHub
-  # Release already exists and `gh release upload` can attach to it.
-  # The matrix picks one tier-1 target per OS; expanding to e.g.
-  # `x86_64-apple-darwin` or `aarch64-unknown-linux-gnu` is a copy-paste
-  # of one matrix entry.
+  # Cross-platform prebuilt assets, built and checked before anything is
+  # published. The matrix picks one tier-1 target per OS; expanding to e.g.
+  # `aarch64-unknown-linux-gnu` is a copy-paste of one matrix entry.
   package-binaries:
     name: Package (${{ matrix.target }})
-    needs: [publish]
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
+    needs: [verify]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    # `gh release upload` writes to the repo; only this job needs it.
+    # Builds and checks archives, and hands them on as workflow artifacts.
+    # Writing them to a Release is `publish`'s job, and so is the write scope
+    # that takes.
     permissions:
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -449,28 +421,6 @@ jobs:
       - name: Fetch dependencies (with retry)
         uses: ./.github/actions/cargo-fetch-retry
 
-      - name: Resolve tag and version
-        # Mirrors the "Resolve tag and version" step in the `test` job:
-        # `inputs.tag` flows through `env:` (no YAML expansion into the
-        # shell), then `release-validate-tag.sh` enforces the tag format
-        # before any later step can consume the value. See SEC-1 in the
-        # 2026-05-25 review for context.
-        id: tag
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          TAG_INPUT: ${{ inputs.tag }}
-        run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            TAG="$TAG_INPUT"
-          else
-            TAG="${GITHUB_REF#refs/tags/}"
-          fi
-          bash scripts/release-validate-tag.sh "$TAG"
-          VERSION="${TAG#v}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Build release binary
         run: cargo build --release --locked --target ${{ matrix.target }}
 
@@ -484,7 +434,7 @@ jobs:
         id: pack
         shell: bash
         env:
-          VER: ${{ steps.tag.outputs.version }}
+          VER: ${{ needs.verify.outputs.version }}
           TARGET: ${{ matrix.target }}
           ARCHIVE_EXT: ${{ matrix.archive }}
           BIN_NAME: ${{ matrix.binary }}
@@ -507,16 +457,125 @@ jobs:
           BIN_NAME: ${{ matrix.binary }}
         run: bash scripts/verify-archive.sh "$ASSET" "$BIN_NAME"
 
-      - name: Upload to GitHub Release
+      - name: Keep the archive for the publish job
+        # The Release does not exist yet -- it is created after crates.io has
+        # accepted the crate -- so the asset travels to `publish` as a
+        # workflow artifact instead. One per target: `download-artifact`
+        # merges them back into a single directory there.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: archive-${{ matrix.target }}
+          path: |
+            ${{ steps.pack.outputs.asset }}
+            ${{ steps.pack.outputs.asset }}.sha256
+          # A silent empty artifact would surface as a Release with assets
+          # missing, long after the version is on crates.io for good.
+          if-no-files-found: error
+          # Long enough to reach the next job, and no longer.
+          retention-days: 1
+
+  # The irreversible step, and nothing else. Everything before it has passed:
+  # the checks, and all four archives built and matched against the
+  # downstream contract. A failure in what follows costs a re-run of one job
+  # rather than a version that can only be yanked.
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: [verify, package-binaries]
+    # A dry run stops here: everything up to this job has already run, which
+    # is what makes `workflow_dispatch` with dry_run a rehearsal of the
+    # pipeline rather than of its first half.
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run == false }}
+    # Publishing writes to crates.io, not to the repository; the write scope
+    # belongs to the job that creates the Release.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable as of 2026-07-16
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Fetch dependencies (with retry)
+        uses: ./.github/actions/cargo-fetch-retry
+
+      - name: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        # --locked forbids Cargo from regenerating Cargo.lock; the published
+        # version is whatever was committed at the tagged commit. Pairs with
+        # the lock-version check in `verify` so a stale lock cannot reach
+        # crates.io.
+        run: cargo publish --locked
+
+  # The reversible tail, kept out of `publish` on purpose: a Release and its
+  # assets can be deleted and made again, and a failure here has to be
+  # re-runnable on its own. Were it a step of `publish`, re-running the job
+  # would start with `cargo publish` over a version crates.io already holds
+  # (there is no duplicate guard -- ADR-0006) and never reach the upload.
+  release:
+    name: GitHub Release and assets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    needs: [verify, publish]
+    # `gh release create` and `gh release upload` write to the repository.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Extract release notes from CHANGELOG.md
+        env:
+          VER: ${{ needs.verify.outputs.version }}
+        run: |
+          awk -v ver="$VER" '
+            $0 ~ "^## \\["ver"\\]" { flag=1; next }
+            flag && /^## \[/ { exit }
+            flag { print }
+          ' CHANGELOG.md | sed -e '1{/^$/d}' -e '$,${/^$/d}' > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::warning::No CHANGELOG.md entry found for $VER; falling back to a placeholder note."
+            echo "_See git history._" > release-notes.md
+          fi
+
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.tag.outputs.tag }}
-          ASSET: ${{ steps.pack.outputs.asset }}
-        shell: bash
+          TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, skipping create."
+            exit 0
+          fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --notes-file release-notes.md \
+            --verify-tag
+
+      - name: Collect the archives built before publication
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          pattern: archive-*
+          merge-multiple: true
+
+      - name: Upload the archives to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.verify.outputs.tag }}
         run: |
           # `--clobber` makes the upload idempotent: a re-run after a
           # transient network failure overwrites the partial blob instead
           # of erroring with "asset already exists".
-          gh release upload "$TAG" "$ASSET" "${ASSET}.sha256" \
+          gh release upload "$TAG" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --clobber

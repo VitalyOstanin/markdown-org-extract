@@ -15,6 +15,9 @@ lists Org-mode "properties drawers" as out of scope; this ADR adds an
 equivalent per-task properties capability in a markdown-native shape (a
 fenced code block) rather than the Emacs `:PROPERTIES:` drawer. The JSON
 field addition is governed by [ADR-0015](0015-json-schema-evolution.md).
+Extended by [ADR-0031](0031-exceptions-to-a-repeating-entry.md) (2026-08-21):
+`EXDATE`, `SERIES_ID` and `RECURRENCE_ID` are read for their meaning, where
+this ADR carries every other key through untouched.
 
 ## Context
 

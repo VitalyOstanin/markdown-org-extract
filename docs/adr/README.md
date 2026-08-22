@@ -54,16 +54,16 @@ was decided, and the trade-offs that came with it.
 | 0017 | [No branch protection on master; pre-commit hook policy](0017-no-branch-protection-on-master.md) | Accepted |
 | 0018 | [Warning-cookie boundary divergence from upstream](0018-warning-cookie-boundary.md) | Accepted |
 | 0019 | [Input encoding expectations](0019-input-encoding-expectations.md)                     | Accepted |
-| 0020 | [Task properties via an org-properties fenced code block](0020-task-properties-org-properties-block.md) | Accepted |
+| 0020 | [Task properties via an org-properties fenced code block](0020-task-properties-org-properties-block.md) | Accepted, extended by 0031 |
 | 0021 | [Accept CANCELED spelling; preserve original task_type](0021-accept-canceled-spelling.md) | Accepted |
 | 0022 | [Amend ADRs by reference, not by rewriting](0022-amend-adrs-by-reference.md) | Accepted |
-| 0023 | [`timestamp_next` — resolved next occurrence for repeaters](0023-next-occurrence-field.md) | Accepted |
+| 0023 | [`timestamp_next` — resolved next occurrence for repeaters](0023-next-occurrence-field.md) | Accepted, narrowed by 0031 |
 | 0024 | [Third-party licence notices ship inside the release archives](0024-third-party-license-notices-in-archives.md) | Accepted |
 | 0025 | [The crate is a library; the CLI is a thin wrapper over it](0025-library-crate-with-thin-cli.md) | Accepted |
 | 0026 | [Several roots in one scan, and the `root` field that names them](0026-several-roots-in-one-scan.md) | Accepted |
 | 0027 | [A priority cookie is read wherever it is written, and removed only where org puts it](0027-priority-cookie-read-anywhere-removed-in-place.md) | Accepted |
 | 0028 | [A week has a first day, and a month has a grid](0028-week-start-and-the-month-grid.md) | Accepted |
-| 0029 | [`timestamp_next_after` — the occurrence after the day being drawn](0029-next-occurrence-after-the-rendered-day.md) | Accepted |
+| 0029 | [`timestamp_next_after` — the occurrence after the day being drawn](0029-next-occurrence-after-the-rendered-day.md) | Accepted, narrowed by 0031 |
 | 0030 | [An explicit window in the month grid is grown to whole weeks](0030-explicit-window-in-the-month-grid.md) | Accepted |
 | 0031 | [Exceptions to a repeating entry, in the iCalendar shape](0031-exceptions-to-a-repeating-entry.md) | Accepted |
 | 0032 | [What a missing occurrence owes, and what comes after it](0032-what-a-missing-occurrence-owes.md) | Accepted |

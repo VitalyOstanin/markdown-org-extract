@@ -11,7 +11,9 @@
 ## Status
 
 Accepted (2026-07-25). Non-breaking JSON addition governed by
-[ADR-0015](0015-json-schema-evolution.md).
+[ADR-0015](0015-json-schema-evolution.md). Narrowed by
+[ADR-0031](0031-exceptions-to-a-repeating-entry.md) (2026-08-21): an occurrence
+the series does not have is stepped over rather than named as the next one.
 
 ## Context
 

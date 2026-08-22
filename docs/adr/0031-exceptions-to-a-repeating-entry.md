@@ -10,7 +10,14 @@
 
 ## Status
 
-Accepted (2026-08-21).
+Accepted (2026-08-21). Non-breaking JSON addition governed by
+[ADR-0015](0015-json-schema-evolution.md). Extends
+[ADR-0020](0020-task-properties-org-properties-block.md) — the first
+`org-properties` keys the core reads for their meaning rather than carrying
+through — and narrows what
+[ADR-0023](0023-next-occurrence-field.md) and
+[ADR-0029](0029-next-occurrence-after-the-rendered-day.md) name: an occurrence
+the series does not have is not the next one. None of the three is replaced.
 
 ## Context
 

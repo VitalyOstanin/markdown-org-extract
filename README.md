@@ -1229,6 +1229,34 @@ GCAL_EVENT_ID: abc123/primary
 ```
 ````
 
+#### Series exceptions
+
+Three of the `org-properties` keys are read out of the block into fields of
+their own, because every consumer answering "does this series occur on this
+day" needs them parsed (see [One occurrence that
+differs](#one-occurrence-that-differs) and
+[ADR-0031](docs/adr/0031-exceptions-to-a-repeating-entry.md)):
+
+- `excluded_dates` (array of strings, optional) — the occurrences this entry
+  cancels, each as `YYYY-MM-DD`, deduplicated and in the order the file wrote
+  them. Read from `EXDATE`.
+- `recurrence_id` (string, optional) — the occurrence this entry stands in
+  for, as `YYYY-MM-DD` or `YYYY-MM-DD HH:MM`. Seconds are read and cut to the
+  minute occurrences are matched on.
+- `series_id` (string, optional) — the `ID` of the series the occurrence
+  belongs to. Read from `SERIES_ID`.
+
+Unlike `timestamp_next` and `timestamp_next_after`, which the agenda modes
+compute, these three are parsed from the file and appear in every mode,
+`--tasks` included. A field is omitted when the key is absent, and also when
+what it held could not be used — an `EXDATE` naming no readable date leaves no
+`excluded_dates` rather than an empty array, and the reason is reported on
+stderr.
+
+The raw keys stay in `properties` exactly as the file wrote them, beside the
+parsed fields, so a consumer that read them itself before these fields existed
+keeps working.
+
 ## Repeating tasks
 
 The utility honours org-mode repeater syntax for automatically scheduling
@@ -1374,6 +1402,12 @@ RECURRENCE_ID: 2026-08-20 15:00
   `RECURRENCE_ID` (the start the occurrence *would* have had) takes the place
   of that one occurrence — the agenda draws the 20th at 18:00 and not at
   15:00. No `EXDATE` is needed for it: a replacement is not a cancellation.
+- The series has to carry an `ID`, because that is what `SERIES_ID` names. An
+  entry without one cannot be replaced by anything: the replacement stays an
+  ordinary entry, the series keeps drawing the occurrence, and the day holds
+  both. The same happens when `SERIES_ID` is misspelt. Neither is silent — see
+  the last point below — but neither is refused either, because the entry
+  naming the series may simply be outside this scan.
 - The replacing entry is an ordinary entry: its own `TODO` state, body,
   priority and clocks stay with it rather than with the series.
 - Matching is by date, because the agenda draws at most one occurrence of a
@@ -1407,6 +1441,7 @@ markdown-org-extract/
 │   ├── render.rs           # Markdown/HTML rendering
 │   ├── locale.rs           # Weekday translation tables
 │   ├── error.rs            # AppError
+│   ├── exceptions.rs       # EXDATE / SERIES_ID / RECURRENCE_ID: the occurrences a series does not have
 │   ├── types.rs            # Task / Priority / DayAgenda / ProcessingStats
 │   ├── clock.rs            # CLOCK parsing and time aggregation
 │   ├── holidays.rs         # RF workday calendar (singleton, binary search)
@@ -1418,7 +1453,14 @@ markdown-org-extract/
 │       └── weekdays.rs     #   normalisation of Russian weekday names
 ├── tests/
 │   ├── cli.rs              # CLI integration tests (assert_cmd)
-│   └── lib_api.rs          # Tests against the library API, no process spawned
+│   ├── lib_api.rs          # Tests against the library API, no process spawned
+│   ├── properties.rs       # Properties over the parsers (proptest)
+│   ├── dev_scripts.rs      # The helper scripts below, run against fixtures
+│   ├── release_check_changelog.rs  # check-changelog.sh against crafted CHANGELOGs
+│   ├── release_packaging.rs        # package-archive.sh / verify-archive.sh
+│   ├── signal_handling.rs  # SIGINT/SIGPIPE behaviour of the binary
+│   ├── third_party_licenses.rs     # THIRD-PARTY-LICENSES.txt is current and reproducible
+│   └── fixtures/           # Stand-in tools the script tests call
 ├── examples/               # Sample markdown files
 ├── docs/                   # Supplementary documentation
 ├── scripts/                # Developer helper scripts (see table below)
@@ -1467,6 +1509,7 @@ release.
 | `scripts/verify-archive.sh`     | Verify a release archive's filename, layout, and SHA-256. Mirrors what downstream packagers run |
 | `scripts/release-validate-tag.sh` | Validate that a release tag follows `vX.Y.Z[-pre+build]`. Called from `.github/workflows/release.yml` on both push-tag and workflow_dispatch paths |
 | `scripts/release-prep.sh`       | Print the canonical annotated-tag message for a version: the `v<X.Y.Z>` subject plus the `CHANGELOG.md` section body (`### ` subheadings included). Argument is the **bare version**, no `v` prefix (e.g. `0.7.0`, not `v0.7.0`). Tag with `git tag -a vX.Y.Z --cleanup=verbatim -F <(scripts/release-prep.sh X.Y.Z)` — `--cleanup=verbatim` is required, otherwise the default cleanup deletes the `### ` headings as comment lines |
+| `scripts/generate-third-party-licenses.sh` | Render `THIRD-PARTY-LICENSES.txt` from the crates linked into the published binary, with the full text of every licence they ship (ADR-0024). `tests/third_party_licenses.rs` checks the committed file against a fresh run |
 | `scripts/release-verify-tag-body.sh` | Check that the release tag is annotated and its body mirrors the `CHANGELOG.md` section (ADR-0011). Argument is the **bare version**, no `v` prefix (the script prepends `v` internally to look up the tag); e.g. `scripts/release-verify-tag-body.sh 0.7.0` checks tag `v0.7.0`. Run from `.github/workflows/release.yml` before publishing; also runnable locally right after tagging |
 
 The `Cargo.toml` `exclude` list omits `docs/`, `.github/`, `scripts/`,

@@ -12,7 +12,10 @@
 
 Accepted (2026-08-17). Non-breaking JSON addition governed by
 [ADR-0015](0015-json-schema-evolution.md); extends
-[ADR-0023](0023-next-occurrence-field.md), which it does not replace.
+[ADR-0023](0023-next-occurrence-field.md), which it does not replace. Narrowed
+by [ADR-0031](0031-exceptions-to-a-repeating-entry.md) (2026-08-21) in the same
+way as ADR-0023: the occurrence after this cell is the next one the series
+actually has.
 
 ## Context
 

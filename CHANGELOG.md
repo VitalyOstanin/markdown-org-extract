@@ -71,6 +71,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- The three fields the exception keys are parsed into (`excluded_dates`,
+  `recurrence_id`, `series_id`) are described in the output-format reference
+  beside the timestamp fields: their types, that they appear in every mode
+  including `--tasks`, that an unusable key leaves no field rather than an
+  empty one, and that the raw keys stay in `properties` for a consumer that
+  read them itself. `src/exceptions.rs` is listed in the project layout, and
+  the "Use as a library" snippet names the current minor — it had been left at
+  `0.14` for four releases, handing out a build without the features the same
+  README describes. The release workflow now refuses a tag whose minor the
+  snippet does not name, so the two cannot drift apart again.
+- The `Status` of ADR-0031 now carries the links the project keeps there
+  rather than only in the body: the JSON addition is governed by ADR-0015, the
+  decision extends ADR-0020 (the first `org-properties` keys the core reads for
+  their meaning) and narrows ADR-0023 and ADR-0029 (an occurrence the series
+  does not have is not the next one). The three ADRs it touches carry the
+  matching back-reference, and the index shows it, which is how a reader
+  following the chain from one ADR finds the others.
+- README states that a series has to carry an `ID` for anything to replace an
+  occurrence of it, and what happens when it does not: the replacement stays an
+  ordinary entry and the day holds both. The project-layout tree lists the test
+  files and the licence-notice script that were missing from it.
 - `examples/series-exceptions.md` shows the two shapes an exception takes — a
   cancelled occurrence and one an entry of its own stands in for — and the
   release smoke test asserts both on the profile that ships, where until now
@@ -82,6 +103,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   says that an example cannot, and that a failing case saved to
   `tests/properties.proptest-regressions` is committed rather than left for the
   next reader to find again. `TODO.md` marks the row of its plan this covers.
+
 ## [0.18.0] — 2026-08-21
 
 ### Added

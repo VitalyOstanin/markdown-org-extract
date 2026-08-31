@@ -202,7 +202,7 @@ required where processes cannot be spawned at all, such as Android.
 
 ```toml
 [dependencies]
-markdown-org-extract = "0.19"
+markdown-org-extract = "0.20"
 ```
 
 Scanning and agenda building are separate steps, so one scan can feed

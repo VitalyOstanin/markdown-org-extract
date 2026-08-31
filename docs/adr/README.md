@@ -69,6 +69,7 @@ was decided, and the trade-offs that came with it.
 | 0032 | [What a missing occurrence owes, and what comes after it](0032-what-a-missing-occurrence-owes.md) | Accepted |
 | 0033 | [Nothing irreversible happens before the archives are checked](0033-nothing-irreversible-before-the-archives-are-checked.md) | Accepted |
 | 0034 | [A release is rehearsed on a branch, before it is tagged](0034-a-release-is-rehearsed-before-it-is-tagged.md) | Accepted |
+| 0035 | [A phrase is parsed into an entry by rules, in the core](0035-a-phrase-is-parsed-into-an-entry-by-rules.md) | Accepted |
 
 ## Adding a new ADR
 

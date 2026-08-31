@@ -50,6 +50,7 @@ second crate rather than a new name for this one.
 - [Locale support](#locale-support)
 - [Output format](#output-format)
 - [Repeating tasks](#repeating-tasks)
+- [Parsing a phrase into an entry](#parsing-a-phrase-into-an-entry)
 - [Project layout](#project-layout)
 - [Dependencies](#dependencies)
 - [License](#license)
@@ -1425,6 +1426,84 @@ RECURRENCE_ID: 2026-08-20 15:00
   names no entry of the run. The last of these is the one ADR-0031 calls out —
   it leaves both entries standing on the day — and it can only be reported
   when the file holding the series is part of the same run.
+
+## Parsing a phrase into an entry
+
+One sentence holds what the creation screen asks in nine controls: "позвонить
+врачу завтра в 15:00, каждую неделю" names a heading, a date, an hour and a
+repeater. `parse-phrase` reads such a sentence and prints the fields; it writes
+nothing and opens no file, so the caller shows them for correction and decides
+what to do with them.
+
+The rules run here, on the device. Nothing is sent anywhere, no key is held,
+and the same phrase always gives the same answer — which is what makes the
+behaviour testable. The price is that only a fixed list of phrasings is
+understood; anything else stays in the heading rather than being guessed at.
+
+```bash
+markdown-org-extract parse-phrase --current-date 2026-08-31 \
+    "напомни позвонить врачу завтра в 15:00" "каждую неделю"
+```
+
+```json
+{"current_date":"2026-08-31","heading":"позвонить врачу","priority":null,
+ "planning":"scheduled","date":"2026-09-01","time":"15:00","repeater":"+1w"}
+```
+
+Each phrase refines what the earlier ones left: a field the new phrase names
+replaces its value, a field it does not name keeps it, and text no rule
+consumes is appended to the heading. Correcting an hour is one short phrase
+("в 16:00"), not the whole sentence again.
+
+### What the rules understand
+
+| № | Field    | Russian                                                     | English                                                  |
+|---|----------|--------------------------------------------------------------|-----------------------------------------------------------|
+| 1 | date     | `сегодня`, `завтра`, `послезавтра`, `в пятницу`, `через 3 дня`, `15 сентября`, `1 сентября 2026`, `2026-09-15` | `today`, `tomorrow`, `on friday`, `in 3 days`, `september 15`, `1 september 2026`, `2026-09-15` |
+| 2 | planning | `к`, `до`, `срок`, `дедлайн` make it a deadline; `в`, `на` schedule it | `by`, `due`, `before`, `until` make it a deadline; `on`, `at` schedule it |
+| 3 | time     | `в 15:00`, `в 15`, `в три часа дня`, `в 9 вечера`            | `at 15:00`, `at 3pm`, `at 10 o'clock`, `at 3`             |
+| 4 | repeater | `каждый день`, `каждые 2 недели`, `каждый рабочий день`, `еженедельно` | `every day`, `every 2 weeks`, `every workday`, `weekly` |
+| 5 | priority | `срочно`, `критично` → `A`; `важно` → `B`; `приоритет C`     | `urgent`, `asap`, `critical` → `A`; `important` → `B`; `priority C` |
+| 6 | heading  | everything the rules did not consume                          | everything the rules did not consume                       |
+
+A weekday resolves to the nearest one **on or after** the reference day, which
+is what a bare weekday name does in upstream's `org-read-date`: "во вторник"
+said on a Tuesday means that Tuesday. A month day without a year resolves the
+same way — the next 15 September, not the one that has passed.
+
+Nothing in the grammar removes a field: "не завтра" sets no date and clears
+none, and both words land in the heading. A field is emptied on the screen,
+where every field can be emptied already.
+
+### What it costs
+
+| № | Cost                                                                                     | Why it is accepted                                                        |
+|---|------------------------------------------------------------------------------------------|----------------------------------------------------------------------------|
+| 1 | A lead-in verb is eaten at the start: `напомни`, `поставь`, `добавь`, `создай`, `запиши`, `remind me to`, `add a task`, `create` | An entry that really begins with one loses that word, which is visible on the screen before anything is written and is fixed by a second phrase or by hand |
+| 2 | `в N` / `at N` with nothing after the number reads as an hour, so "в 5 минутах ходьбы" sets 05:00 | The alternative is refusing the shortest way an hour is said; the leftover words still reach the heading |
+| 3 | A phrasing outside the list is not understood at all                                      | It stays in the heading, so nothing said is lost — only unsorted            |
+
+The list of lead-in verbs is closed and checked by the table of examples,
+including phrases where the same verb stands elsewhere and is therefore left
+alone ("позвонить и напомни про отчёт").
+
+### From Rust
+
+```rust
+use chrono::NaiveDate;
+use markdown_org_extract::{parse_phrases, refine_entry, PhraseEntry};
+
+let today = NaiveDate::from_ymd_opt(2026, 8, 31).expect("valid day");
+
+// The whole sentence at once.
+let entry = parse_phrases(["позвонить врачу завтра в 15:00"], "ru,en", today);
+assert_eq!(entry.heading, "позвонить врачу");
+
+// Or one phrase at a time, keeping the entry between calls — what a screen
+// that refines as the person speaks does.
+let entry = refine_entry(entry, "каждую неделю", "ru,en", today);
+assert_eq!(entry.date, NaiveDate::from_ymd_opt(2026, 9, 1));
+```
 
 ## Project layout
 

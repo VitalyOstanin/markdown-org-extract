@@ -180,7 +180,11 @@ fn parse_date_arg(label: &str, value: &str) -> Result<NaiveDate, AppError> {
 /// which only deviates from local dates near midnight — exactly the case a
 /// developer would not notice in casual testing. The regression guard for
 /// that mistake lives in this module's tests.
-fn compute_today_in_tz(now_utc: chrono::DateTime<chrono::Utc>, tz: Tz) -> NaiveDate {
+///
+/// Public because the notion of "today" is the same one `parse-phrase` needs
+/// when it is not given `--current-date`: two answers to "what day is it"
+/// would be one too many.
+pub fn compute_today_in_tz(now_utc: chrono::DateTime<chrono::Utc>, tz: Tz) -> NaiveDate {
     now_utc.with_timezone(&tz).date_naive()
 }
 

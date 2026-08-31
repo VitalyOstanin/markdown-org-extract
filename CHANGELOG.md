@@ -38,6 +38,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A phrase in natural language is parsed into the fields of an entry:
+  the heading, the priority, whether the date is a deadline or a
+  schedule, the date, the hour and the repeater. Russian and English,
+  by rules rather than by a model — nothing leaves the device, no key
+  is held, and the same phrase gives the same answer every time. See
+  [ADR-0035](docs/adr/0035-a-phrase-is-parsed-into-an-entry-by-rules.md).
+- A later phrase refines what is already parsed instead of starting
+  over: a field the new phrase names replaces its value, a field it
+  does not name keeps it, and text no rule consumes is appended to the
+  heading. Correcting an hour is one short phrase, not the whole
+  sentence again. See
+  [ADR-0036](docs/adr/0036-a-later-phrase-refines-the-entry.md).
+- `parse-phrase` subcommand: takes the phrases and prints the fields as
+  a JSON object, with `current_date` naming the day they were read
+  against. `--locale` picks which grammars are consulted, and
+  `--current-date` / `--tz` say what today is. This is the first
+  subcommand the binary has; a run without one is a scan, exactly as
+  before.
+- Library surface for the same thing: `refine_entry` is one step,
+  `parse_phrases` folds it over a chain, and `PhraseEntry` /
+  `PlanningKind` carry the result. `PhraseEntry` is
+  `#[non_exhaustive]` — build it with `PhraseEntry::default()` and
+  assign fields, so a later field stays an additive change (ADR-0025).
+- `agenda::compute_today_in_tz` is public: `parse-phrase` needs the
+  same notion of "today" the agenda uses, and two answers to what day
+  it is would be one too many.
+
 ## [0.19.0] — 2026-08-22
 
 ### Added

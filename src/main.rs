@@ -13,6 +13,8 @@
 mod cli;
 mod format;
 
+use chrono::NaiveDate;
+use chrono_tz::Tz;
 use clap::Parser;
 use std::fs;
 use std::io::{self, Write};
@@ -22,9 +24,9 @@ use std::sync::Arc;
 
 use markdown_org_extract::agenda::{self, filter_agenda, AgendaDates};
 use markdown_org_extract::scan::{scan_directories, scan_directory, validate_dir, ScanOptions};
-use markdown_org_extract::{render, AppError, HolidayCalendar};
+use markdown_org_extract::{parse_phrases, render, AppError, HolidayCalendar, PhraseEntry};
 
-use crate::cli::Cli;
+use crate::cli::{Cli, Command, ParsePhraseArgs};
 use crate::format::OutputFormat;
 
 /// Exit code for a scan aborted by SIGINT/SIGTERM. Follows the shell
@@ -96,6 +98,10 @@ fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
             verbose = cli.verbose,
             "--verbose saturated at -vvv (TRACE); additional v's have no effect"
         );
+    }
+
+    if let Some(Command::ParsePhrase(ref args)) = cli.command {
+        return handle_parse_phrase(args);
     }
 
     if let Some(shell) = cli.completions {
@@ -277,6 +283,49 @@ fn render_output(cli: &Cli, agenda_output: agenda::AgendaOutput) -> Result<(), A
 }
 
 /// Returns true when the path is the standard unix sigil `-` meaning stdout.
+/// `parse-phrase`: fold the phrases into an entry and print it as JSON.
+///
+/// Nothing is scanned and nothing is written — the subcommand exists so the
+/// grammar is available to the VS Code extension, which runs this binary, and
+/// in a shell. The Android client links the same function directly.
+fn handle_parse_phrase(args: &ParsePhraseArgs) -> Result<(), AppError> {
+    let today = match args.current_date.as_deref() {
+        Some(date) => NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            .map_err(|e| AppError::InvalidDate(format!("--current-date '{date}': {e}")))?,
+        None => {
+            // The same notion of today the agenda uses, so a phrase and an
+            // agenda rendered in the same second agree on what day it is.
+            let tz: Tz = args
+                .tz
+                .parse()
+                .map_err(|_| AppError::InvalidTimezone(args.tz.clone()))?;
+            agenda::compute_today_in_tz(chrono::Utc::now(), tz)
+        }
+    };
+
+    let entry = parse_phrases(args.phrases.iter().map(String::as_str), &args.locale, today);
+
+    #[derive(serde::Serialize)]
+    struct Printed<'a> {
+        /// The day the phrases were read against, so a caller that did not
+        /// pass `--current-date` can see which day was used.
+        current_date: String,
+        #[serde(flatten)]
+        entry: &'a PhraseEntry,
+    }
+
+    let printed = Printed {
+        current_date: today.to_string(),
+        entry: &entry,
+    };
+    let json = serde_json::to_string(&printed)
+        .map_err(|e| AppError::Serialization(format!("parsed phrase: {e}")))?;
+    let mut stdout = io::stdout();
+    writeln!(stdout, "{json}").map_err(|e| AppError::io("<stdout>", e))?;
+    stdout.flush().map_err(|e| AppError::io("<stdout>", e))?;
+    Ok(())
+}
+
 fn is_stdout_sigil(path: &Path) -> bool {
     path.as_os_str() == "-"
 }

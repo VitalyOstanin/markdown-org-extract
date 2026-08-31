@@ -3853,3 +3853,93 @@ fn an_exception_that_cannot_be_used_is_reported_as_a_property_and_not_as_a_times
         "a property is not a timestamp; stderr: {stderr}"
     );
 }
+
+// --- parse-phrase ----------------------------------------------------------
+
+/// Run `parse-phrase` and return the parsed JSON object.
+fn parse_phrase(args: &[&str]) -> serde_json::Value {
+    let out = bin()
+        .arg("parse-phrase")
+        .args(args)
+        .output()
+        .expect("run parse-phrase");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    serde_json::from_slice(&out.stdout).expect("stdout is a JSON object")
+}
+
+#[test]
+fn parse_phrase_prints_the_fields_a_phrase_names() {
+    let value = parse_phrase(&[
+        "--current-date",
+        "2026-08-31",
+        "напомни позвонить врачу завтра в 15:00 каждую неделю",
+    ]);
+
+    assert_eq!(value["heading"], "позвонить врачу");
+    assert_eq!(value["planning"], "scheduled");
+    assert_eq!(value["date"], "2026-09-01");
+    assert_eq!(value["time"], "15:00");
+    assert_eq!(value["repeater"], "+1w");
+    assert_eq!(value["priority"], serde_json::Value::Null);
+    // The day the answer is relative to, so a caller that let the tool decide
+    // can see which day it decided on.
+    assert_eq!(value["current_date"], "2026-08-31");
+}
+
+#[test]
+fn parse_phrase_refines_across_several_phrases() {
+    // Each phrase refines what the previous ones left: the heading and the
+    // time survive, the date moves.
+    let value = parse_phrase(&[
+        "--current-date",
+        "2026-08-31",
+        "созвон завтра в 15:00",
+        "в пятницу",
+    ]);
+
+    assert_eq!(value["heading"], "созвон");
+    assert_eq!(value["date"], "2026-09-04");
+    assert_eq!(value["time"], "15:00");
+}
+
+#[test]
+fn parse_phrase_consults_only_the_locales_it_was_given() {
+    let value = parse_phrase(&[
+        "--locale",
+        "ru",
+        "--current-date",
+        "2026-08-31",
+        "buy milk tomorrow",
+    ]);
+
+    assert_eq!(value["heading"], "buy milk tomorrow");
+    assert_eq!(value["date"], serde_json::Value::Null);
+}
+
+#[test]
+fn parse_phrase_without_a_current_date_answers_from_the_clock() {
+    // No `--current-date`: the day comes from `--tz`, and the answer says
+    // which day that was.
+    let value = parse_phrase(&["--tz", "UTC", "позвонить сегодня"]);
+
+    assert_eq!(value["heading"], "позвонить");
+    assert_eq!(value["date"], value["current_date"]);
+}
+
+#[test]
+fn parse_phrase_rejects_a_malformed_current_date() {
+    bin()
+        .args(["parse-phrase", "--current-date", "31.08.2026", "позвонить"])
+        .assert()
+        .failure()
+        .code(2);
+}
+
+#[test]
+fn parse_phrase_requires_a_phrase() {
+    bin().arg("parse-phrase").assert().failure().code(2);
+}

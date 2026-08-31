@@ -1,5 +1,5 @@
 use chrono::NaiveDate;
-use clap::{Parser, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 use markdown_org_extract::locale::SUPPORTED_LOCALES;
@@ -149,6 +149,11 @@ Exit status:
 #[command(long_about = CLI_LONG_ABOUT)]
 #[command(version)]
 pub struct Cli {
+    /// An action that replaces the scan. Without one, the run is a scan and
+    /// every flag below applies as it always has.
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
     /// Root directory to scan (recursive). `.gitignore` is respected.
     /// Repeat the flag to scan several collections as one run: the tasks are
     /// merged, `--max-tasks` is the budget for all of them together, and every
@@ -320,6 +325,41 @@ pub struct Cli {
         help_heading = "Actions"
     )]
     pub completions: Option<clap_complete::Shell>,
+}
+
+/// Actions that stand in place of a scan.
+#[derive(Subcommand)]
+pub enum Command {
+    /// Parse phrases in natural language into the fields of an entry and
+    /// print them as a JSON object.
+    ///
+    /// Each phrase refines what the earlier ones left: a field the phrase
+    /// names replaces its value, a field it does not name keeps it, and text
+    /// no rule consumes is appended to the heading. Nothing is written — the
+    /// caller decides what to do with the fields.
+    ParsePhrase(ParsePhraseArgs),
+}
+
+/// Arguments of `parse-phrase`.
+#[derive(Args)]
+pub struct ParsePhraseArgs {
+    /// The phrases, in the order they were said. Quote each one.
+    #[arg(required = true, value_name = "PHRASE")]
+    pub phrases: Vec<String>,
+
+    /// Comma-separated list of the grammars to consult (`ru`, `en`).
+    /// A phrase in a language that is not listed stays in the heading.
+    #[arg(long, default_value = "ru,en", value_parser = validate_locale)]
+    pub locale: String,
+
+    /// The day the phrases are relative to (YYYY-MM-DD). Without it, today in
+    /// `--tz` is used, and the answer says which day that was.
+    #[arg(long, value_parser = validate_date)]
+    pub current_date: Option<String>,
+
+    /// IANA timezone deciding what today is when `--current-date` is absent.
+    #[arg(long, default_value = "Europe/Moscow", value_parser = validate_timezone)]
+    pub tz: String,
 }
 
 /// Snapshot of the color-related environment, taken once per invocation so the

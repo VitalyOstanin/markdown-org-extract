@@ -10,7 +10,9 @@
 
 ## Status
 
-Accepted (2026-08-31).
+Accepted (2026-08-31). Amended by
+[ADR-0036](0036-a-later-phrase-refines-the-entry.md) in the shape of the
+parser: it takes the entry parsed so far and refines it.
 
 ## Context
 

@@ -13,11 +13,16 @@
 //! [`REFERENCE_DAY`], Monday 2026-08-31, so a weekday or a bare month day
 //! resolves to a fixed answer rather than to whatever today happens to be.
 //!
+//! [`EDITS`] is the second table, for the phrases that change an entry that
+//! exists. It states two more columns — the keyword and the emptied fields —
+//! and the heading, which for an edit is not a heading but the leftover a
+//! caller refuses the phrase over.
+//!
 //! [ADR-0035]: ../docs/adr/0035-a-phrase-is-parsed-into-an-entry-by-rules.md
 //! [ADR-0036]: ../docs/adr/0036-a-later-phrase-refines-the-entry.md
 
 use chrono::NaiveDate;
-use markdown_org_extract::{parse_phrases, refine_entry, PhraseEntry, PlanningKind};
+use markdown_org_extract::{parse_phrases, refine_entry, PhraseEntry, PhraseKeyword, PlanningKind};
 
 /// Monday, 2026-08-31. "Tomorrow" is 2026-09-01 (Tuesday), the coming Friday
 /// is 2026-09-04, and "in 3 days" is 2026-09-03.
@@ -472,7 +477,327 @@ fn every_chain_leaves_the_entry_the_table_states() {
             expected.map(str::to_string).as_slice(),
             "chain {phrases:?}"
         );
+        // A phrase that creates an entry names no keyword and empties no
+        // field: the two columns the edit table adds stay untouched, which is
+        // what lets a caller tell the two uses of the grammar apart.
+        assert_eq!(entry.keyword, None, "chain {phrases:?} named a keyword");
+        assert!(
+            entry.cleared.is_empty(),
+            "chain {phrases:?} emptied {:?}",
+            entry.cleared.names()
+        );
     }
+}
+
+/// The two columns only an edit fills, and the six [`shown`] states, in the
+/// order the table writes them: keyword, cleared, priority, planning, date,
+/// time, repeater, leftover.
+fn shown_edit(entry: &PhraseEntry) -> [String; 8] {
+    let dash = || "-".to_string();
+    let [heading, priority, planning, date, time, repeater] = shown(entry);
+    [
+        entry.keyword.map_or_else(dash, |k| k.as_str().to_string()),
+        if entry.cleared.is_empty() {
+            dash()
+        } else {
+            entry.cleared.names().join("+")
+        },
+        priority,
+        planning,
+        date,
+        time,
+        repeater,
+        if heading.is_empty() { dash() } else { heading },
+    ]
+}
+
+type Edit = (
+    &'static [&'static str],
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+);
+
+/// phrases, keyword, cleared, priority, planning, date, time, repeater, leftover
+const EDITS: &[Edit] = &[
+    // --- Russian: the keyword --------------------------------------------
+    (
+        &["отметь выполненной"],
+        "DONE",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+    ),
+    (&["сделано"], "DONE", "-", "-", "-", "-", "-", "-", "-"),
+    (&["в работу"], "TODO", "-", "-", "-", "-", "-", "-", "-"),
+    (
+        &["отменено"],
+        "CANCELLED",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+    ),
+    // --- Russian: moving and grading --------------------------------------
+    (
+        &["перенеси на пятницу"],
+        "-",
+        "-",
+        "-",
+        "scheduled",
+        "2026-09-04",
+        "-",
+        "-",
+        "-",
+    ),
+    (&["сделай срочной"], "-", "-", "A", "-", "-", "-", "-", "-"),
+    (
+        &["смени приоритет C"],
+        "-",
+        "-",
+        "C",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+    ),
+    // --- Russian: emptying a field ----------------------------------------
+    (&["убрать дату"], "-", "date", "-", "-", "-", "-", "-", "-"),
+    (&["снять срок"], "-", "date", "-", "-", "-", "-", "-", "-"),
+    (&["убрать время"], "-", "time", "-", "-", "-", "-", "-", "-"),
+    (&["без времени"], "-", "time", "-", "-", "-", "-", "-", "-"),
+    (
+        &["убрать повтор"],
+        "-",
+        "repeater",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+    ),
+    (
+        &["без приоритета"],
+        "-",
+        "priority",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+    ),
+    // --- Russian: two instructions in one phrase --------------------------
+    (
+        &["перенеси на пятницу в 16:00 и сделай срочной"],
+        "-",
+        "-",
+        "A",
+        "scheduled",
+        "2026-09-04",
+        "16:00",
+        "-",
+        "-",
+    ),
+    (
+        &["отметь выполненной и убрать повтор"],
+        "DONE",
+        "repeater",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+    ),
+    // Naming a field and emptying it cancel each other, whichever comes last.
+    (
+        &["убрать дату", "в пятницу"],
+        "-",
+        "-",
+        "-",
+        "scheduled",
+        "2026-09-04",
+        "-",
+        "-",
+        "-",
+    ),
+    (
+        &["в пятницу", "убрать дату"],
+        "-",
+        "date",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+    ),
+    // A word no rule knows is left over, which is what a caller refuses the
+    // phrase over rather than writing it into the entry.
+    (
+        &["перенеси на пятницу совсем"],
+        "-",
+        "-",
+        "-",
+        "scheduled",
+        "2026-09-04",
+        "-",
+        "-",
+        "совсем",
+    ),
+    // Negation still empties nothing (ADR-0035): both words are leftover.
+    (
+        &["не завтра"],
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "не завтра",
+    ),
+    // --- English -----------------------------------------------------------
+    (&["mark as done"], "DONE", "-", "-", "-", "-", "-", "-", "-"),
+    (
+        &["mark as cancelled"],
+        "CANCELLED",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+    ),
+    (
+        &["move to friday"],
+        "-",
+        "-",
+        "-",
+        "scheduled",
+        "2026-09-04",
+        "-",
+        "-",
+        "-",
+    ),
+    (
+        &["change it to friday at 9am"],
+        "-",
+        "-",
+        "-",
+        "scheduled",
+        "2026-09-04",
+        "09:00",
+        "-",
+        "-",
+    ),
+    (&["make it urgent"], "-", "-", "A", "-", "-", "-", "-", "-"),
+    (
+        &["set the priority B"],
+        "-",
+        "-",
+        "B",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+    ),
+    (&["no date"], "-", "date", "-", "-", "-", "-", "-", "-"),
+    (
+        &["remove the time"],
+        "-",
+        "time",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+    ),
+    (
+        &["no repeat"],
+        "-",
+        "repeater",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+    ),
+    (
+        &["clear the priority"],
+        "-",
+        "priority",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+    ),
+];
+
+#[test]
+fn every_edit_leaves_the_entry_the_table_states() {
+    for (phrases, keyword, cleared, priority, planning, date, time, repeater, leftover) in EDITS {
+        let entry = parse_phrases(phrases.iter().copied(), "ru,en", reference_day());
+        let expected = [
+            *keyword, *cleared, *priority, *planning, *date, *time, *repeater, *leftover,
+        ];
+
+        assert_eq!(
+            shown_edit(&entry).as_slice(),
+            expected.map(str::to_string).as_slice(),
+            "edit {phrases:?}"
+        );
+    }
+}
+
+#[test]
+fn an_edit_is_a_fold_over_single_steps_too() {
+    for (phrases, ..) in EDITS {
+        let folded = parse_phrases(phrases.iter().copied(), "ru,en", reference_day());
+        let stepped = phrases
+            .iter()
+            .fold(PhraseEntry::default(), |entry, phrase| {
+                refine_entry(entry, phrase, "ru,en", reference_day())
+            });
+
+        assert_eq!(
+            shown_edit(&folded),
+            shown_edit(&stepped),
+            "edit {phrases:?}"
+        );
+    }
+}
+
+#[test]
+fn a_verb_of_creating_after_a_conjunction_stays_in_the_heading() {
+    // The conjunction rule lets a second instruction follow ("и сделай
+    // срочной"), and it must not reach further than that: "напомни" in the
+    // middle of a sentence is part of what was said.
+    let entry = parse_phrases(["позвонить и напомни про отчёт"], "ru,en", reference_day());
+
+    assert_eq!(entry.heading, "позвонить и напомни про отчёт");
+    assert_eq!(entry.keyword, None);
 }
 
 #[test]
@@ -545,4 +870,8 @@ fn the_readme_example_behaves_as_it_says() {
         entry.repeater.as_ref().map(|r| r.canonical()).as_deref(),
         Some("+1w")
     );
+
+    let edit = parse_phrases(["отметь выполненной и убрать повтор"], "ru,en", today);
+    assert_eq!(edit.keyword, Some(PhraseKeyword::Done));
+    assert_eq!(edit.cleared.names(), ["repeater"]);
 }

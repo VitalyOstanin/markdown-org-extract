@@ -67,7 +67,9 @@ pub use crate::parser::{
     display_text, extract_tasks, extract_tasks_with_counter, parse_heading_line, HeadingLine,
     HeadingToken,
 };
-pub use crate::phrase::{parse_phrases, refine_entry, PhraseEntry, PlanningKind};
+pub use crate::phrase::{
+    parse_phrases, refine_entry, ClearedFields, PhraseEntry, PhraseKeyword, PlanningKind,
+};
 pub use crate::render::{render_days_html, render_days_markdown, render_html, render_markdown};
 pub use crate::scan::{scan_directories, scan_directory, ScanOptions, ScanOutcome};
 pub use crate::timestamp::{

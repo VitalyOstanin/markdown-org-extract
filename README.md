@@ -1446,8 +1446,9 @@ markdown-org-extract parse-phrase --current-date 2026-08-31 \
 ```
 
 ```json
-{"current_date":"2026-08-31","heading":"позвонить врачу","priority":null,
- "planning":"scheduled","date":"2026-09-01","time":"15:00","repeater":"+1w"}
+{"current_date":"2026-08-31","heading":"позвонить врачу","keyword":null,
+ "priority":null,"planning":"scheduled","date":"2026-09-01","time":"15:00",
+ "repeater":"+1w","cleared":[]}
 ```
 
 Each phrase refines what the earlier ones left: a field the new phrase names
@@ -1464,22 +1465,56 @@ consumes is appended to the heading. Correcting an hour is one short phrase
 | 3 | time     | `в 15:00`, `в 15`, `в три часа дня`, `в 9 вечера`            | `at 15:00`, `at 3pm`, `at 10 o'clock`, `at 3`             |
 | 4 | repeater | `каждый день`, `каждые 2 недели`, `каждый рабочий день`, `еженедельно` | `every day`, `every 2 weeks`, `every workday`, `weekly` |
 | 5 | priority | `срочно`, `критично` → `A`; `важно` → `B`; `приоритет C`     | `urgent`, `asap`, `critical` → `A`; `important` → `B`; `priority C` |
-| 6 | heading  | everything the rules did not consume                          | everything the rules did not consume                       |
+| 6 | keyword  | `выполнено`, `сделано`, `завершено` → `DONE`; `в работу` → `TODO`; `отменено` → `CANCELLED` | `done`, `completed` → `DONE`; `todo` → `TODO`; `cancelled` → `CANCELLED` |
+| 7 | cleared  | `убрать дату`, `снять срок`, `без времени`, `убрать повтор`, `без приоритета` | `no date`, `remove the time`, `no repeat`, `clear the priority` |
+| 8 | heading  | everything the rules did not consume                          | everything the rules did not consume                       |
 
 A weekday resolves to the nearest one **on or after** the reference day, which
 is what a bare weekday name does in upstream's `org-read-date`: "во вторник"
 said on a Tuesday means that Tuesday. A month day without a year resolves the
 same way — the next 15 September, not the one that has passed.
 
-Nothing in the grammar removes a field: "не завтра" sets no date and clears
-none, and both words land in the heading. A field is emptied on the screen,
-where every field can be emptied already.
+### Editing an entry that exists
+
+The last two fields are what a phrase says about an entry that is already
+written: a keyword moves it between `TODO`, `DONE` and cancelled, and a field
+can be said to be empty. The grammar is one; which of the two things a phrase
+does is the caller's reading of the answer.
+
+```bash
+markdown-org-extract parse-phrase --current-date 2026-08-31 \
+    "отметь выполненной и убрать повтор"
+```
+
+```json
+{"current_date":"2026-08-31","heading":"","keyword":"DONE","priority":null,
+ "planning":null,"date":null,"time":null,"repeater":null,
+ "cleared":["repeater"]}
+```
+
+`cleared` names the fields the phrase emptied, which is how a caller tells
+"убрать дату" from a phrase that says nothing about the date: `date` is `null`
+in both answers, and only the first lists it in `cleared`. Emptying the date
+empties the planning line with it. Naming a field and emptying it cancel each
+other, so a chain says what its last phrase said.
+
+A conjunction joins two instructions in one phrase — "перенеси на пятницу в
+16:00 и сделай срочной" sets the date, the hour and the priority — because a
+verb of editing may start again after `и` / `and`. A verb of creating may not:
+"позвонить и напомни про отчёт" is one entry, not an entry and an instruction.
+
+An empty heading is what an edit leaves behind: every word was understood. Text
+left over means a word was not, and a caller that is editing refuses the phrase
+over it rather than writing the leftover into the entry.
+
+Negation removes nothing: "не завтра" sets no date and empties none, and both
+words land in the heading like any other text the rules do not know.
 
 ### What it costs
 
 | № | Cost                                                                                     | Why it is accepted                                                        |
 |---|------------------------------------------------------------------------------------------|----------------------------------------------------------------------------|
-| 1 | A lead-in verb is eaten at the start: `напомни`, `поставь`, `добавь`, `создай`, `запиши`, `remind me to`, `add a task`, `create` | An entry that really begins with one loses that word, which is visible on the screen before anything is written and is fixed by a second phrase or by hand |
+| 1 | A lead-in verb is eaten at the start: `напомни`, `поставь`, `добавь`, `создай`, `запиши`, `remind me to`, `add a task`, `create`, and the verbs of editing `перенеси`, `сделай`, `отметь`, `смени`, `move`, `mark`, `make`, `change`, `set` | An entry that really begins with one loses that word, which is visible on the screen before anything is written and is fixed by a second phrase or by hand |
 | 2 | `в N` / `at N` with nothing after the number reads as an hour, so "в 5 минутах ходьбы" sets 05:00 | The alternative is refusing the shortest way an hour is said; the leftover words still reach the heading |
 | 3 | A phrasing outside the list is not understood at all                                      | It stays in the heading, so nothing said is lost — only unsorted            |
 
@@ -1491,7 +1526,7 @@ alone ("позвонить и напомни про отчёт").
 
 ```rust
 use chrono::NaiveDate;
-use markdown_org_extract::{parse_phrases, refine_entry, PhraseEntry};
+use markdown_org_extract::{parse_phrases, refine_entry, PhraseEntry, PhraseKeyword};
 
 let today = NaiveDate::from_ymd_opt(2026, 8, 31).expect("valid day");
 
@@ -1503,6 +1538,11 @@ assert_eq!(entry.heading, "позвонить врачу");
 // that refines as the person speaks does.
 let entry = refine_entry(entry, "каждую неделю", "ru,en", today);
 assert_eq!(entry.date, NaiveDate::from_ymd_opt(2026, 9, 1));
+
+// An edit of an entry that exists: a keyword, and a field said to be empty.
+let edit = parse_phrases(["отметь выполненной и убрать повтор"], "ru,en", today);
+assert_eq!(edit.keyword, Some(PhraseKeyword::Done));
+assert_eq!(edit.cleared.names(), ["repeater"]);
 ```
 
 ## Project layout

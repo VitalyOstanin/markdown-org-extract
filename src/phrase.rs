@@ -17,7 +17,9 @@
 //! | 3 | time     | `в 15:00`, `at 3pm`, `в три часа дня`, `at 10 o'clock`                     |
 //! | 4 | repeater | `каждый день`, `каждые 2 недели`, `еженедельно`, `every week`, `daily`     |
 //! | 5 | priority | `срочно`, `важно`, `urgent`, `important`, `приоритет B`, `priority B`      |
-//! | 6 | heading  | everything the rules did not consume                                       |
+//! | 6 | keyword  | `выполнено`, `в работу`, `отменено`, `done`, `todo`, `cancelled`           |
+//! | 7 | cleared  | `убрать дату`, `без приоритета`, `no repeat`, `remove the time`            |
+//! | 8 | heading  | everything the rules did not consume                                       |
 //!
 //! Two costs are accepted deliberately, both visible on the screen the fields
 //! are shown on and correctable there:
@@ -29,8 +31,16 @@
 //!   "в 5 минутах ходьбы" sets 05:00 and leaves "минутах ходьбы" in the
 //!   heading.
 //!
-//! Nothing here removes a field: "не завтра" sets no date and clears none —
-//! the words land in the heading like any other text the rules do not know.
+//! The last two fields are what an edit of an existing entry needs: a keyword
+//! to move the entry between TODO and DONE, and a field said to be empty. The
+//! grammar is one and the same for both uses — whether a phrase creates an
+//! entry or edits one is the caller's reading of the fields it gets back.
+//!
+//! Removal is said outright: "убрать дату" empties the date and names it in
+//! [`PhraseEntry::cleared`], which is how a caller tells an emptied field from
+//! one the phrase never mentioned. Negation removes nothing: "не завтра" sets
+//! no date and clears none — the words land in the heading like any other text
+//! the rules do not know.
 
 use chrono::{Datelike, Days, Months, NaiveDate, NaiveTime, Timelike, Weekday};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
@@ -59,6 +69,78 @@ impl PlanningKind {
     }
 }
 
+/// The keyword a phrase names for an entry.
+///
+/// Not [`crate::types::TaskType`]: the cancelled variant of that type carries
+/// the spelling found in the source file (`CANCELLED` / `CANCELED`, ADR-0021),
+/// and a phrase says neither — the spelling stays whatever the file already
+/// uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhraseKeyword {
+    /// Open task (`TODO`).
+    Todo,
+    /// Completed task (`DONE`).
+    Done,
+    /// Abandoned task, in whichever spelling the file uses.
+    Cancelled,
+}
+
+impl PhraseKeyword {
+    /// The wire spelling of the keyword. Same string in the JSON of
+    /// `parse-phrase` and in a client that applies the fields itself.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PhraseKeyword::Todo => "TODO",
+            PhraseKeyword::Done => "DONE",
+            PhraseKeyword::Cancelled => "CANCELLED",
+        }
+    }
+}
+
+/// The fields a phrase asked to empty.
+///
+/// A field is either named with a value, not named at all, or named as empty,
+/// and the first two are already told apart by `Option`. This is the third
+/// case: `date: true` means the phrase said "убрать дату", which is not the
+/// same as saying nothing about the date.
+///
+/// Emptying the date empties the planning line with it: a `SCHEDULED:` line
+/// without a day is not a line.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ClearedFields {
+    /// The date, and the planning line it stands on.
+    pub date: bool,
+    /// The hour and minute.
+    pub time: bool,
+    /// The repeater.
+    pub repeater: bool,
+    /// The priority cookie.
+    pub priority: bool,
+}
+
+impl ClearedFields {
+    /// The wire names of the emptied fields, in a fixed order, which is what
+    /// the JSON of `parse-phrase` prints. Empty when the phrase emptied
+    /// nothing.
+    pub fn names(self) -> Vec<&'static str> {
+        [
+            (self.date, "date"),
+            (self.time, "time"),
+            (self.repeater, "repeater"),
+            (self.priority, "priority"),
+        ]
+        .into_iter()
+        .filter_map(|(cleared, name)| cleared.then_some(name))
+        .collect()
+    }
+
+    /// Whether the phrase emptied nothing at all.
+    pub fn is_empty(self) -> bool {
+        !(self.date || self.time || self.repeater || self.priority)
+    }
+}
+
 /// The fields a phrase can fill.
 ///
 /// [`Default`] is the empty entry, which is where a chain of phrases starts;
@@ -83,14 +165,25 @@ pub struct PhraseEntry {
     pub time: Option<NaiveTime>,
     /// The repeater, as the timestamp grammar spells it (`+1w`, `+1wd`).
     pub repeater: Option<Repeater>,
+    /// The keyword, when a phrase named one. Only an edit of an entry that
+    /// exists has anywhere to put it.
+    pub keyword: Option<PhraseKeyword>,
+    /// The fields a phrase said to empty, which is not the same as the fields
+    /// it left unnamed.
+    pub cleared: ClearedFields,
 }
 
 /// Refine `entry` with one more `phrase`.
 ///
 /// A field the phrase names replaces what was there; a field it does not name
-/// keeps its value; text the rules do not consume is appended to the heading,
-/// separated by a space. On the first phrase, where the heading is empty, that
-/// is exactly "what is left over becomes the heading".
+/// keeps its value; a field it says to empty is emptied and listed in
+/// [`PhraseEntry::cleared`]; text the rules do not consume is appended to the
+/// heading, separated by a space. On the first phrase, where the heading is
+/// empty, that is exactly "what is left over becomes the heading".
+///
+/// The two ways of naming a field cancel each other, so a chain says what its
+/// last phrase says: "убрать дату" then "в пятницу" leaves the date set and
+/// nothing cleared.
 ///
 /// `locale` is the comma-separated `--locale` value (`"ru"`, `"en"`,
 /// `"ru,en"`): only the grammars it names are consulted, so a phrase in a
@@ -112,6 +205,23 @@ pub fn refine_entry(
     let mut i = lead_in_len(&tokens, langs);
 
     while i < tokens.len() {
+        // "перенеси на пятницу и сделай срочной": a conjunction joins two
+        // instructions, so a verb of editing may start again after it, and the
+        // conjunction itself is not part of the heading. A conjunction that
+        // joins plain words ("хлеб и молоко") is left where it is, and so is
+        // one that stands in front of a verb of creating: "позвонить и напомни
+        // про отчёт" is one entry, not an entry and an instruction.
+        if is_conjunction(&tokens[i].key, langs) {
+            let lead = edit_in_len(&tokens[i + 1..], langs);
+            if lead > 0 {
+                i += 1 + lead;
+                continue;
+            }
+            if match_rule(&tokens, i + 1, langs, today).is_some() {
+                i += 1;
+                continue;
+            }
+        }
         // "не завтра" / "not tomorrow" sets nothing and clears nothing: both
         // words go to the heading, and so does the phrasing they negate.
         if is_negation(&tokens[i].key, langs) {
@@ -216,17 +326,59 @@ enum Effect {
     Time(NaiveTime),
     Repeat(Repeater),
     Prio(Priority),
+    Keyword(PhraseKeyword),
+    Clear(Field),
 }
 
+/// A field a phrase can say to empty.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Field {
+    Date,
+    Time,
+    Repeater,
+    Priority,
+}
+
+/// Filling a field and emptying it are the same rule read twice, so each of
+/// them undoes the other: a value clears the "emptied" mark, and emptying
+/// drops the value.
 fn apply(entry: &mut PhraseEntry, effect: Effect) {
     match effect {
         Effect::Date { date, planning } => {
             entry.date = Some(date);
             entry.planning = Some(planning);
+            entry.cleared.date = false;
         }
-        Effect::Time(time) => entry.time = Some(time),
-        Effect::Repeat(repeater) => entry.repeater = Some(repeater),
-        Effect::Prio(priority) => entry.priority = Some(priority),
+        Effect::Time(time) => {
+            entry.time = Some(time);
+            entry.cleared.time = false;
+        }
+        Effect::Repeat(repeater) => {
+            entry.repeater = Some(repeater);
+            entry.cleared.repeater = false;
+        }
+        Effect::Prio(priority) => {
+            entry.priority = Some(priority);
+            entry.cleared.priority = false;
+        }
+        Effect::Keyword(keyword) => entry.keyword = Some(keyword),
+        Effect::Clear(Field::Date) => {
+            entry.date = None;
+            entry.planning = None;
+            entry.cleared.date = true;
+        }
+        Effect::Clear(Field::Time) => {
+            entry.time = None;
+            entry.cleared.time = true;
+        }
+        Effect::Clear(Field::Repeater) => {
+            entry.repeater = None;
+            entry.cleared.repeater = true;
+        }
+        Effect::Clear(Field::Priority) => {
+            entry.priority = None;
+            entry.cleared.priority = true;
+        }
     }
 }
 
@@ -239,6 +391,15 @@ fn match_rule(
 ) -> Option<(usize, Effect)> {
     if i >= tokens.len() {
         return None;
+    }
+    // Emptying and the keyword go first: both are headed by a word the other
+    // rules would take apart ("снять срок" starts with a deadline preposition,
+    // "в работу" with a scheduling one).
+    if let Some((consumed, field)) = match_clear(tokens, i, langs) {
+        return Some((consumed, Effect::Clear(field)));
+    }
+    if let Some((consumed, keyword)) = match_keyword(tokens, i, langs) {
+        return Some((consumed, Effect::Keyword(keyword)));
     }
     if let Some((consumed, date, planning)) = match_planned_date(tokens, i, langs, today) {
         return Some((consumed, Effect::Date { date, planning }));
@@ -259,10 +420,124 @@ fn is_negation(key: &str, langs: Languages) -> bool {
     (langs.ru && key == "не") || (langs.en && key == "not")
 }
 
+fn is_conjunction(key: &str, langs: Languages) -> bool {
+    (langs.ru && matches!(key, "и" | "а")) || (langs.en && key == "and")
+}
+
+// --- emptying a field ------------------------------------------------------
+
+/// "убрать дату", "без приоритета", "remove the time", "no repeat".
+///
+/// Two shapes, and both name the field outright: a verb of removal, or a
+/// preposition of absence. Neither is a negation — "не завтра" still says
+/// nothing about the date (ADR-0035).
+fn match_clear(tokens: &[Token<'_>], i: usize, langs: Languages) -> Option<(usize, Field)> {
+    let head = tokens.get(i)?.key.as_str();
+    let removes = (langs.ru
+        && matches!(
+            head,
+            "убрать"
+                | "убери"
+                | "снять"
+                | "сними"
+                | "удалить"
+                | "удали"
+                | "очистить"
+                | "очисти"
+        ))
+        || (langs.en && matches!(head, "remove" | "clear" | "drop" | "delete" | "unset"));
+    let says_without =
+        (langs.ru && head == "без") || (langs.en && matches!(head, "no" | "without"));
+    if !removes && !says_without {
+        return None;
+    }
+
+    let mut j = i + 1;
+    if langs.en && removes && word_at(tokens, j) == "the" {
+        j += 1;
+    }
+    let field = field_noun(&tokens.get(j)?.key, langs)?;
+    Some((j + 1 - i, field))
+}
+
+/// The names of the fields as they are said when one is emptied.
+fn field_noun(key: &str, langs: Languages) -> Option<Field> {
+    if langs.ru {
+        match key {
+            "дату" | "дата" | "даты" | "срок" | "срока" | "сроки" | "дедлайн" | "дедлайна" => {
+                return Some(Field::Date)
+            }
+            "время" | "времени" | "час" | "часа" => return Some(Field::Time),
+            "повтор" | "повтора" | "повторы" | "повторение" | "повторения" => {
+                return Some(Field::Repeater)
+            }
+            "приоритет" | "приоритета" => return Some(Field::Priority),
+            _ => {}
+        }
+    }
+    if langs.en {
+        match key {
+            "date" | "deadline" | "due" | "schedule" | "scheduled" => return Some(Field::Date),
+            "time" | "hour" => return Some(Field::Time),
+            "repeat" | "repeater" | "repetition" | "recurrence" => return Some(Field::Repeater),
+            "priority" => return Some(Field::Priority),
+            _ => {}
+        }
+    }
+    None
+}
+
+// --- keyword ---------------------------------------------------------------
+
+/// "отметь выполненной", "в работу", "mark as done".
+///
+/// The forms are the ones said about an entry that exists, in the genders and
+/// cases they are said in; the imperative in front of them is a lead-in verb
+/// and is eaten before the rules run.
+fn match_keyword(
+    tokens: &[Token<'_>],
+    i: usize,
+    langs: Languages,
+) -> Option<(usize, PhraseKeyword)> {
+    let key = tokens.get(i)?.key.as_str();
+
+    if langs.ru {
+        // "в работу" / "в работе" — the entry goes back to being open.
+        if key == "в" && matches!(word_at(tokens, i + 1), "работу" | "работе") {
+            return Some((2, PhraseKeyword::Todo));
+        }
+        match key {
+            "выполнено"
+            | "выполнена"
+            | "выполнен"
+            | "выполненной"
+            | "выполненную"
+            | "сделано"
+            | "сделана"
+            | "готово"
+            | "завершено"
+            | "завершена" => return Some((1, PhraseKeyword::Done)),
+            "отменено" | "отменена" | "отменен" | "отмененной" | "отмененную" => {
+                return Some((1, PhraseKeyword::Cancelled))
+            }
+            _ => {}
+        }
+    }
+    if langs.en {
+        match key {
+            "done" | "completed" => return Some((1, PhraseKeyword::Done)),
+            "todo" => return Some((1, PhraseKeyword::Todo)),
+            "cancelled" | "canceled" => return Some((1, PhraseKeyword::Cancelled)),
+            _ => {}
+        }
+    }
+    None
+}
+
 // --- lead-in verbs ---------------------------------------------------------
 
 /// The closed list of ways a person addresses the application before saying
-/// what the entry is. Longest first: the first sequence that matches wins.
+/// what a new entry is. Longest first: the first sequence that matches wins.
 const RU_LEAD_INS: &[&[&str]] = &[
     &["напомни", "мне"],
     &["напомни"],
@@ -287,15 +562,69 @@ const EN_LEAD_INS: &[&[&str]] = &[
     &["write", "down"],
 ];
 
-/// How many tokens the lead-in takes. Only ever matched at the start of a
-/// phrase: the same verb further along is part of what was said.
+/// The same list for changing an entry that exists. Kept apart from the verbs
+/// of creating because a conjunction may start one of these again in the
+/// middle of a phrase ("перенеси на пятницу и сделай срочной") while a verb of
+/// creating stays where it stands ("позвонить и напомни про отчёт").
+const RU_EDIT_INS: &[&[&str]] = &[
+    &["перенеси"],
+    &["перенести"],
+    &["сделай"],
+    &["сделать"],
+    &["отметь"],
+    &["отметить"],
+    &["смени"],
+    &["поменяй"],
+    &["измени"],
+    &["установи"],
+];
+
+/// `to` belongs to the verb here rather than to the date: on its own it says
+/// nothing about which planning line a date goes on, and taking it for a
+/// preposition would read "call to discuss" as a date.
+const EN_EDIT_INS: &[&[&str]] = &[
+    &["move", "it", "to"],
+    &["move", "it"],
+    &["move", "to"],
+    &["move"],
+    &["reschedule", "to"],
+    &["reschedule"],
+    &["mark", "it", "as"],
+    &["mark", "as"],
+    &["mark"],
+    &["make", "it"],
+    &["make"],
+    &["change", "it", "to"],
+    &["change", "the"],
+    &["change"],
+    &["set", "the"],
+    &["set"],
+];
+
+/// How many tokens the lead-in takes at the start of a phrase, where either
+/// kind of verb may stand. Only ever matched at the start: the same verb
+/// further along is part of what was said.
 fn lead_in_len(tokens: &[Token<'_>], langs: Languages) -> usize {
+    let creating = first_match(tokens, langs, RU_LEAD_INS, EN_LEAD_INS);
+    if creating > 0 {
+        return creating;
+    }
+    edit_in_len(tokens, langs)
+}
+
+/// How many tokens a verb of editing takes. This is what may follow a
+/// conjunction as well as start a phrase.
+fn edit_in_len(tokens: &[Token<'_>], langs: Languages) -> usize {
+    first_match(tokens, langs, RU_EDIT_INS, EN_EDIT_INS)
+}
+
+fn first_match(tokens: &[Token<'_>], langs: Languages, ru: &[&[&str]], en: &[&[&str]]) -> usize {
     let mut lists: Vec<&&[&str]> = Vec::new();
     if langs.ru {
-        lists.extend(RU_LEAD_INS.iter());
+        lists.extend(ru.iter());
     }
     if langs.en {
-        lists.extend(EN_LEAD_INS.iter());
+        lists.extend(en.iter());
     }
     for words in lists {
         if words.len() <= tokens.len()
@@ -671,16 +1000,14 @@ fn match_priority(tokens: &[Token<'_>], i: usize, langs: Languages) -> Option<(u
     let key = tokens.get(i)?.key.as_str();
 
     if langs.ru {
-        if key == "очень" && matches!(word_at(tokens, i + 1), "важно" | "важное") {
+        if key == "очень" && ru_priority_word(word_at(tokens, i + 1)) == Some(Priority::B) {
             return Some((2, Priority::A));
         }
-        match key {
-            "срочно" | "срочное" | "критично" => {
-                return Some((1, Priority::A))
-            }
-            "важно" | "важное" => return Some((1, Priority::B)),
-            "приоритет" => return named_priority(tokens, i),
-            _ => {}
+        if let Some(priority) = ru_priority_word(key) {
+            return Some((1, priority));
+        }
+        if key == "приоритет" {
+            return named_priority(tokens, i);
         }
     }
     if langs.en {
@@ -692,6 +1019,19 @@ fn match_priority(tokens: &[Token<'_>], i: usize, langs: Languages) -> Option<(u
         }
     }
     None
+}
+
+/// How urgency is said in Russian, in the genders and cases it is said in:
+/// "срочно" of a new entry, "сделай срочной" of one that exists.
+fn ru_priority_word(key: &str) -> Option<Priority> {
+    Some(match key {
+        "срочно" | "срочное" | "срочная" | "срочную" | "срочной" | "критично" | "критичное"
+        | "критичная" | "критичную" | "критичной" => Priority::A,
+        "важно" | "важное" | "важная" | "важную" | "важной" => {
+            Priority::B
+        }
+        _ => return None,
+    })
 }
 
 /// `приоритет B` / `priority 3` — the cookie said outright.
@@ -907,13 +1247,15 @@ fn append_heading(heading: &mut String, leftover: &[&str]) {
 
 /// The JSON shape of a parsed entry, which is what `parse-phrase` prints and
 /// what the VS Code extension reads. Every field is nullable except the
-/// heading; dates are `YYYY-MM-DD`, times are `HH:MM`, and the repeater is
-/// the org-mode spelling (`+1w`). Per ADR-0015 a consumer ignores keys it
-/// does not know.
+/// heading and `cleared`, which is an array of field names and is empty when
+/// the phrase emptied nothing; dates are `YYYY-MM-DD`, times are `HH:MM`, and
+/// the repeater is the org-mode spelling (`+1w`). Per ADR-0015 a consumer
+/// ignores keys it does not know.
 impl Serialize for PhraseEntry {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-        let mut state = ser.serialize_struct("PhraseEntry", 6)?;
+        let mut state = ser.serialize_struct("PhraseEntry", 8)?;
         state.serialize_field("heading", &self.heading)?;
+        state.serialize_field("keyword", &self.keyword.map(PhraseKeyword::as_str))?;
         state.serialize_field("priority", &self.priority)?;
         state.serialize_field("planning", &self.planning.map(PlanningKind::as_str))?;
         state.serialize_field("date", &self.date.map(|date| date.to_string()))?;
@@ -922,6 +1264,7 @@ impl Serialize for PhraseEntry {
             &self.time.map(|time| time.format("%H:%M").to_string()),
         )?;
         state.serialize_field("repeater", &self.repeater.as_ref().map(Repeater::canonical))?;
+        state.serialize_field("cleared", &self.cleared.names())?;
         state.end()
     }
 }
@@ -1010,6 +1353,33 @@ mod tests {
         // A phrase the rules consumed entirely leaves the heading alone.
         append_heading(&mut heading, &[]);
         assert_eq!(heading, "позвонить врачу из поликлиники");
+    }
+
+    #[test]
+    fn the_emptied_fields_are_named_in_a_fixed_order() {
+        let mut cleared = ClearedFields::default();
+        assert!(cleared.is_empty());
+        assert_eq!(cleared.names(), Vec::<&str>::new());
+
+        cleared.priority = true;
+        cleared.date = true;
+        // The order is the one the JSON prints, not the order the fields were
+        // emptied in: a caller comparing two answers compares two arrays.
+        assert_eq!(cleared.names(), vec!["date", "priority"]);
+        assert!(!cleared.is_empty());
+    }
+
+    #[test]
+    fn a_removal_is_read_only_when_it_names_a_field() {
+        let field = |phrase| match_clear(&tokenize(phrase), 0, BOTH).map(|(_, field)| field);
+
+        assert_eq!(field("убрать дату"), Some(Field::Date));
+        assert_eq!(field("remove the repeater"), Some(Field::Repeater));
+        // A verb of removal with no field after it is a word like any other,
+        // and so is a phrase about something that is not a field.
+        assert_eq!(field("убрать"), None);
+        assert_eq!(field("без сахара"), None);
+        assert_eq!(field("remove the milk"), None);
     }
 
     #[test]

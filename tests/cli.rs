@@ -3891,6 +3891,27 @@ fn parse_phrase_prints_the_fields_a_phrase_names() {
 }
 
 #[test]
+fn parse_phrase_prints_the_keyword_and_the_emptied_fields() {
+    // What an edit of an entry that exists adds to the answer: a keyword, and
+    // the fields the phrase said to empty. Both are absent from the answer to
+    // a phrase that creates an entry — the array is empty rather than missing.
+    let value = parse_phrase(&[
+        "--current-date",
+        "2026-08-31",
+        "отметь выполненной и убрать повтор",
+    ]);
+
+    assert_eq!(value["keyword"], "DONE");
+    assert_eq!(value["cleared"], serde_json::json!(["repeater"]));
+    assert_eq!(value["heading"], "");
+
+    let created = parse_phrase(&["--current-date", "2026-08-31", "позвонить врачу завтра"]);
+
+    assert_eq!(created["keyword"], serde_json::Value::Null);
+    assert_eq!(created["cleared"], serde_json::json!([]));
+}
+
+#[test]
 fn parse_phrase_refines_across_several_phrases() {
     // Each phrase refines what the previous ones left: the heading and the
     // time survive, the date moves.

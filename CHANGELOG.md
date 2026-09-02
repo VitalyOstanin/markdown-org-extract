@@ -39,7 +39,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No user-visible changes yet._
+### Added
+
+- A phrase can name a keyword and can empty a field, which is what
+  editing an entry that already exists needs: "отметь выполненной",
+  "в работу", "убрать дату", "без приоритета", "mark as done",
+  "no repeat". The emptied fields are listed separately from their
+  values, so "убрать дату" is told apart from a phrase that says
+  nothing about the date. See
+  [ADR-0037](docs/adr/0037-a-phrase-also-edits-an-entry-that-exists.md).
+- The verbs of editing are lead-ins like the verbs of creating —
+  `перенеси`, `сделай`, `отметь`, `смени`, `move`, `mark`, `make`,
+  `change`, `set` — and a conjunction may start one of them again in
+  the middle of a phrase, so "перенеси на пятницу в 16:00 и сделай
+  срочной" is one phrase and three fields. A verb of creating is not
+  restarted that way: "позвонить и напомни про отчёт" stays one entry.
+- Urgency in the genders and cases it is said in about an entry that
+  exists: "сделай срочной", "важной", "критичной".
+- `parse-phrase` prints two more keys: `keyword` (`TODO` / `DONE` /
+  `CANCELLED`, or `null`) and `cleared`, an array of the emptied field
+  names which is empty when the phrase emptied nothing. Both are
+  additive — a consumer that does not know them ignores them
+  (ADR-0015).
+- Library surface for the same: `PhraseEntry::keyword`,
+  `PhraseEntry::cleared`, and the `PhraseKeyword` / `ClearedFields`
+  types. Additive fields on a `#[non_exhaustive]` struct; the types of
+  the fields that exist are unchanged.
 
 ## [0.20.0] — 2026-08-31
 

@@ -98,13 +98,15 @@ Invariants worth stating:
 | 7 | `parse_repeater(format(...))` | round-trip |
 | 8 | `add_months` | associativity |
 | 9 | `parse_excluded_dates` / `parse_recurrence_id` (`src/exceptions.rs`) | **done**: every date returned reads back as one, no field is dropped in silence, one entry per date, a parsed `RECURRENCE_ID` always names a day, and a date with a time survives the round trip cut to the minute |
+| 10 | `refine_entry` / `parse_phrases` (`src/phrase.rs`) | **done**: no word said is lost -- the heading is what was said, in order; the later phrase wins over the earlier one for every field it names; every value the JSON prints reads back (`%Y-%m-%d`, `%H:%M`, `parse_repeater`) |
 
 ### Fuzzing (`cargo-fuzz`)
 
 The target is real: the tool reads markdown it did not write, from files whose
 names are arbitrary non-NUL bytes on Linux (`src/scan.rs`, `src/types.rs`
-already say so). Worth pointing at `extract_tasks` and the timestamp parsing,
-not at the CLI as a whole.
+already say so). Worth pointing at `extract_tasks`, the timestamp parsing and
+`refine_entry` -- the last reads a sentence a person dictated, which arrives
+from the CLI and from the Android client alike -- not at the CLI as a whole.
 
 What it costs, and what it will not find: a nightly toolchain, a `fuzz/`
 directory with a manifest of its own (outside the workspace), a corpus to keep

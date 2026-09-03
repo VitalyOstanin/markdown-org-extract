@@ -416,15 +416,40 @@ fn match_rule(
     None
 }
 
+const RU_NEGATIONS: &[&str] = &["не"];
+
+const EN_NEGATIONS: &[&str] = &["not"];
+
+const RU_CONJUNCTIONS: &[&str] = &["и", "а"];
+
+const EN_CONJUNCTIONS: &[&str] = &["and"];
+
 fn is_negation(key: &str, langs: Languages) -> bool {
-    (langs.ru && key == "не") || (langs.en && key == "not")
+    listed(langs, RU_NEGATIONS, EN_NEGATIONS, key)
 }
 
 fn is_conjunction(key: &str, langs: Languages) -> bool {
-    (langs.ru && matches!(key, "и" | "а")) || (langs.en && key == "and")
+    listed(langs, RU_CONJUNCTIONS, EN_CONJUNCTIONS, key)
 }
 
 // --- emptying a field ------------------------------------------------------
+
+const RU_REMOVES: &[&str] = &[
+    "убрать",
+    "убери",
+    "снять",
+    "сними",
+    "удалить",
+    "удали",
+    "очистить",
+    "очисти",
+];
+
+const EN_REMOVES: &[&str] = &["remove", "clear", "drop", "delete", "unset"];
+
+const RU_WITHOUTS: &[&str] = &["без"];
+
+const EN_WITHOUTS: &[&str] = &["no", "without"];
 
 /// "убрать дату", "без приоритета", "remove the time", "no repeat".
 ///
@@ -433,21 +458,8 @@ fn is_conjunction(key: &str, langs: Languages) -> bool {
 /// nothing about the date (ADR-0035).
 fn match_clear(tokens: &[Token<'_>], i: usize, langs: Languages) -> Option<(usize, Field)> {
     let head = tokens.get(i)?.key.as_str();
-    let removes = (langs.ru
-        && matches!(
-            head,
-            "убрать"
-                | "убери"
-                | "снять"
-                | "сними"
-                | "удалить"
-                | "удали"
-                | "очистить"
-                | "очисти"
-        ))
-        || (langs.en && matches!(head, "remove" | "clear" | "drop" | "delete" | "unset"));
-    let says_without =
-        (langs.ru && head == "без") || (langs.en && matches!(head, "no" | "without"));
+    let removes = listed(langs, RU_REMOVES, EN_REMOVES, head);
+    let says_without = listed(langs, RU_WITHOUTS, EN_WITHOUTS, head);
     if !removes && !says_without {
         return None;
     }
@@ -460,31 +472,46 @@ fn match_clear(tokens: &[Token<'_>], i: usize, langs: Languages) -> Option<(usiz
     Some((j + 1 - i, field))
 }
 
+const RU_FIELD_NOUNS: &[(&str, Field)] = &[
+    ("дату", Field::Date),
+    ("дата", Field::Date),
+    ("даты", Field::Date),
+    ("срок", Field::Date),
+    ("срока", Field::Date),
+    ("сроки", Field::Date),
+    ("дедлайн", Field::Date),
+    ("дедлайна", Field::Date),
+    ("время", Field::Time),
+    ("времени", Field::Time),
+    ("час", Field::Time),
+    ("часа", Field::Time),
+    ("повтор", Field::Repeater),
+    ("повтора", Field::Repeater),
+    ("повторы", Field::Repeater),
+    ("повторение", Field::Repeater),
+    ("повторения", Field::Repeater),
+    ("приоритет", Field::Priority),
+    ("приоритета", Field::Priority),
+];
+
+const EN_FIELD_NOUNS: &[(&str, Field)] = &[
+    ("date", Field::Date),
+    ("deadline", Field::Date),
+    ("due", Field::Date),
+    ("schedule", Field::Date),
+    ("scheduled", Field::Date),
+    ("time", Field::Time),
+    ("hour", Field::Time),
+    ("repeat", Field::Repeater),
+    ("repeater", Field::Repeater),
+    ("repetition", Field::Repeater),
+    ("recurrence", Field::Repeater),
+    ("priority", Field::Priority),
+];
+
 /// The names of the fields as they are said when one is emptied.
 fn field_noun(key: &str, langs: Languages) -> Option<Field> {
-    if langs.ru {
-        match key {
-            "дату" | "дата" | "даты" | "срок" | "срока" | "сроки" | "дедлайн" | "дедлайна" => {
-                return Some(Field::Date)
-            }
-            "время" | "времени" | "час" | "часа" => return Some(Field::Time),
-            "повтор" | "повтора" | "повторы" | "повторение" | "повторения" => {
-                return Some(Field::Repeater)
-            }
-            "приоритет" | "приоритета" => return Some(Field::Priority),
-            _ => {}
-        }
-    }
-    if langs.en {
-        match key {
-            "date" | "deadline" | "due" | "schedule" | "scheduled" => return Some(Field::Date),
-            "time" | "hour" => return Some(Field::Time),
-            "repeat" | "repeater" | "repetition" | "recurrence" => return Some(Field::Repeater),
-            "priority" => return Some(Field::Priority),
-            _ => {}
-        }
-    }
-    None
+    in_tables(langs, RU_FIELD_NOUNS, EN_FIELD_NOUNS, key)
 }
 
 // --- keyword ---------------------------------------------------------------
@@ -494,6 +521,36 @@ fn field_noun(key: &str, langs: Languages) -> Option<Field> {
 /// The forms are the ones said about an entry that exists, in the genders and
 /// cases they are said in; the imperative in front of them is a lead-in verb
 /// and is eaten before the rules run.
+const RU_KEYWORDS: &[(&str, PhraseKeyword)] = &[
+    ("выполнено", PhraseKeyword::Done),
+    ("выполнена", PhraseKeyword::Done),
+    ("выполнен", PhraseKeyword::Done),
+    ("выполненной", PhraseKeyword::Done),
+    ("выполненную", PhraseKeyword::Done),
+    ("сделано", PhraseKeyword::Done),
+    ("сделана", PhraseKeyword::Done),
+    ("готово", PhraseKeyword::Done),
+    ("завершено", PhraseKeyword::Done),
+    ("завершена", PhraseKeyword::Done),
+    ("отменено", PhraseKeyword::Cancelled),
+    ("отменена", PhraseKeyword::Cancelled),
+    ("отменен", PhraseKeyword::Cancelled),
+    ("отмененной", PhraseKeyword::Cancelled),
+    ("отмененную", PhraseKeyword::Cancelled),
+];
+
+const EN_KEYWORDS: &[(&str, PhraseKeyword)] = &[
+    ("done", PhraseKeyword::Done),
+    ("completed", PhraseKeyword::Done),
+    ("todo", PhraseKeyword::Todo),
+    ("cancelled", PhraseKeyword::Cancelled),
+    ("canceled", PhraseKeyword::Cancelled),
+];
+
+/// The nouns that follow "в" to say the entry is open again: "в работу",
+/// "в работе".
+const RU_BACK_TO_WORK: &[&str] = &["работу", "работе"];
+
 fn match_keyword(
     tokens: &[Token<'_>],
     i: usize,
@@ -501,37 +558,11 @@ fn match_keyword(
 ) -> Option<(usize, PhraseKeyword)> {
     let key = tokens.get(i)?.key.as_str();
 
-    if langs.ru {
-        // "в работу" / "в работе" — the entry goes back to being open.
-        if key == "в" && matches!(word_at(tokens, i + 1), "работу" | "работе") {
-            return Some((2, PhraseKeyword::Todo));
-        }
-        match key {
-            "выполнено"
-            | "выполнена"
-            | "выполнен"
-            | "выполненной"
-            | "выполненную"
-            | "сделано"
-            | "сделана"
-            | "готово"
-            | "завершено"
-            | "завершена" => return Some((1, PhraseKeyword::Done)),
-            "отменено" | "отменена" | "отменен" | "отмененной" | "отмененную" => {
-                return Some((1, PhraseKeyword::Cancelled))
-            }
-            _ => {}
-        }
+    // "в работу" / "в работе" — the entry goes back to being open.
+    if langs.ru && key == "в" && RU_BACK_TO_WORK.contains(&word_at(tokens, i + 1)) {
+        return Some((2, PhraseKeyword::Todo));
     }
-    if langs.en {
-        match key {
-            "done" | "completed" => return Some((1, PhraseKeyword::Done)),
-            "todo" => return Some((1, PhraseKeyword::Todo)),
-            "cancelled" | "canceled" => return Some((1, PhraseKeyword::Cancelled)),
-            _ => {}
-        }
-    }
-    None
+    in_tables(langs, RU_KEYWORDS, EN_KEYWORDS, key).map(|keyword| (1, keyword))
 }
 
 // --- lead-in verbs ---------------------------------------------------------
@@ -657,26 +688,36 @@ fn match_planned_date(
     Some((consumed, date, PlanningKind::Scheduled))
 }
 
+const RU_DATE_PREFIXES: &[(&str, PlanningKind)] = &[
+    ("в", PlanningKind::Scheduled),
+    ("во", PlanningKind::Scheduled),
+    ("на", PlanningKind::Scheduled),
+    ("к", PlanningKind::Deadline),
+    ("ко", PlanningKind::Deadline),
+    ("до", PlanningKind::Deadline),
+    ("срок", PlanningKind::Deadline),
+    ("дедлайн", PlanningKind::Deadline),
+];
+
+const EN_DATE_PREFIXES: &[(&str, PlanningKind)] = &[
+    ("on", PlanningKind::Scheduled),
+    ("at", PlanningKind::Scheduled),
+    ("by", PlanningKind::Deadline),
+    ("due", PlanningKind::Deadline),
+    ("before", PlanningKind::Deadline),
+    ("until", PlanningKind::Deadline),
+    ("deadline", PlanningKind::Deadline),
+];
+
 /// A preposition in front of a date, and what it says about the date.
 fn date_prefix(key: &str, langs: Languages) -> Option<PlanningKind> {
-    if langs.ru {
-        match key {
-            "в" | "во" | "на" => return Some(PlanningKind::Scheduled),
-            "к" | "ко" | "до" | "срок" | "дедлайн" => {
-                return Some(PlanningKind::Deadline)
-            }
-            _ => {}
-        }
-    }
-    if langs.en {
-        match key {
-            "on" | "at" => return Some(PlanningKind::Scheduled),
-            "by" | "due" | "before" | "until" | "deadline" => return Some(PlanningKind::Deadline),
-            _ => {}
-        }
-    }
-    None
+    in_tables(langs, RU_DATE_PREFIXES, EN_DATE_PREFIXES, key)
 }
+
+/// The days said by name, as how far they stand from the reference day.
+const RU_NAMED_DAYS: &[(&str, u64)] = &[("сегодня", 0), ("завтра", 1), ("послезавтра", 2)];
+
+const EN_NAMED_DAYS: &[(&str, u64)] = &[("today", 0), ("tomorrow", 1)];
 
 fn match_date(
     tokens: &[Token<'_>],
@@ -686,23 +727,15 @@ fn match_date(
 ) -> Option<(usize, NaiveDate)> {
     let key = tokens.get(i)?.key.as_str();
 
-    if langs.ru {
-        match key {
-            "сегодня" => return Some((1, today)),
-            "завтра" => return Some((1, today.checked_add_days(Days::new(1))?)),
-            "послезавтра" => return Some((1, today.checked_add_days(Days::new(2))?)),
-            _ => {}
-        }
+    if let Some(days) = in_tables(langs, RU_NAMED_DAYS, EN_NAMED_DAYS, key) {
+        return Some((1, today.checked_add_days(Days::new(days))?));
     }
-    if langs.en {
-        match key {
-            "today" => return Some((1, today)),
-            "tomorrow" => return Some((1, today.checked_add_days(Days::new(1))?)),
-            "day" if word_at(tokens, i + 1) == "after" && word_at(tokens, i + 2) == "tomorrow" => {
-                return Some((3, today.checked_add_days(Days::new(2))?))
-            }
-            _ => {}
-        }
+    if langs.en
+        && key == "day"
+        && word_at(tokens, i + 1) == "after"
+        && word_at(tokens, i + 2) == "tomorrow"
+    {
+        return Some((3, today.checked_add_days(Days::new(2))?));
     }
     if let Ok(date) = NaiveDate::parse_from_str(key, "%Y-%m-%d") {
         return Some((1, date));
@@ -813,13 +846,31 @@ fn resolve_date(year: Option<i32>, month: u32, day: u32, today: NaiveDate) -> Op
 
 // --- time ------------------------------------------------------------------
 
+/// A preposition in front of a clock reading: "в 15:00", "at 15:00".
+const RU_TIME_PREFIXES: &[&str] = &["в", "во"];
+
+const EN_TIME_PREFIXES: &[&str] = &["at"];
+
+/// The word for "hours" that turns a bare number into a time.
+const RU_HOUR_UNITS: &[&str] = &["час", "часа", "часов"];
+
+const EN_HOUR_UNITS: &[&str] = &["oclock", "o'clock"];
+
+/// The half of the day a reading belongs to: `true` is the afternoon.
+const RU_HALF_DAYS: &[(&str, bool)] = &[
+    ("дня", true),
+    ("вечера", true),
+    ("утра", false),
+    ("ночи", false),
+];
+
+const EN_HALF_DAYS: &[(&str, bool)] = &[("pm", true), ("am", false)];
+
 fn match_time(tokens: &[Token<'_>], i: usize, langs: Languages) -> Option<(usize, NaiveTime)> {
     let mut j = i;
     let mut prefixed = false;
     if let Some(token) = tokens.get(j) {
-        let is_prefix = (langs.ru && matches!(token.key.as_str(), "в" | "во"))
-            || (langs.en && token.key == "at");
-        if is_prefix {
+        if listed(langs, RU_TIME_PREFIXES, EN_TIME_PREFIXES, &token.key) {
             j += 1;
             prefixed = true;
         }
@@ -842,23 +893,14 @@ fn match_time(tokens: &[Token<'_>], i: usize, langs: Languages) -> Option<(usize
     let mut k = j + 1;
     let mut named_unit = false;
     if let Some(next) = tokens.get(k) {
-        let is_unit = (langs.ru && matches!(next.key.as_str(), "час" | "часа" | "часов"))
-            || (langs.en && matches!(next.key.as_str(), "oclock" | "o'clock"));
-        if is_unit {
+        if listed(langs, RU_HOUR_UNITS, EN_HOUR_UNITS, &next.key) {
             named_unit = true;
             k += 1;
         }
     }
     let mut qualified = false;
     if let Some(next) = tokens.get(k) {
-        let qualifier = match next.key.as_str() {
-            "дня" | "вечера" if langs.ru => Some(true),
-            "утра" | "ночи" if langs.ru => Some(false),
-            "pm" if langs.en => Some(true),
-            "am" if langs.en => Some(false),
-            _ => None,
-        };
-        if let Some(afternoon) = qualifier {
+        if let Some(afternoon) = in_tables(langs, RU_HALF_DAYS, EN_HALF_DAYS, &next.key) {
             hour = shift_half_day(hour, afternoon);
             qualified = true;
             k += 1;
@@ -910,6 +952,19 @@ fn shift_half_day(hour: u32, afternoon: bool) -> u32 {
 
 // --- repeaters -------------------------------------------------------------
 
+/// The words that head a repeat: "каждый вторник", "every week".
+const RU_REPEAT_HEADS: &[&str] = &["каждый", "каждая", "каждую", "каждое", "каждые", "каждых"];
+
+const EN_REPEAT_HEADS: &[&str] = &["every"];
+
+/// "каждый рабочий день" / "every working day".
+const RU_WORKING_WORDS: &[&str] = &["рабочий", "рабочих", "рабочие"];
+
+const EN_WORKING_WORDS: &[&str] = &["working", "work"];
+
+/// The same said as one noun, which English has and Russian does not.
+const EN_WORKDAY_NOUNS: &[&str] = &["workday", "workdays"];
+
 fn match_repeater(tokens: &[Token<'_>], i: usize, langs: Languages) -> Option<(usize, Repeater)> {
     let key = tokens.get(i)?.key.as_str();
 
@@ -917,13 +972,7 @@ fn match_repeater(tokens: &[Token<'_>], i: usize, langs: Languages) -> Option<(u
         return Some((1, every(1, unit)));
     }
 
-    let heads_a_repeat = (langs.ru
-        && matches!(
-            key,
-            "каждый" | "каждая" | "каждую" | "каждое" | "каждые" | "каждых"
-        ))
-        || (langs.en && key == "every");
-    if !heads_a_repeat {
+    if !listed(langs, RU_REPEAT_HEADS, EN_REPEAT_HEADS, key) {
         return None;
     }
 
@@ -949,17 +998,14 @@ fn match_repeater(tokens: &[Token<'_>], i: usize, langs: Languages) -> Option<(u
     // "каждый рабочий день" / "every working day" — the working-day repeater
     // the timestamp grammar spells `+1wd`.
     if let Some(token) = tokens.get(j) {
-        let says_working = (langs.ru
-            && matches!(token.key.as_str(), "рабочий" | "рабочих" | "рабочие"))
-            || (langs.en && matches!(token.key.as_str(), "working" | "work"));
-        if says_working {
+        if listed(langs, RU_WORKING_WORDS, EN_WORKING_WORDS, &token.key) {
             let unit = span_of(&tokens.get(j + 1)?.key, langs)?;
             if unit != Span::Day {
                 return None;
             }
             return Some((j + 2 - i, every(count, RepeaterUnit::Workday)));
         }
-        if langs.en && matches!(token.key.as_str(), "workday" | "workdays") {
+        if langs.en && EN_WORKDAY_NOUNS.contains(&token.key.as_str()) {
             return Some((j + 1 - i, every(count, RepeaterUnit::Workday)));
         }
     }
@@ -968,26 +1014,28 @@ fn match_repeater(tokens: &[Token<'_>], i: usize, langs: Languages) -> Option<(u
     Some((j + 1 - i, every(count, span.unit())))
 }
 
+const RU_SINGLE_WORD_REPEATERS: &[(&str, RepeaterUnit)] = &[
+    ("ежедневно", RepeaterUnit::Day),
+    ("еженедельно", RepeaterUnit::Week),
+    ("ежемесячно", RepeaterUnit::Month),
+    ("ежегодно", RepeaterUnit::Year),
+];
+
+const EN_SINGLE_WORD_REPEATERS: &[(&str, RepeaterUnit)] = &[
+    ("daily", RepeaterUnit::Day),
+    ("weekly", RepeaterUnit::Week),
+    ("monthly", RepeaterUnit::Month),
+    ("yearly", RepeaterUnit::Year),
+    ("annually", RepeaterUnit::Year),
+];
+
 fn single_word_repeater(key: &str, langs: Languages) -> Option<RepeaterUnit> {
-    if langs.ru {
-        match key {
-            "ежедневно" => return Some(RepeaterUnit::Day),
-            "еженедельно" => return Some(RepeaterUnit::Week),
-            "ежемесячно" => return Some(RepeaterUnit::Month),
-            "ежегодно" => return Some(RepeaterUnit::Year),
-            _ => {}
-        }
-    }
-    if langs.en {
-        match key {
-            "daily" => return Some(RepeaterUnit::Day),
-            "weekly" => return Some(RepeaterUnit::Week),
-            "monthly" => return Some(RepeaterUnit::Month),
-            "yearly" | "annually" => return Some(RepeaterUnit::Year),
-            _ => {}
-        }
-    }
-    None
+    in_tables(
+        langs,
+        RU_SINGLE_WORD_REPEATERS,
+        EN_SINGLE_WORD_REPEATERS,
+        key,
+    )
 }
 
 /// A phrase names a plain `+N` repeater: what a person says is "every N of
@@ -1003,10 +1051,36 @@ fn every(value: u32, unit: RepeaterUnit) -> Repeater {
 
 // --- priority --------------------------------------------------------------
 
+const RU_PRIORITY_WORDS: &[(&str, Priority)] = &[
+    ("срочно", Priority::A),
+    ("срочное", Priority::A),
+    ("срочная", Priority::A),
+    ("срочную", Priority::A),
+    ("срочной", Priority::A),
+    ("критично", Priority::A),
+    ("критичное", Priority::A),
+    ("критичная", Priority::A),
+    ("критичную", Priority::A),
+    ("критичной", Priority::A),
+    ("важно", Priority::B),
+    ("важное", Priority::B),
+    ("важная", Priority::B),
+    ("важную", Priority::B),
+    ("важной", Priority::B),
+];
+
+const EN_PRIORITY_WORDS: &[(&str, Priority)] = &[
+    ("urgent", Priority::A),
+    ("asap", Priority::A),
+    ("critical", Priority::A),
+    ("important", Priority::B),
+];
+
 fn match_priority(tokens: &[Token<'_>], i: usize, langs: Languages) -> Option<(usize, Priority)> {
     let key = tokens.get(i)?.key.as_str();
 
     if langs.ru {
+        // "очень важно" is what "срочно" says in two words.
         if key == "очень" && ru_priority_word(word_at(tokens, i + 1)) == Some(Priority::B) {
             return Some((2, Priority::A));
         }
@@ -1018,11 +1092,11 @@ fn match_priority(tokens: &[Token<'_>], i: usize, langs: Languages) -> Option<(u
         }
     }
     if langs.en {
-        match key {
-            "urgent" | "asap" | "critical" => return Some((1, Priority::A)),
-            "important" => return Some((1, Priority::B)),
-            "priority" => return named_priority(tokens, i),
-            _ => {}
+        if let Some(priority) = lookup(EN_PRIORITY_WORDS, key) {
+            return Some((1, priority));
+        }
+        if key == "priority" {
+            return named_priority(tokens, i);
         }
     }
     None
@@ -1031,14 +1105,7 @@ fn match_priority(tokens: &[Token<'_>], i: usize, langs: Languages) -> Option<(u
 /// How urgency is said in Russian, in the genders and cases it is said in:
 /// "срочно" of a new entry, "сделай срочной" of one that exists.
 fn ru_priority_word(key: &str) -> Option<Priority> {
-    Some(match key {
-        "срочно" | "срочное" | "срочная" | "срочную" | "срочной" | "критично" | "критичное"
-        | "критичная" | "критичную" | "критичной" => Priority::A,
-        "важно" | "важное" | "важная" | "важную" | "важной" => {
-            Priority::B
-        }
-        _ => return None,
-    })
+    lookup(RU_PRIORITY_WORDS, key)
 }
 
 /// `приоритет B` / `priority 3` — the cookie said outright.
@@ -1055,6 +1122,34 @@ fn named_priority(tokens: &[Token<'_>], i: usize) -> Option<(usize, Priority)> {
 enum Lang {
     Ru,
     En,
+}
+
+/// Look a key up in a word table.
+fn lookup<T: Clone>(table: &[(&str, T)], key: &str) -> Option<T> {
+    table
+        .iter()
+        .find(|(word, _)| *word == key)
+        .map(|(_, value)| value.clone())
+}
+
+/// Look a key up in the tables of the languages the caller allows, Russian
+/// first, so a word that stands in both is read as Russian.
+fn in_tables<T: Clone>(
+    langs: Languages,
+    ru: &[(&str, T)],
+    en: &[(&str, T)],
+    key: &str,
+) -> Option<T> {
+    langs
+        .ru
+        .then(|| lookup(ru, key))
+        .flatten()
+        .or_else(|| langs.en.then(|| lookup(en, key)).flatten())
+}
+
+/// Whether a key stands in the lists of the languages the caller allows.
+fn listed(langs: Languages, ru: &[&str], en: &[&str], key: &str) -> bool {
+    (langs.ru && ru.contains(&key)) || (langs.en && en.contains(&key))
 }
 
 /// A span of calendar time, shared by "через N …" and "каждые N …".
@@ -1086,147 +1181,201 @@ fn shift(from: NaiveDate, count: u32, span: Span) -> Option<NaiveDate> {
     }
 }
 
+const RU_SPANS: &[(&str, Span)] = &[
+    ("день", Span::Day),
+    ("дня", Span::Day),
+    ("дней", Span::Day),
+    ("дни", Span::Day),
+    ("неделя", Span::Week),
+    ("неделю", Span::Week),
+    ("недели", Span::Week),
+    ("недель", Span::Week),
+    ("месяц", Span::Month),
+    ("месяца", Span::Month),
+    ("месяцев", Span::Month),
+    ("год", Span::Year),
+    ("года", Span::Year),
+    ("лет", Span::Year),
+];
+
+const EN_SPANS: &[(&str, Span)] = &[
+    ("day", Span::Day),
+    ("days", Span::Day),
+    ("week", Span::Week),
+    ("weeks", Span::Week),
+    ("month", Span::Month),
+    ("months", Span::Month),
+    ("year", Span::Year),
+    ("years", Span::Year),
+];
+
 fn span_of(key: &str, langs: Languages) -> Option<Span> {
-    if langs.ru {
-        match key {
-            "день" | "дня" | "дней" | "дни" => return Some(Span::Day),
-            "неделя" | "неделю" | "недели" | "недель" => {
-                return Some(Span::Week)
-            }
-            "месяц" | "месяца" | "месяцев" => return Some(Span::Month),
-            "год" | "года" | "лет" => return Some(Span::Year),
-            _ => {}
-        }
-    }
-    if langs.en {
-        match key {
-            "day" | "days" => return Some(Span::Day),
-            "week" | "weeks" => return Some(Span::Week),
-            "month" | "months" => return Some(Span::Month),
-            "year" | "years" => return Some(Span::Year),
-            _ => {}
-        }
-    }
-    None
+    in_tables(langs, RU_SPANS, EN_SPANS, key)
 }
 
+const RU_NUMERALS: &[(&str, u32)] = &[
+    ("два", 2),
+    ("две", 2),
+    ("три", 3),
+    ("четыре", 4),
+    ("пять", 5),
+    ("шесть", 6),
+    ("семь", 7),
+    ("восемь", 8),
+    ("девять", 9),
+    ("десять", 10),
+];
+
 fn ru_numeral(key: &str) -> Option<u32> {
-    Some(match key {
-        "два" | "две" => 2,
-        "три" => 3,
-        "четыре" => 4,
-        "пять" => 5,
-        "шесть" => 6,
-        "семь" => 7,
-        "восемь" => 8,
-        "девять" => 9,
-        "десять" => 10,
-        _ => return None,
-    })
+    lookup(RU_NUMERALS, key)
 }
 
 /// The hours as they are said: "в час дня", "в три часа".
+const RU_HOUR_WORDS: &[(&str, u32)] = &[
+    ("час", 1),
+    ("два", 2),
+    ("две", 2),
+    ("три", 3),
+    ("четыре", 4),
+    ("пять", 5),
+    ("шесть", 6),
+    ("семь", 7),
+    ("восемь", 8),
+    ("девять", 9),
+    ("десять", 10),
+    ("одиннадцать", 11),
+    ("двенадцать", 12),
+];
+
 fn ru_hour_word(key: &str) -> Option<u32> {
-    Some(match key {
-        "час" => 1,
-        "два" | "две" => 2,
-        "три" => 3,
-        "четыре" => 4,
-        "пять" => 5,
-        "шесть" => 6,
-        "семь" => 7,
-        "восемь" => 8,
-        "девять" => 9,
-        "десять" => 10,
-        "одиннадцать" => 11,
-        "двенадцать" => 12,
-        _ => return None,
-    })
+    lookup(RU_HOUR_WORDS, key)
 }
 
 /// Weekday names in the cases they are said in: nominative, accusative after
 /// "в", dative after "к", genitive after "до", and the abbreviations the
 /// timestamp grammar already knows.
+const RU_WEEKDAYS: &[(&str, Weekday)] = &[
+    ("понедельник", Weekday::Mon),
+    ("понедельника", Weekday::Mon),
+    ("понедельнику", Weekday::Mon),
+    ("пн", Weekday::Mon),
+    ("вторник", Weekday::Tue),
+    ("вторника", Weekday::Tue),
+    ("вторнику", Weekday::Tue),
+    ("вт", Weekday::Tue),
+    ("среда", Weekday::Wed),
+    ("среду", Weekday::Wed),
+    ("среды", Weekday::Wed),
+    ("среде", Weekday::Wed),
+    ("ср", Weekday::Wed),
+    ("четверг", Weekday::Thu),
+    ("четверга", Weekday::Thu),
+    ("четвергу", Weekday::Thu),
+    ("чт", Weekday::Thu),
+    ("пятница", Weekday::Fri),
+    ("пятницу", Weekday::Fri),
+    ("пятницы", Weekday::Fri),
+    ("пятнице", Weekday::Fri),
+    ("пт", Weekday::Fri),
+    ("суббота", Weekday::Sat),
+    ("субботу", Weekday::Sat),
+    ("субботы", Weekday::Sat),
+    ("субботе", Weekday::Sat),
+    ("сб", Weekday::Sat),
+    ("воскресенье", Weekday::Sun),
+    ("воскресенья", Weekday::Sun),
+    ("воскресенью", Weekday::Sun),
+    ("вс", Weekday::Sun),
+];
+
+const EN_WEEKDAYS: &[(&str, Weekday)] = &[
+    ("monday", Weekday::Mon),
+    ("mon", Weekday::Mon),
+    ("tuesday", Weekday::Tue),
+    ("tue", Weekday::Tue),
+    ("tues", Weekday::Tue),
+    ("wednesday", Weekday::Wed),
+    ("wed", Weekday::Wed),
+    ("thursday", Weekday::Thu),
+    ("thu", Weekday::Thu),
+    ("thurs", Weekday::Thu),
+    ("friday", Weekday::Fri),
+    ("fri", Weekday::Fri),
+    ("saturday", Weekday::Sat),
+    ("sat", Weekday::Sat),
+    ("sunday", Weekday::Sun),
+    ("sun", Weekday::Sun),
+];
+
+/// Weekday names in the cases they are said in: nominative, accusative after
+/// "в", dative after "к", genitive after "до", and the abbreviations the
+/// timestamp grammar already knows.
 fn weekday_of(key: &str, langs: Languages) -> Option<Weekday> {
-    if langs.ru {
-        match key {
-            "понедельник" | "понедельника" | "понедельнику" | "пн" => {
-                return Some(Weekday::Mon)
-            }
-            "вторник" | "вторника" | "вторнику" | "вт" => {
-                return Some(Weekday::Tue)
-            }
-            "среда" | "среду" | "среды" | "среде" | "ср" => {
-                return Some(Weekday::Wed)
-            }
-            "четверг" | "четверга" | "четвергу" | "чт" => {
-                return Some(Weekday::Thu)
-            }
-            "пятница" | "пятницу" | "пятницы" | "пятнице" | "пт" => {
-                return Some(Weekday::Fri)
-            }
-            "суббота" | "субботу" | "субботы" | "субботе" | "сб" => {
-                return Some(Weekday::Sat)
-            }
-            "воскресенье" | "воскресенья" | "воскресенью" | "вс" => {
-                return Some(Weekday::Sun)
-            }
-            _ => {}
-        }
-    }
-    if langs.en {
-        match key {
-            "monday" | "mon" => return Some(Weekday::Mon),
-            "tuesday" | "tue" | "tues" => return Some(Weekday::Tue),
-            "wednesday" | "wed" => return Some(Weekday::Wed),
-            "thursday" | "thu" | "thurs" => return Some(Weekday::Thu),
-            "friday" | "fri" => return Some(Weekday::Fri),
-            "saturday" | "sat" => return Some(Weekday::Sat),
-            "sunday" | "sun" => return Some(Weekday::Sun),
-            _ => {}
-        }
-    }
-    None
+    in_tables(langs, RU_WEEKDAYS, EN_WEEKDAYS, key)
 }
+
+const RU_MONTHS: &[(&str, u32)] = &[
+    ("январь", 1),
+    ("января", 1),
+    ("февраль", 2),
+    ("февраля", 2),
+    ("март", 3),
+    ("марта", 3),
+    ("апрель", 4),
+    ("апреля", 4),
+    ("май", 5),
+    ("мая", 5),
+    ("июнь", 6),
+    ("июня", 6),
+    ("июль", 7),
+    ("июля", 7),
+    ("август", 8),
+    ("августа", 8),
+    ("сентябрь", 9),
+    ("сентября", 9),
+    ("октябрь", 10),
+    ("октября", 10),
+    ("ноябрь", 11),
+    ("ноября", 11),
+    ("декабрь", 12),
+    ("декабря", 12),
+];
+
+const EN_MONTHS: &[(&str, u32)] = &[
+    ("january", 1),
+    ("jan", 1),
+    ("february", 2),
+    ("feb", 2),
+    ("march", 3),
+    ("mar", 3),
+    ("april", 4),
+    ("apr", 4),
+    ("may", 5),
+    ("june", 6),
+    ("jun", 6),
+    ("july", 7),
+    ("jul", 7),
+    ("august", 8),
+    ("aug", 8),
+    ("september", 9),
+    ("sep", 9),
+    ("sept", 9),
+    ("october", 10),
+    ("oct", 10),
+    ("november", 11),
+    ("nov", 11),
+    ("december", 12),
+    ("dec", 12),
+];
 
 fn month_of(key: &str, langs: Languages) -> Option<(u32, Lang)> {
     if langs.ru {
-        let month = match key {
-            "январь" | "января" => 1,
-            "февраль" | "февраля" => 2,
-            "март" | "марта" => 3,
-            "апрель" | "апреля" => 4,
-            "май" | "мая" => 5,
-            "июнь" | "июня" => 6,
-            "июль" | "июля" => 7,
-            "август" | "августа" => 8,
-            "сентябрь" | "сентября" => 9,
-            "октябрь" | "октября" => 10,
-            "ноябрь" | "ноября" => 11,
-            "декабрь" | "декабря" => 12,
-            _ => 0,
-        };
-        if month != 0 {
+        if let Some(month) = lookup(RU_MONTHS, key) {
             return Some((month, Lang::Ru));
         }
     }
     if langs.en {
-        let month = match key {
-            "january" | "jan" => 1,
-            "february" | "feb" => 2,
-            "march" | "mar" => 3,
-            "april" | "apr" => 4,
-            "may" => 5,
-            "june" | "jun" => 6,
-            "july" | "jul" => 7,
-            "august" | "aug" => 8,
-            "september" | "sep" | "sept" => 9,
-            "october" | "oct" => 10,
-            "november" | "nov" => 11,
-            "december" | "dec" => 12,
-            _ => 0,
-        };
-        if month != 0 {
+        if let Some(month) = lookup(EN_MONTHS, key) {
             return Some((month, Lang::En));
         }
     }
@@ -1401,5 +1550,733 @@ mod tests {
         assert_eq!(parse_am_pm("12am"), time(0, 0));
         assert_eq!(parse_am_pm("3:30pm"), time(15, 30));
         assert_eq!(parse_am_pm("15pm"), None);
+    }
+
+    // --- the word tables, walked whole ------------------------------------
+    //
+    // Every table below is walked entry by entry, so a word added to the
+    // grammar is checked by the same test without anyone widening a list of
+    // examples. What each test states is that the word reaches its rule
+    // through the whole parser, not merely that the table holds it.
+
+    const RU: Languages = Languages {
+        ru: true,
+        en: false,
+    };
+    const EN: Languages = Languages {
+        ru: false,
+        en: true,
+    };
+
+    /// The day every phrase in these tests is relative to: Monday 2026-08-31.
+    fn reference_day() -> NaiveDate {
+        day(2026, 8, 31)
+    }
+
+    fn parsed(phrase: &str, locale: &str) -> PhraseEntry {
+        parse_phrases([phrase], locale, reference_day())
+    }
+
+    /// The wire name a field is listed under once it is emptied.
+    fn field_name(field: Field) -> &'static str {
+        match field {
+            Field::Date => "date",
+            Field::Time => "time",
+            Field::Repeater => "repeater",
+            Field::Priority => "priority",
+        }
+    }
+
+    /// One language: which grammar to read with, the two lists of verbs it
+    /// has, and a phrase in it for the verbs to stand in front of.
+    type LeadInCase = (
+        Languages,
+        [&'static [&'static [&'static str]]; 2],
+        &'static str,
+    );
+
+    #[test]
+    fn every_lead_in_verb_is_taken_off_the_front_of_a_phrase() {
+        let cases: [LeadInCase; 2] = [
+            (RU, [RU_LEAD_INS, RU_EDIT_INS], "позвонить врачу"),
+            (EN, [EN_LEAD_INS, EN_EDIT_INS], "call the doctor"),
+        ];
+
+        for (langs, lists, rest) in cases {
+            for list in lists {
+                for words in list {
+                    let phrase = format!("{} {rest}", words.join(" "));
+                    let tokens = tokenize(&phrase);
+
+                    assert_eq!(
+                        lead_in_len(&tokens, langs),
+                        words.len(),
+                        "lead-in {words:?} in {phrase:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_lead_in_list_states_the_longer_verb_first() {
+        for list in [RU_LEAD_INS, EN_LEAD_INS, RU_EDIT_INS, EN_EDIT_INS] {
+            for (i, words) in list.iter().enumerate() {
+                for earlier in &list[..i] {
+                    // A shorter verb standing first would swallow the longer
+                    // one: "add a task" before "add a task to" leaves the "to"
+                    // in the heading.
+                    assert!(
+                        !(earlier.len() < words.len() && words.starts_with(earlier)),
+                        "{earlier:?} stands before the longer {words:?}"
+                    );
+                }
+                assert!(!list[..i].contains(words), "{words:?} is listed twice");
+            }
+        }
+    }
+
+    // --- the tables against a reference written apart from them -----------
+    //
+    // The walks above state that a word reaches its rule; they cannot state
+    // that the rule gives the right answer, because the answer they compare
+    // against comes out of the same table. These check the meaning: the
+    // Russian forms against a list written here, the English ones against
+    // what `chrono` itself knows.
+
+    /// The Russian month names, nominative and genitive, listed apart from
+    /// the parser's own table.
+    const RU_MONTH_REFERENCE: &[(&[&str], u32)] = &[
+        (&["январь", "января"], 1),
+        (&["февраль", "февраля"], 2),
+        (&["март", "марта"], 3),
+        (&["апрель", "апреля"], 4),
+        (&["май", "мая"], 5),
+        (&["июнь", "июня"], 6),
+        (&["июль", "июля"], 7),
+        (&["август", "августа"], 8),
+        (&["сентябрь", "сентября"], 9),
+        (&["октябрь", "октября"], 10),
+        (&["ноябрь", "ноября"], 11),
+        (&["декабрь", "декабря"], 12),
+    ];
+
+    /// The Russian weekday names in the cases the grammar accepts, and the
+    /// two-letter abbreviations of the timestamp grammar.
+    const RU_WEEKDAY_REFERENCE: &[(&[&str], Weekday)] = &[
+        (
+            &["понедельник", "понедельника", "понедельнику", "пн"],
+            Weekday::Mon,
+        ),
+        (&["вторник", "вторника", "вторнику", "вт"], Weekday::Tue),
+        (&["среда", "среду", "среды", "среде", "ср"], Weekday::Wed),
+        (&["четверг", "четверга", "четвергу", "чт"], Weekday::Thu),
+        (
+            &["пятница", "пятницу", "пятницы", "пятнице", "пт"],
+            Weekday::Fri,
+        ),
+        (
+            &["суббота", "субботу", "субботы", "субботе", "сб"],
+            Weekday::Sat,
+        ),
+        (
+            &["воскресенье", "воскресенья", "воскресенью", "вс"],
+            Weekday::Sun,
+        ),
+    ];
+
+    const RU_NUMERAL_REFERENCE: &[(&[&str], u32)] = &[
+        (&["два", "две"], 2),
+        (&["три"], 3),
+        (&["четыре"], 4),
+        (&["пять"], 5),
+        (&["шесть"], 6),
+        (&["семь"], 7),
+        (&["восемь"], 8),
+        (&["девять"], 9),
+        (&["десять"], 10),
+    ];
+
+    const RU_HOUR_REFERENCE: &[(&[&str], u32)] = &[
+        (&["час"], 1),
+        (&["два", "две"], 2),
+        (&["три"], 3),
+        (&["четыре"], 4),
+        (&["пять"], 5),
+        (&["шесть"], 6),
+        (&["семь"], 7),
+        (&["восемь"], 8),
+        (&["девять"], 9),
+        (&["десять"], 10),
+        (&["одиннадцать"], 11),
+        (&["двенадцать"], 12),
+    ];
+
+    /// The English forms `chrono` does not know: it parses neither `sept` nor
+    /// the four-letter weekday abbreviations, and the grammar accepts both.
+    const EN_MONTHS_CHRONO_MISSES: &[(&str, u32)] = &[("sept", 9)];
+
+    const EN_WEEKDAYS_CHRONO_MISSES: &[(&str, Weekday)] =
+        &[("tues", Weekday::Tue), ("thurs", Weekday::Thu)];
+
+    /// Both directions at once: every form of the reference is in the table
+    /// with the same value, and the table holds nothing the reference does
+    /// not name.
+    fn agrees_with<T: PartialEq + std::fmt::Debug + Clone>(
+        name: &str,
+        table: &[(&str, T)],
+        reference: &[(&[&str], T)],
+    ) {
+        for (words, value) in reference {
+            for word in *words {
+                assert_eq!(
+                    lookup(table, word).as_ref(),
+                    Some(value),
+                    "{name} reads {word} as something else"
+                );
+            }
+        }
+        for (word, _) in table {
+            assert!(
+                reference.iter().any(|(words, _)| words.contains(word)),
+                "{name} states {word}, which the reference list does not"
+            );
+        }
+    }
+
+    #[test]
+    fn the_russian_tables_agree_with_a_list_written_apart_from_them() {
+        agrees_with("RU_MONTHS", RU_MONTHS, RU_MONTH_REFERENCE);
+        agrees_with("RU_WEEKDAYS", RU_WEEKDAYS, RU_WEEKDAY_REFERENCE);
+        agrees_with("RU_NUMERALS", RU_NUMERALS, RU_NUMERAL_REFERENCE);
+        agrees_with("RU_HOUR_WORDS", RU_HOUR_WORDS, RU_HOUR_REFERENCE);
+    }
+
+    #[test]
+    fn the_english_tables_agree_with_what_chrono_reads() {
+        for (word, month) in EN_MONTHS {
+            if let Some(expected) = lookup(EN_MONTHS_CHRONO_MISSES, word) {
+                assert_eq!(*month, expected, "month word {word}");
+                continue;
+            }
+            let read = NaiveDate::parse_from_str(&format!("{word} 15 2026"), "%B %d %Y")
+                .or_else(|_| NaiveDate::parse_from_str(&format!("{word} 15 2026"), "%b %d %Y"))
+                .unwrap_or_else(|e| panic!("chrono does not read the month {word}: {e}"));
+
+            assert_eq!(read.month(), *month, "month word {word}");
+        }
+
+        for (word, weekday) in EN_WEEKDAYS {
+            if let Some(expected) = lookup(EN_WEEKDAYS_CHRONO_MISSES, word) {
+                assert_eq!(*weekday, expected, "weekday word {word}");
+                continue;
+            }
+            let read: Weekday = word
+                .parse()
+                .unwrap_or_else(|_| panic!("chrono does not read the weekday {word}"));
+
+            assert_eq!(read, *weekday, "weekday word {word}");
+        }
+    }
+
+    #[test]
+    fn every_month_word_resolves_to_its_month() {
+        for (word, month) in RU_MONTHS {
+            let entry = parsed(&format!("встреча 15 {word}"), "ru");
+            let date = entry.date.unwrap_or_else(|| panic!("no date from {word}"));
+
+            assert_eq!(date.month(), *month, "month word {word}");
+            assert_eq!(date.day(), 15, "month word {word}");
+        }
+        for (word, month) in EN_MONTHS {
+            let entry = parsed(&format!("meeting {word} 15"), "en");
+            let date = entry.date.unwrap_or_else(|| panic!("no date from {word}"));
+
+            assert_eq!(date.month(), *month, "month word {word}");
+            assert_eq!(date.day(), 15, "month word {word}");
+        }
+
+        for month in 1..=12 {
+            assert!(
+                RU_MONTHS.iter().any(|(_, value)| *value == month),
+                "no Russian word for month {month}"
+            );
+            assert!(
+                EN_MONTHS.iter().any(|(_, value)| *value == month),
+                "no English word for month {month}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_weekday_word_resolves_to_its_day() {
+        for (word, weekday) in RU_WEEKDAYS {
+            let entry = parsed(&format!("позвонить в {word}"), "ru");
+            let date = entry.date.unwrap_or_else(|| panic!("no date from {word}"));
+
+            assert_eq!(date.weekday(), *weekday, "weekday word {word}");
+        }
+        for (word, weekday) in EN_WEEKDAYS {
+            let entry = parsed(&format!("call on {word}"), "en");
+            let date = entry.date.unwrap_or_else(|| panic!("no date from {word}"));
+
+            assert_eq!(date.weekday(), *weekday, "weekday word {word}");
+        }
+
+        for weekday in [
+            Weekday::Mon,
+            Weekday::Tue,
+            Weekday::Wed,
+            Weekday::Thu,
+            Weekday::Fri,
+            Weekday::Sat,
+            Weekday::Sun,
+        ] {
+            assert!(
+                RU_WEEKDAYS.iter().any(|(_, value)| *value == weekday),
+                "no Russian word for {weekday:?}"
+            );
+            assert!(
+                EN_WEEKDAYS.iter().any(|(_, value)| *value == weekday),
+                "no English word for {weekday:?}"
+            );
+        }
+    }
+
+    /// One language: its table of spans, its locale, and the two phrasings
+    /// that count in spans, with `{word}` where the span word stands.
+    type SpanCase = (
+        &'static [(&'static str, Span)],
+        &'static str,
+        &'static str,
+        &'static str,
+    );
+
+    #[test]
+    fn every_span_word_is_read_by_both_rules_that_count_spans() {
+        let today = reference_day();
+        let cases: [SpanCase; 2] = [
+            (
+                RU_SPANS,
+                "ru",
+                "оплата через 2 {word}",
+                "оплата каждые 2 {word}",
+            ),
+            (EN_SPANS, "en", "pay in 2 {word}", "pay every 2 {word}"),
+        ];
+
+        for (table, locale, ahead, repeated) in cases {
+            for (word, span) in table {
+                let shifted = parsed(&ahead.replace("{word}", word), locale);
+                assert_eq!(
+                    shifted.date,
+                    shift(today, 2, *span),
+                    "span word {word} counted forward"
+                );
+
+                let repeating = parsed(&repeated.replace("{word}", word), locale);
+                let repeater = repeating
+                    .repeater
+                    .unwrap_or_else(|| panic!("no repeater from {word}"));
+                assert_eq!(
+                    repeater.canonical(),
+                    every(2, span.unit()).canonical(),
+                    "span word {word} repeated"
+                );
+            }
+
+            for span in [Span::Day, Span::Week, Span::Month, Span::Year] {
+                assert!(
+                    table.iter().any(|(_, value)| *value == span),
+                    "no {locale} word for {span:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_numeral_word_counts_that_many_days() {
+        for (word, count) in RU_NUMERALS {
+            let entry = parsed(&format!("отчет через {word} дня"), "ru");
+
+            assert_eq!(
+                entry.date,
+                shift(reference_day(), *count, Span::Day),
+                "numeral {word}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_hour_word_is_read_as_that_hour() {
+        for (word, hour) in RU_HOUR_WORDS {
+            let entry = parsed(&format!("созвон в {word}"), "ru");
+
+            assert_eq!(
+                entry.time,
+                NaiveTime::from_hms_opt(*hour, 0, 0),
+                "hour word {word}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_word_around_an_hour_turns_a_number_into_a_time() {
+        // Without one of these words a bare number stays a number.
+        assert_eq!(parsed("позвонить 3", "ru").time, None);
+
+        for word in RU_HOUR_UNITS {
+            assert_eq!(
+                parsed(&format!("позвонить 3 {word}"), "ru").time,
+                NaiveTime::from_hms_opt(3, 0, 0),
+                "hours word {word}"
+            );
+        }
+        for word in EN_HOUR_UNITS {
+            assert_eq!(
+                parsed(&format!("call 3 {word}"), "en").time,
+                NaiveTime::from_hms_opt(3, 0, 0),
+                "hours word {word}"
+            );
+        }
+        for (word, afternoon) in RU_HALF_DAYS {
+            assert_eq!(
+                parsed(&format!("позвонить 3 {word}"), "ru").time,
+                NaiveTime::from_hms_opt(shift_half_day(3, *afternoon), 0, 0),
+                "half-day word {word}"
+            );
+        }
+        for (word, afternoon) in EN_HALF_DAYS {
+            assert_eq!(
+                parsed(&format!("call 3 {word}"), "en").time,
+                NaiveTime::from_hms_opt(shift_half_day(3, *afternoon), 0, 0),
+                "half-day word {word}"
+            );
+        }
+        for prefix in RU_TIME_PREFIXES {
+            assert_eq!(
+                parsed(&format!("позвонить {prefix} 15:30"), "ru").time,
+                NaiveTime::from_hms_opt(15, 30, 0),
+                "time preposition {prefix}"
+            );
+        }
+        for prefix in EN_TIME_PREFIXES {
+            assert_eq!(
+                parsed(&format!("call {prefix} 15:30"), "en").time,
+                NaiveTime::from_hms_opt(15, 30, 0),
+                "time preposition {prefix}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_named_day_stands_where_the_table_says() {
+        for (word, days) in RU_NAMED_DAYS {
+            assert_eq!(
+                parsed(&format!("позвонить {word}"), "ru").date,
+                reference_day().checked_add_days(Days::new(*days)),
+                "named day {word}"
+            );
+        }
+        for (word, days) in EN_NAMED_DAYS {
+            assert_eq!(
+                parsed(&format!("call {word}"), "en").date,
+                reference_day().checked_add_days(Days::new(*days)),
+                "named day {word}"
+            );
+        }
+        // The English day after tomorrow is said in three words.
+        assert_eq!(
+            parsed("call day after tomorrow", "en").date,
+            reference_day().checked_add_days(Days::new(2))
+        );
+    }
+
+    #[test]
+    fn every_single_word_repeater_names_its_unit() {
+        for (word, unit) in RU_SINGLE_WORD_REPEATERS {
+            let entry = parsed(&format!("зарядка {word}"), "ru");
+
+            assert_eq!(
+                entry.repeater.map(|r| r.canonical()),
+                Some(every(1, unit.clone()).canonical()),
+                "repeater word {word}"
+            );
+        }
+        for (word, unit) in EN_SINGLE_WORD_REPEATERS {
+            let entry = parsed(&format!("exercise {word}"), "en");
+
+            assert_eq!(
+                entry.repeater.map(|r| r.canonical()),
+                Some(every(1, unit.clone()).canonical()),
+                "repeater word {word}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_word_of_a_working_day_repeater_is_read() {
+        for word in RU_WORKING_WORDS {
+            let entry = parsed(&format!("зарядка каждый {word} день"), "ru");
+
+            assert_eq!(
+                entry.repeater.map(|r| r.canonical()),
+                Some(every(1, RepeaterUnit::Workday).canonical()),
+                "working word {word}"
+            );
+        }
+        for word in EN_WORKING_WORDS {
+            let entry = parsed(&format!("exercise every {word} day"), "en");
+
+            assert_eq!(
+                entry.repeater.map(|r| r.canonical()),
+                Some(every(1, RepeaterUnit::Workday).canonical()),
+                "working word {word}"
+            );
+        }
+        for word in EN_WORKDAY_NOUNS {
+            let entry = parsed(&format!("exercise every {word}"), "en");
+
+            assert_eq!(
+                entry.repeater.map(|r| r.canonical()),
+                Some(every(1, RepeaterUnit::Workday).canonical()),
+                "workday noun {word}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_head_of_a_repeat_is_read() {
+        for word in RU_REPEAT_HEADS {
+            let entry = parsed(&format!("оплата {word} месяц"), "ru");
+
+            assert_eq!(
+                entry.repeater.map(|r| r.canonical()),
+                Some(every(1, RepeaterUnit::Month).canonical()),
+                "repeat head {word}"
+            );
+        }
+        for word in EN_REPEAT_HEADS {
+            let entry = parsed(&format!("pay {word} month"), "en");
+
+            assert_eq!(
+                entry.repeater.map(|r| r.canonical()),
+                Some(every(1, RepeaterUnit::Month).canonical()),
+                "repeat head {word}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_priority_word_names_its_cookie() {
+        for (word, priority) in RU_PRIORITY_WORDS {
+            assert_eq!(
+                parsed(&format!("позвонить {word}"), "ru").priority,
+                Some(priority.clone()),
+                "priority word {word}"
+            );
+        }
+        for (word, priority) in EN_PRIORITY_WORDS {
+            assert_eq!(
+                parsed(&format!("call {word}"), "en").priority,
+                Some(priority.clone()),
+                "priority word {word}"
+            );
+        }
+        // "очень" raises the lower cookie rather than naming one of its own.
+        assert_eq!(
+            parsed("позвонить очень важно", "ru").priority,
+            Some(Priority::A)
+        );
+    }
+
+    #[test]
+    fn every_keyword_word_names_its_keyword() {
+        for (word, keyword) in RU_KEYWORDS {
+            assert_eq!(
+                parsed(word, "ru").keyword,
+                Some(*keyword),
+                "keyword word {word}"
+            );
+        }
+        for (word, keyword) in EN_KEYWORDS {
+            assert_eq!(
+                parsed(word, "en").keyword,
+                Some(*keyword),
+                "keyword word {word}"
+            );
+        }
+        for word in RU_BACK_TO_WORK {
+            assert_eq!(
+                parsed(&format!("в {word}"), "ru").keyword,
+                Some(PhraseKeyword::Todo),
+                "back to work {word}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_field_noun_names_the_field_it_empties() {
+        for (word, field) in RU_FIELD_NOUNS {
+            let entry = parsed(&format!("убрать {word}"), "ru");
+
+            assert_eq!(
+                entry.cleared.names(),
+                [field_name(*field)],
+                "field noun {word}"
+            );
+        }
+        for (word, field) in EN_FIELD_NOUNS {
+            let entry = parsed(&format!("remove the {word}"), "en");
+
+            assert_eq!(
+                entry.cleared.names(),
+                [field_name(*field)],
+                "field noun {word}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_word_of_removal_empties_the_field_it_names() {
+        for word in RU_REMOVES {
+            assert_eq!(
+                parsed(&format!("{word} дату"), "ru").cleared.names(),
+                ["date"],
+                "removal verb {word}"
+            );
+        }
+        for word in EN_REMOVES {
+            // The article is optional after every one of these verbs.
+            assert_eq!(
+                parsed(&format!("{word} the date"), "en").cleared.names(),
+                ["date"],
+                "removal verb {word} with the article"
+            );
+            assert_eq!(
+                parsed(&format!("{word} date"), "en").cleared.names(),
+                ["date"],
+                "removal verb {word}"
+            );
+        }
+        for word in RU_WITHOUTS {
+            assert_eq!(
+                parsed(&format!("{word} даты"), "ru").cleared.names(),
+                ["date"],
+                "preposition of absence {word}"
+            );
+        }
+        for word in EN_WITHOUTS {
+            assert_eq!(
+                parsed(&format!("{word} date"), "en").cleared.names(),
+                ["date"],
+                "preposition of absence {word}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_date_preposition_names_its_planning_line() {
+        for (word, kind) in RU_DATE_PREFIXES {
+            let entry = parsed(&format!("позвонить {word} завтра"), "ru");
+
+            assert_eq!(entry.date, reference_day().checked_add_days(Days::new(1)));
+            assert_eq!(entry.planning, Some(*kind), "date preposition {word}");
+        }
+        for (word, kind) in EN_DATE_PREFIXES {
+            let entry = parsed(&format!("call {word} tomorrow"), "en");
+
+            assert_eq!(entry.date, reference_day().checked_add_days(Days::new(1)));
+            assert_eq!(entry.planning, Some(*kind), "date preposition {word}");
+        }
+    }
+
+    #[test]
+    fn every_negation_and_conjunction_is_read_as_one() {
+        for word in RU_NEGATIONS {
+            let entry = parsed(&format!("позвонить {word} завтра"), "ru");
+
+            assert_eq!(entry.date, None, "negation {word}");
+            assert_eq!(entry.heading, format!("позвонить {word} завтра"));
+        }
+        for word in EN_NEGATIONS {
+            let entry = parsed(&format!("call {word} tomorrow"), "en");
+
+            assert_eq!(entry.date, None, "negation {word}");
+            assert_eq!(entry.heading, format!("call {word} tomorrow"));
+        }
+        for word in RU_CONJUNCTIONS {
+            // A conjunction in front of a verb of editing joins two
+            // instructions and is not part of the heading.
+            let entry = parsed(&format!("позвонить {word} перенеси на завтра"), "ru");
+
+            assert_eq!(entry.heading, "позвонить", "conjunction {word}");
+            assert_eq!(entry.date, reference_day().checked_add_days(Days::new(1)));
+        }
+        for word in EN_CONJUNCTIONS {
+            let entry = parsed(&format!("call {word} move it to tomorrow"), "en");
+
+            assert_eq!(entry.heading, "call", "conjunction {word}");
+            assert_eq!(entry.date, reference_day().checked_add_days(Days::new(1)));
+        }
+    }
+
+    #[test]
+    fn no_word_table_states_the_same_word_twice() {
+        fn unique<T>(name: &str, table: &[(&str, T)]) {
+            for (i, (word, _)) in table.iter().enumerate() {
+                assert!(
+                    !table[..i].iter().any(|(earlier, _)| earlier == word),
+                    "{name} states {word} twice"
+                );
+            }
+        }
+        fn unique_words(name: &str, table: &[&str]) {
+            for (i, word) in table.iter().enumerate() {
+                assert!(!table[..i].contains(word), "{name} states {word} twice");
+            }
+        }
+
+        unique("RU_SPANS", RU_SPANS);
+        unique("EN_SPANS", EN_SPANS);
+        unique("RU_NUMERALS", RU_NUMERALS);
+        unique("RU_HOUR_WORDS", RU_HOUR_WORDS);
+        unique("RU_WEEKDAYS", RU_WEEKDAYS);
+        unique("EN_WEEKDAYS", EN_WEEKDAYS);
+        unique("RU_MONTHS", RU_MONTHS);
+        unique("EN_MONTHS", EN_MONTHS);
+        unique("RU_NAMED_DAYS", RU_NAMED_DAYS);
+        unique("EN_NAMED_DAYS", EN_NAMED_DAYS);
+        unique("RU_SINGLE_WORD_REPEATERS", RU_SINGLE_WORD_REPEATERS);
+        unique("EN_SINGLE_WORD_REPEATERS", EN_SINGLE_WORD_REPEATERS);
+        unique("RU_FIELD_NOUNS", RU_FIELD_NOUNS);
+        unique("EN_FIELD_NOUNS", EN_FIELD_NOUNS);
+        unique("RU_DATE_PREFIXES", RU_DATE_PREFIXES);
+        unique("EN_DATE_PREFIXES", EN_DATE_PREFIXES);
+        unique("RU_PRIORITY_WORDS", RU_PRIORITY_WORDS);
+        unique("EN_PRIORITY_WORDS", EN_PRIORITY_WORDS);
+        unique("RU_KEYWORDS", RU_KEYWORDS);
+        unique("EN_KEYWORDS", EN_KEYWORDS);
+        unique("RU_HALF_DAYS", RU_HALF_DAYS);
+        unique("EN_HALF_DAYS", EN_HALF_DAYS);
+
+        unique_words("RU_REMOVES", RU_REMOVES);
+        unique_words("EN_REMOVES", EN_REMOVES);
+        unique_words("RU_WITHOUTS", RU_WITHOUTS);
+        unique_words("EN_WITHOUTS", EN_WITHOUTS);
+        unique_words("RU_REPEAT_HEADS", RU_REPEAT_HEADS);
+        unique_words("EN_REPEAT_HEADS", EN_REPEAT_HEADS);
+        unique_words("RU_WORKING_WORDS", RU_WORKING_WORDS);
+        unique_words("EN_WORKING_WORDS", EN_WORKING_WORDS);
+        unique_words("EN_WORKDAY_NOUNS", EN_WORKDAY_NOUNS);
+        unique_words("RU_HOUR_UNITS", RU_HOUR_UNITS);
+        unique_words("EN_HOUR_UNITS", EN_HOUR_UNITS);
+        unique_words("RU_TIME_PREFIXES", RU_TIME_PREFIXES);
+        unique_words("EN_TIME_PREFIXES", EN_TIME_PREFIXES);
+        unique_words("RU_NEGATIONS", RU_NEGATIONS);
+        unique_words("EN_NEGATIONS", EN_NEGATIONS);
+        unique_words("RU_CONJUNCTIONS", RU_CONJUNCTIONS);
+        unique_words("EN_CONJUNCTIONS", EN_CONJUNCTIONS);
+        unique_words("RU_BACK_TO_WORK", RU_BACK_TO_WORK);
     }
 }

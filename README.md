@@ -59,8 +59,9 @@ second crate rather than a new name for this one.
 
 ### Requirements
 
-- Rust 1.85 or newer. The bundled `comrak` 0.50+ ships on Rust edition
-  2024 and therefore requires a 1.85+ toolchain; this crate itself is
+- Rust 1.85 or newer. The bundled `comrak` (0.52 at the time of writing)
+  ships on Rust edition 2024 and therefore requires a 1.85+ toolchain,
+  as every release since 0.50 has; this crate itself is
   still on edition 2021 (see [`TODO.md`](TODO.md#switch-to-edition-2024)
   for the planned migration).
 - Cargo
@@ -541,7 +542,8 @@ Sample holiday output:
   "2025-05-01",
   "2025-05-09",
   "2025-06-12",
-  "2025-11-04"
+  "2025-11-04",
+  "2025-12-31"
 ]
 ```
 
@@ -675,7 +677,10 @@ markdown-org-extract --dir ./examples --format md
 
 ## Agenda modes
 
-The utility supports four task-listing modes, mirroring Emacs Org-mode:
+The utility supports five task-listing modes. Four mirror Emacs Org-mode;
+`month-grid` is the one window upstream has no equivalent for, added because
+both clients draw a calendar and were each computing it themselves
+([ADR-0028](docs/adr/0028-week-start-and-the-month-grid.md)):
 
 ### day — tasks for a single day
 
@@ -722,6 +727,38 @@ markdown-org-extract --agenda month
 
 # Explicit range
 markdown-org-extract --agenda month --from 2025-12-01 --to 2025-12-31
+```
+
+### month-grid — the grid a month is drawn on
+
+The whole weeks a calendar month falls in: the month itself plus the days its
+first and last weeks borrow from the months on either side. This is the window
+a calendar page is laid out on, seven days to a row, and `--agenda month` stays
+what it was — the days of the month and nothing else.
+
+The rows begin on `--week-start`, so the grid a reader who starts weeks on
+Sunday sees is a different set of days than the Monday one. `--week-start
+today` is refused here: a calendar column is a fixed weekday, and a week
+beginning wherever the reader stands has no columns. The grid is not padded to
+six rows — a month whose edges already fall on the edges of a week borrows
+nothing.
+
+An explicit `--from`/`--to` window is grown outward to the weeks it touches, so
+the answer is a whole number of weeks whatever dates bound it
+([ADR-0030](docs/adr/0030-explicit-window-in-the-month-grid.md)).
+
+The output carries no new field: the grid is a longer array of the same day
+objects a `month` answer is made of.
+
+```bash
+# The grid the current month is drawn on
+markdown-org-extract --agenda month-grid
+
+# The same grid read by someone whose week starts on Sunday
+markdown-org-extract --agenda month-grid --week-start sunday
+
+# Two months of calendar in one answer
+markdown-org-extract --agenda month-grid --from 2026-08-01 --to 2026-09-30
 ```
 
 ### tasks — all TODO tasks
@@ -822,15 +859,15 @@ Timestamps must be wrapped in backticks:
 
 **Simple timestamp:**
 ```markdown
-`<2024-12-10 Mon 10:00-12:00>`
+`<2024-12-10 Tue 10:00-12:00>`
 ```
 
 **Planning markers:**
 ```markdown
-`CREATED: [2024-12-01 Mon]`
+`CREATED: [2024-12-01 Sun]`
 `DEADLINE: <2024-12-15 Sun>`
-`SCHEDULED: <2024-12-05 Wed>`
-`CLOSED: [2024-12-01 Mon]`
+`SCHEDULED: <2024-12-05 Thu>`
+`CLOSED: [2024-12-01 Sun]`
 ```
 
 The bracket form is per-keyword (see
@@ -840,7 +877,7 @@ The bracket form is per-keyword (see
 
 **Date range:**
 ```markdown
-`<2024-12-20 Mon>--<2024-12-22 Wed>`
+`<2024-12-20 Fri>--<2024-12-22 Sun>`
 ```
 
 The dash separator follows Emacs' `org-tr-regexp` and accepts one,
@@ -989,10 +1026,10 @@ tolerated, so `--locale ru,` and `--locale ,en` parse the same as
 
 ```markdown
 ### TODO Встреча
-`<2024-12-10 Пн 10:00>`
+`<2024-12-10 Вт 10:00>`
 
 ### Конференция
-`<2024-12-20 Понедельник>--<2024-12-22 Среда>`
+`<2024-12-20 Пятница>--<2024-12-22 Воскресенье>`
 
 ### TODO Задача
 `DEADLINE: <2024-12-15 Вс>`
@@ -1020,8 +1057,9 @@ This matches the `#[serde(skip_serializing_if = "Option::is_none")]`
 convention used in `src/types.rs`.
 
 Example below is the actual output of
-`--dir examples --glob 'project-tasks.md' --tasks --max-tasks 1
---current-date 2025-12-05`.
+`--dir examples --glob 'project-tasks.md' --tasks --max-tasks 1`. The flat
+list has no window to place a task in, so `tasks` mode takes no date argument
+at all — `--current-date` alongside `--tasks` is refused with exit code 2.
 
 ```json
 [
@@ -1032,7 +1070,7 @@ Example below is the actual output of
     "content": "Need to finalize the database structure before implementation.",
     "task_type": "TODO",
     "priority": "A",
-    "timestamp": "SCHEDULED: <2024-12-05 Wed>",
+    "timestamp": "SCHEDULED: <2024-12-05 Thu>",
     "timestamp_type": "SCHEDULED",
     "timestamp_active": true,
     "timestamp_date": "2024-12-05"
@@ -1049,7 +1087,7 @@ Example below is the actual output of
 **File:** `project-tasks.md:5`
 **Type:** TODO
 **Priority:** A
-**Time:** `SCHEDULED: <2024-12-05 Wed>`
+**Time:** `SCHEDULED: <2024-12-05 Thu>`
 
 Need to finalize the database structure before implementation.
 ```
@@ -1083,10 +1121,13 @@ File paths are emitted relative to `--dir` (or absolute when
 `--absolute-paths` is set). Optional fields are omitted when absent, as
 in `--tasks` mode.
 
+Example below is the actual output of
+`--dir examples --glob 'project-tasks.md' --agenda day --current-date 2024-12-08`.
+
 ```json
 [
   {
-    "date": "2025-12-05",
+    "date": "2024-12-08",
     "overdue": [
       {
         "file": "project-tasks.md",
@@ -1095,27 +1136,53 @@ in `--tasks` mode.
         "content": "Need to finalize the database structure before implementation.",
         "task_type": "TODO",
         "priority": "A",
-        "timestamp": "SCHEDULED: <2024-12-05 Wed>",
+        "timestamp": "SCHEDULED: <2024-12-05 Thu>",
         "timestamp_type": "SCHEDULED",
         "timestamp_active": true,
         "timestamp_date": "2024-12-05",
-        "days_offset": -365
-      }
-    ],
-    "scheduled_timed": [],
-    "scheduled_no_time": [],
-    "upcoming": [
+        "days_offset": -3
+      },
       {
         "file": "project-tasks.md",
         "line": 47,
         "heading": "Review pull request #42",
         "content": "Critical bug fix needs review.",
         "task_type": "TODO",
-        "timestamp": "DEADLINE: <2025-12-06 Sat>",
+        "timestamp": "DEADLINE: <2024-12-06 Fri>",
         "timestamp_type": "DEADLINE",
         "timestamp_active": true,
-        "timestamp_date": "2025-12-06",
-        "days_offset": 1
+        "timestamp_date": "2024-12-06",
+        "days_offset": -2
+      }
+    ],
+    "scheduled_timed": [],
+    "scheduled_no_time": [
+      {
+        "file": "project-tasks.md",
+        "line": 19,
+        "heading": "Implement user authentication",
+        "content": "Add JWT-based authentication system.",
+        "task_type": "TODO",
+        "priority": "A",
+        "timestamp": "SCHEDULED: <2024-12-08 Sun>",
+        "timestamp_type": "SCHEDULED",
+        "timestamp_active": true,
+        "timestamp_date": "2024-12-08"
+      }
+    ],
+    "upcoming": [
+      {
+        "file": "project-tasks.md",
+        "line": 9,
+        "heading": "Setup CI/CD pipeline",
+        "content": "Configure GitHub Actions for automated testing and deployment.",
+        "task_type": "TODO",
+        "priority": "B",
+        "timestamp": "DEADLINE: <2024-12-10 Tue>",
+        "timestamp_type": "DEADLINE",
+        "timestamp_active": true,
+        "timestamp_date": "2024-12-10",
+        "days_offset": 2
       }
     ]
   }
@@ -1158,34 +1225,46 @@ preserve formatting. `Type:` uses `TODO` / `DONE` (not `Todo` / `Done`);
 ```markdown
 # Agenda
 
-## 2025-12-05
+## 2024-12-08
 
 ### Overdue
 
-#### Design database schema (365 days ago)
+#### Design database schema (3 days ago)
 **File:** `project-tasks.md:5`
 **Type:** TODO
 **Priority:** A
-**Time:** `SCHEDULED: <2024-12-05 Wed>`
+**Time:** `SCHEDULED: <2024-12-05 Thu>`
 
 Need to finalize the database structure before implementation.
 
+#### Review pull request \#42 (2 days ago)
+**File:** `project-tasks.md:47`
+**Type:** TODO
+**Time:** `DEADLINE: <2024-12-06 Fri>`
+
+Critical bug fix needs review.
+
+
 ### Scheduled
 
-#### Daily standup
-**File:** `project-tasks.md:33`
-**Time:** `<2025-12-05 Friday 09:00-09:15>`
+#### Implement user authentication
+**File:** `project-tasks.md:19`
+**Type:** TODO
+**Priority:** A
+**Time:** `SCHEDULED: <2024-12-08 Sun>`
 
-Daily standup meeting.
+Add JWT-based authentication system.
+
 
 ### Upcoming
 
-#### Review pull request \#42 (in 1 days)
-**File:** `project-tasks.md:47`
+#### Setup CI/CD pipeline (in 2 days)
+**File:** `project-tasks.md:9`
 **Type:** TODO
-**Time:** `DEADLINE: <2025-12-06 Sat>`
+**Priority:** B
+**Time:** `DEADLINE: <2024-12-10 Tue>`
 
-Critical bug fix needs review.
+Configure GitHub Actions for automated testing and deployment.
 ```
 
 #### Parsed timestamp fields
@@ -1351,25 +1430,25 @@ during compilation rather than at runtime.
 
 ```markdown
 ### TODO Hourly check
-`SCHEDULED: <2025-12-05 Thu 10:00 +1h>`
+`SCHEDULED: <2025-12-05 Fri 10:00 +1h>`
 
 ### TODO Daily task
-`SCHEDULED: <2025-12-05 Thu +1d>`
+`SCHEDULED: <2025-12-05 Fri +1d>`
 
 ### TODO Weekly meeting
-`SCHEDULED: <2025-12-05 Thu +1w>`
+`SCHEDULED: <2025-12-05 Fri +1w>`
 
 ### TODO Monthly report
-`SCHEDULED: <2025-12-05 Thu +1m>`
+`SCHEDULED: <2025-12-05 Fri +1m>`
 
 ### TODO Annual review
-`SCHEDULED: <2025-12-05 Thu +1y>`
+`SCHEDULED: <2025-12-05 Fri +1y>`
 
 ### TODO Workday-only task
-`SCHEDULED: <2025-12-05 Thu +1wd>`
+`SCHEDULED: <2025-12-05 Fri +1wd>`
 
 ### TODO Every two working days
-`SCHEDULED: <2025-12-05 Thu +2wd>`
+`SCHEDULED: <2025-12-05 Fri +2wd>`
 ```
 
 ### One occurrence that differs
@@ -1557,6 +1636,7 @@ markdown-org-extract/
 │   ├── scan.rs             # Directory walk, file I/O, ScanOptions
 │   ├── agenda.rs           # Agenda logic (day/week/month), repeaters
 │   ├── parser.rs           # Task extraction from the markdown AST
+│   ├── phrase.rs           # One sentence read into the fields of an entry
 │   ├── render.rs           # Markdown/HTML rendering
 │   ├── locale.rs           # Weekday translation tables
 │   ├── error.rs            # AppError
@@ -1565,6 +1645,7 @@ markdown-org-extract/
 │   ├── clock.rs            # CLOCK parsing and time aggregation
 │   ├── holidays.rs         # RF workday calendar (singleton, binary search)
 │   ├── regex_limits.rs     # `compile_bounded`: regex with size/DFA caps
+│   ├── timestamp.rs        # Timestamp module root: re-exports the parts below
 │   └── timestamp/          # Org-mode timestamp parsing
 │       ├── parser.rs       #   <2024-12-05 Thu 10:00 +1d> → ParsedTimestamp
 │       ├── extract.rs      #   pull timestamp/CREATED out of arbitrary text
@@ -1573,6 +1654,7 @@ markdown-org-extract/
 ├── tests/
 │   ├── cli.rs              # CLI integration tests (assert_cmd)
 │   ├── lib_api.rs          # Tests against the library API, no process spawned
+│   ├── phrase.rs           # The phrases the rules understand, table by table
 │   ├── properties.rs       # Properties over the parsers (proptest)
 │   ├── dev_scripts.rs      # The helper scripts below, run against fixtures
 │   ├── release_check_changelog.rs  # check-changelog.sh against crafted CHANGELOGs
@@ -1674,6 +1756,7 @@ See also:
 ## Dependencies
 
 - `clap` — command-line argument parsing
+- `clap_complete` — the completion scripts `--completions <SHELL>` prints
 - `comrak` — markdown parsing (without onig/syntect: `default-features = false`)
 - `regex` — regular expressions (with size/DFA caps)
 - `serde` / `serde_json` — data serialisation
@@ -1681,6 +1764,8 @@ See also:
 - `grep-regex` / `grep-searcher` — fast pre-filter over keywords
 - `ignore` — directory tree walk that honours `.gitignore`
 - `globset` — glob compilation for `--glob`
+- `aho-corasick` — one pass over a timestamp for every localized weekday name at once
+- `signal-hook` — the SIGINT / SIGTERM handler the scan loop polls
 - `tracing` / `tracing-subscriber` — structured diagnostic logging (`--verbose`, `--quiet`, `--color`, `--no-color`)
 
 Lazily initialised `static` regular expressions use `std::sync::LazyLock`

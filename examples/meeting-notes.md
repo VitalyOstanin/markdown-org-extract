@@ -3,50 +3,50 @@
 ## Weekly Team Sync
 
 ### Meeting: December 4th
-`<2024-12-04 Пн 10:00-11:00>`
+`<2024-12-04 Ср 10:00-11:00>`
 
 Attendees: Alice, Bob, Charlie
 
 #### TODO Follow up on client feedback
-`DEADLINE: <2024-12-08 Пятница>`
+`DEADLINE: <2024-12-08 Воскресенье>`
 Need to address the concerns raised by the client.
 
 #### DONE Send meeting minutes
-`CLOSED: [2024-12-04 Mon]`
+`CLOSED: [2024-12-04 Wed]`
 Minutes sent to all participants.
 
 ## Product Planning
 
 ### Quarterly planning session
-`<2024-12-15 Fri 13:00-17:00>`
+`<2024-12-15 Sun 13:00-17:00>`
 Q1 2025 roadmap discussion.
 
 ### TODO Prepare presentation
-`SCHEDULED: <2024-12-12 Ср>`
+`SCHEDULED: <2024-12-12 Чт>`
 Create slides for the planning session.
 
 ### TODO Collect team input
-`DEADLINE: <2024-12-10 Воскресенье>`
+`DEADLINE: <2024-12-10 Вторник>`
 Gather feedback from all team members.
 
 ## Client Meetings
 
 ### Client A - Project kickoff
-`<2024-12-08 Пт 14:00-15:30>`
+`<2024-12-08 Вс 14:00-15:30>`
 Initial project discussion and requirements gathering.
 
 ### TODO Prepare project proposal
-`DEADLINE: <2024-12-07 Thu>`
+`DEADLINE: <2024-12-07 Sat>`
 Draft the initial proposal document.
 
 ### Client B - Status update
-`<2024-12-11 Понедельник 11:00-12:00>`
+`<2024-12-11 Среда 11:00-12:00>`
 Monthly progress review.
 
 ## Retrospective
 
 ### Sprint retrospective
-`<2024-12-13 Wed 16:00-17:00>`
+`<2024-12-13 Fri 16:00-17:00>`
 Review what went well and what can be improved.
 
 ### TODO Create action items

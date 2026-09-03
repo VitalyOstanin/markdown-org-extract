@@ -281,7 +281,6 @@ fn render_output(cli: &Cli, agenda_output: agenda::AgendaOutput) -> Result<(), A
     Ok(())
 }
 
-/// Returns true when the path is the standard unix sigil `-` meaning stdout.
 /// `parse-phrase`: fold the phrases into an entry and print it as JSON.
 ///
 /// Nothing is scanned and nothing is written — the subcommand exists so the
@@ -328,6 +327,7 @@ fn handle_parse_phrase(cli: &Cli, args: &ParsePhraseArgs) -> Result<(), AppError
     Ok(())
 }
 
+/// Returns true when the path is the standard unix sigil `-` meaning stdout.
 fn is_stdout_sigil(path: &Path) -> bool {
     path.as_os_str() == "-"
 }

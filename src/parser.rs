@@ -453,18 +453,6 @@ fn finalize_task(
     })
 }
 
-/// Read the ADR-0031 exception keys out of a task's properties.
-///
-/// Every way an exception can fail to work is reported, because each of them
-/// leaves an entry that reads like an exception and behaves like none: a date
-/// that cannot be read, a key that yields no date at all, a `RECURRENCE_ID`
-/// whose time is lost, and half a pair. The one silence ADR-0031 does allow —
-/// a replacement in a file the scan never reached — cannot be seen from here
-/// and is answered where the run's task list is whole (see
-/// [`crate::exceptions::OccurrenceExceptions::unknown_series`]).
-///
-/// Reported through the capped `org-properties` channel: see
-/// `warn_unusable_exception` for why that one rather than the timestamp one.
 /// What the exception keys of one entry read as. Named rather than a tuple:
 /// `recurrence_id` and `series_id` are both `Option<String>`, and swapping
 /// them at a call site would compile.
@@ -478,6 +466,18 @@ struct ExceptionFields {
     series_id: Option<String>,
 }
 
+/// Read the ADR-0031 exception keys out of a task's properties.
+///
+/// Every way an exception can fail to work is reported, because each of them
+/// leaves an entry that reads like an exception and behaves like none: a date
+/// that cannot be read, a key that yields no date at all, a `RECURRENCE_ID`
+/// whose time is lost, and half a pair. The one silence ADR-0031 does allow —
+/// a replacement in a file the scan never reached — cannot be seen from here
+/// and is answered where the run's task list is whole (see
+/// [`crate::exceptions::OccurrenceExceptions::unknown_series`]).
+///
+/// Reported through the capped `org-properties` channel: see
+/// `warn_unusable_exception` for why that one rather than the timestamp one.
 fn exception_fields(
     path: &Path,
     line: u32,

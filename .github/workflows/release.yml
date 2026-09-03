@@ -201,23 +201,11 @@ jobs:
         # exactly what is being rehearsed — often one that is not `master`
         # yet. The barrier belongs to the runs that can reach crates.io.
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.tag != '' }}
-        # Pushing a tag hands GitHub the commit with it, so `git push origin
-        # v0.19.0` alone is enough to start this workflow over a commit no
-        # branch of `origin` contains: crates.io would receive the release
-        # while `master` still stands where it did. The branch is deliberately
-        # unprotected (ADR-0017), so this is the barrier. Push order is
-        # `master` first, then the tag.
-        run: |
-          # `--depth=0` is not "no limit" -- git rejects it outright ("depth 0
-          # is not a positive number"), which is how this step failed the first
-          # time it ever ran. The checkout above already fetched the full
-          # history; this fetch is here for the remote's current master, and
-          # FETCH_HEAD names it without depending on a remote-tracking ref.
-          git fetch --no-tags origin master
-          if ! git merge-base --is-ancestor HEAD FETCH_HEAD; then
-            echo "::error::$(git rev-parse HEAD) is not on origin/master. Push the branch first, then the tag."
-            exit 1
-          fi
+        # Why the barrier exists is written in the script itself, which is
+        # where `cargo test` drives it over a temporary repository. The
+        # condition above stays here: whether a run is a rehearsal is the
+        # workflow's own answer, not the repository's.
+        run: scripts/release-check-ancestry.sh origin master
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable as of 2026-07-16

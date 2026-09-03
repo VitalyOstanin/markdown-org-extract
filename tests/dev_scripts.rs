@@ -8,6 +8,8 @@
 //!     for a version (subject + CHANGELOG section body).
 //!   * `scripts/release-verify-tag-body.sh` — checks a created tag is
 //!     annotated and its body mirrors the CHANGELOG section (ADR-0011).
+//!   * `scripts/release-check-ancestry.sh` — refuses to publish a commit the
+//!     remote's release branch does not contain.
 //!
 //! Both scripts are POSIX bash. Tests drive them through `bash` with a
 //! tempdir-isolated environment so the project's real `.git/hooks/` and
@@ -759,5 +761,164 @@ fn release_verify_rejects_strip_cleanup_that_drops_headings() {
     assert!(
         stderr.contains("### Added") || stderr.contains("does not mirror"),
         "stderr should show the divergence: {stderr}"
+    );
+}
+
+// `scripts/release-check-ancestry.sh` is the barrier of ADR-0017: the release
+// branch is unprotected, and a tag alone can start the workflow over a commit
+// no branch of `origin` holds. The check ran only inside a workflow before,
+// and its first live run failed on a `--depth=0` that git refuses; driven over
+// a temporary pair of repositories it answers in a second.
+
+/// A repository with one commit on `master`, plus a bare repository it calls
+/// `origin` and has pushed that commit to. Returns the working repository.
+fn init_repo_with_a_remote(root: &Path) -> PathBuf {
+    let remote = root.join("remote.git");
+    let ok = Command::new("git")
+        .args(["init", "--quiet", "--bare", "--initial-branch=master"])
+        .arg(&remote)
+        .status()
+        .expect("git init --bare")
+        .success();
+    assert!(ok, "git init --bare failed");
+
+    let repo = root.join("work");
+    fs::create_dir(&repo).unwrap();
+    let ok = Command::new("git")
+        .args(["init", "--quiet", "--initial-branch=master"])
+        .current_dir(&repo)
+        .status()
+        .expect("git init")
+        .success();
+    assert!(ok, "git init failed");
+    // Identity is set on this repository alone: a test must never reach the
+    // global config.
+    for (k, v) in [("user.email", "t@example.invalid"), ("user.name", "Test")] {
+        let ok = Command::new("git")
+            .args(["config", k, v])
+            .current_dir(&repo)
+            .status()
+            .expect("git config")
+            .success();
+        assert!(ok, "git config {k} failed");
+    }
+    commit_a_file(&repo, "first");
+
+    let ok = Command::new("git")
+        .arg("remote")
+        .arg("add")
+        .arg("origin")
+        .arg(&remote)
+        .current_dir(&repo)
+        .status()
+        .expect("git remote add")
+        .success();
+    assert!(ok, "git remote add failed");
+    let ok = Command::new("git")
+        .args(["push", "--quiet", "origin", "master"])
+        .current_dir(&repo)
+        .status()
+        .expect("git push")
+        .success();
+    assert!(ok, "git push failed");
+
+    repo
+}
+
+fn commit_a_file(repo: &Path, name: &str) {
+    fs::write(repo.join(name), format!("{name}\n")).unwrap();
+    let ok = Command::new("git")
+        .args(["add", name])
+        .current_dir(repo)
+        .status()
+        .expect("git add")
+        .success();
+    assert!(ok, "git add failed");
+    let ok = Command::new("git")
+        .args(["commit", "-q", "-m", name])
+        .current_dir(repo)
+        .status()
+        .expect("git commit")
+        .success();
+    assert!(ok, "git commit failed");
+}
+
+fn run_release_check_ancestry(repo: &Path) -> (i32, String, String) {
+    let output = Command::new("bash")
+        .arg(script("release-check-ancestry.sh"))
+        .args(["origin", "master"])
+        .current_dir(repo)
+        .output()
+        .expect("invoke release-check-ancestry.sh");
+    (
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn release_check_ancestry_accepts_a_commit_the_remote_branch_holds() {
+    let dir = tempdir().unwrap();
+    let repo = init_repo_with_a_remote(dir.path());
+
+    let (code, out, err) = run_release_check_ancestry(&repo);
+
+    assert_eq!(
+        code, 0,
+        "a pushed commit must pass; stdout: {out} stderr: {err}"
+    );
+}
+
+#[test]
+fn release_check_ancestry_refuses_a_commit_the_remote_branch_does_not_hold() {
+    let dir = tempdir().unwrap();
+    let repo = init_repo_with_a_remote(dir.path());
+    // The commit a tag could be pushed for while `master` stays where it is.
+    commit_a_file(&repo, "unpushed");
+
+    let (code, out, err) = run_release_check_ancestry(&repo);
+
+    assert_ne!(code, 0, "an unpushed commit must be refused; stderr: {err}");
+    assert!(
+        out.contains("::error::") && out.contains("not on origin/master"),
+        "the failure must name the cause: {out}"
+    );
+}
+
+#[test]
+fn release_check_ancestry_accepts_an_ancestor_of_the_remote_branch() {
+    // A release run checks out the tagged commit, which is an ancestor of
+    // where `master` stands by the time the run starts rather than its tip.
+    let dir = tempdir().unwrap();
+    let repo = init_repo_with_a_remote(dir.path());
+    let tagged = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&repo)
+        .output()
+        .expect("git rev-parse");
+    let tagged = String::from_utf8_lossy(&tagged.stdout).trim().to_string();
+
+    commit_a_file(&repo, "later");
+    let ok = Command::new("git")
+        .args(["push", "--quiet", "origin", "master"])
+        .current_dir(&repo)
+        .status()
+        .expect("git push")
+        .success();
+    assert!(ok, "git push failed");
+    let ok = Command::new("git")
+        .args(["checkout", "--quiet", &tagged])
+        .current_dir(&repo)
+        .status()
+        .expect("git checkout")
+        .success();
+    assert!(ok, "git checkout failed");
+
+    let (code, out, err) = run_release_check_ancestry(&repo);
+
+    assert_eq!(
+        code, 0,
+        "an ancestor of the remote branch must pass; stdout: {out} stderr: {err}"
     );
 }

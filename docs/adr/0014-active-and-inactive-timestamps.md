@@ -182,7 +182,7 @@ Harder:
   - `org-keyword-time-regexp` -- `lisp/org.el:576`
   - `org-toggle-timestamp-type` -- `lisp/org.el:15510`
 - `org-expiry` package and `org-expiry-insert-created`:
-  [Worg: org-expiry](https://orgmode.org/worg/org-contrib/org-expiry.html)
+  [Worg: org-contrib](https://orgmode.org/worg/org-contrib/)
 - Inactive timestamp documentation:
   [Timestamps (The Org Manual)](https://orgmode.org/manual/Timestamps.html),
   [Creating Timestamps (The Org Manual)](https://orgmode.org/manual/Creating-Timestamps.html)

@@ -96,7 +96,7 @@ Harder:
 - Output types: [`src/types.rs`](../../src/types.rs)
 - Argument parsing: [`src/cli.rs`](../../src/cli.rs)
 - Scanner entry point: [`src/main.rs`](../../src/main.rs)
-- Walker: [`src/walker.rs`](../../src/walker.rs)
+- Directory scan: [`src/scan.rs`](../../src/scan.rs)
 - First known consumer: [github.com/VitalyOstanin/markdown-org-vscode](https://github.com/VitalyOstanin/markdown-org-vscode)
 - Crate: [crates.io/crates/markdown-org-extract](https://crates.io/crates/markdown-org-extract)
 - Upstream reference for Org-mode semantics: [orgmode.org](https://orgmode.org/)

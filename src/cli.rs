@@ -186,7 +186,7 @@ pub struct Cli {
     /// Supported values: `ru`, `en`. Empty segments are tolerated
     /// (`ru,` and `,en` both parse). An unknown locale is rejected at
     /// CLI validation time with exit code 2 — `--quiet` does not mask it.
-    #[arg(long, default_value = "ru,en", value_parser = validate_locale, help_heading = "Agenda")]
+    #[arg(long, default_value = "ru,en", value_parser = validate_locale, global = true, help_heading = "Agenda")]
     pub locale: String,
 
     /// Agenda time scope: day / week / month. Mutually exclusive with `--tasks`.
@@ -240,13 +240,13 @@ pub struct Cli {
     pub to: Option<String>,
 
     /// IANA timezone for "today" determination (e.g. `Europe/Moscow`, `UTC`)
-    #[arg(long, default_value = "Europe/Moscow", value_parser = validate_timezone, help_heading = "Agenda")]
+    #[arg(long, default_value = "Europe/Moscow", value_parser = validate_timezone, global = true, help_heading = "Agenda")]
     pub tz: String,
 
     /// Override "today" (YYYY-MM-DD). Used as the reference point for overdue
     /// and upcoming markers, and as the default for a missing `--from`/`--to`
     /// edge. Not allowed in `--agenda tasks`.
-    #[arg(long, value_parser = validate_date, help_heading = "Agenda")]
+    #[arg(long, value_parser = validate_date, global = true, help_heading = "Agenda")]
     pub current_date: Option<String>,
 
     /// Which weekday a week begins on: a name (`monday` … `sunday`, or the
@@ -278,7 +278,7 @@ pub struct Cli {
     /// saturation warning rather than unlocking a deeper level.
     /// Overridden by the `RUST_LOG` environment variable when set, regardless
     /// of `--verbose` / `--quiet` (e.g. `RUST_LOG=error` mutes `-vv`).
-    #[arg(long, short = 'v', action = clap::ArgAction::Count, conflicts_with = "quiet", help_heading = "Diagnostics")]
+    #[arg(long, short = 'v', action = clap::ArgAction::Count, conflicts_with = "quiet", global = true, help_heading = "Diagnostics")]
     pub verbose: u8,
 
     /// Suppress all diagnostics (warnings and the per-run processing summary
@@ -287,6 +287,7 @@ pub struct Cli {
         long,
         short = 'q',
         conflicts_with = "verbose",
+        global = true,
         help_heading = "Diagnostics"
     )]
     pub quiet: bool,
@@ -294,14 +295,25 @@ pub struct Cli {
     /// Disable ANSI color codes in diagnostic output. The `NO_COLOR` env var
     /// has the same effect (see <https://no-color.org>). Shortcut for
     /// `--color never`; cannot be combined with `--color`.
-    #[arg(long, conflicts_with = "color", help_heading = "Diagnostics")]
+    #[arg(
+        long,
+        conflicts_with = "color",
+        global = true,
+        help_heading = "Diagnostics"
+    )]
     pub no_color: bool,
 
     /// Color output mode for diagnostics: `auto` (default), `always`, `never`.
     /// In `auto` mode color is enabled only when stderr is a TTY. The env vars
     /// `NO_COLOR`, `CLICOLOR=0`, and `CLICOLOR_FORCE` (non-zero) are also
     /// honored — see the `--no-color` flag and <https://bixense.com/clicolors/>.
-    #[arg(long, value_enum, default_value = "auto", help_heading = "Diagnostics")]
+    #[arg(
+        long,
+        value_enum,
+        default_value = "auto",
+        global = true,
+        help_heading = "Diagnostics"
+    )]
     pub color: ColorMode,
 
     /// Print holidays for the given year (1900..=2100) and exit.
@@ -346,20 +358,11 @@ pub struct ParsePhraseArgs {
     /// The phrases, in the order they were said. Quote each one.
     #[arg(required = true, value_name = "PHRASE")]
     pub phrases: Vec<String>,
-
-    /// Comma-separated list of the grammars to consult (`ru`, `en`).
-    /// A phrase in a language that is not listed stays in the heading.
-    #[arg(long, default_value = "ru,en", value_parser = validate_locale)]
-    pub locale: String,
-
-    /// The day the phrases are relative to (YYYY-MM-DD). Without it, today in
-    /// `--tz` is used, and the answer says which day that was.
-    #[arg(long, value_parser = validate_date)]
-    pub current_date: Option<String>,
-
-    /// IANA timezone deciding what today is when `--current-date` is absent.
-    #[arg(long, default_value = "Europe/Moscow", value_parser = validate_timezone)]
-    pub tz: String,
+    // `--locale`, `--current-date` and `--tz` are not repeated here: they are
+    // global on `Cli`, so they read the same whether they are written before
+    // or after the subcommand. Declaring them twice made the answer depend on
+    // where the flag stood — the leading form was parsed into the root copy,
+    // never read, and the phrase was dated from today's clock instead.
 }
 
 /// Snapshot of the color-related environment, taken once per invocation so the
@@ -439,6 +442,94 @@ pub(crate) fn decide_use_color(
         return false;
     }
     is_tty
+}
+
+/// The scan's own flags, by the id clap knows them under. A subcommand stands
+/// in place of the scan, so none of these has anything to act on when one is
+/// given. They are refused rather than ignored — see [`parse_args`].
+///
+/// The list deliberately leaves out the flags that mean the same to every run:
+/// `--current-date`, `--tz`, `--locale` and the diagnostics are declared
+/// `global` on [`Cli`] and read the same on either side of the subcommand name.
+const SCAN_ONLY_ARGS: &[&str] = &[
+    "dir",
+    "glob",
+    "format",
+    "output",
+    "absolute_paths",
+    "agenda",
+    "tasks",
+    "tasks_include_done",
+    "tasks_include_cancelled",
+    "date",
+    "from",
+    "to",
+    "week_start",
+    "max_tasks",
+    "holidays",
+    "completions",
+];
+
+/// Parse the command line, refusing a scan-only flag written alongside a
+/// subcommand instead of accepting it and dropping it.
+///
+/// `clap` has `args_conflicts_with_subcommands` for this, but it treats every
+/// argument seen before the subcommand name as a conflict, including the
+/// `global` ones that are meant to work on both sides. The check is therefore
+/// done here, over the flags that only a scan can honour, and only when the
+/// value actually came from the command line — a default must not trip it.
+///
+/// Exits with clap's own usage error, so the exit code stays 2 and the message
+/// reads like every other argument error.
+pub fn parse_args() -> Cli {
+    use clap::parser::ValueSource;
+    use clap::{CommandFactory, FromArgMatches};
+
+    let mut command = Cli::command();
+    let matches = command.clone().get_matches();
+
+    if matches.subcommand_name().is_some() {
+        let offenders: Vec<String> = SCAN_ONLY_ARGS
+            .iter()
+            .filter(|id| matches.value_source(id) == Some(ValueSource::CommandLine))
+            .filter_map(|id| {
+                // `get_long`, not `Display`: the latter reads the value count,
+                // which is only filled in once clap has built the command, and
+                // panics on an unbuilt one.
+                command
+                    .get_arguments()
+                    .find(|arg| arg.get_id() == *id)
+                    .and_then(|arg| arg.get_long())
+                    .map(|long| format!("--{long}"))
+            })
+            .collect();
+
+        if !offenders.is_empty() {
+            let subcommand = matches.subcommand_name().unwrap_or_default().to_string();
+            let listed = offenders
+                .iter()
+                .map(|long| format!("'{long}'"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let noun = if offenders.len() == 1 {
+                "the argument"
+            } else {
+                "the arguments"
+            };
+
+            command
+                .error(
+                    clap::error::ErrorKind::ArgumentConflict,
+                    format!("{noun} {listed} cannot be used with '{subcommand}'"),
+                )
+                .exit();
+        }
+    }
+
+    match Cli::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(err) => err.format(&mut command).exit(),
+    }
 }
 
 impl Cli {

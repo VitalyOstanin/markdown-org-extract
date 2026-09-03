@@ -3964,3 +3964,88 @@ fn parse_phrase_rejects_a_malformed_current_date() {
 fn parse_phrase_requires_a_phrase() {
     bin().arg("parse-phrase").assert().failure().code(2);
 }
+
+#[test]
+fn parse_phrase_reads_the_reference_day_from_either_side_of_the_subcommand() {
+    // `--current-date` names one thing, so both spellings must answer the
+    // same. Before the flag was made global the leading form was parsed into
+    // a separate root argument and dropped, and the answer silently came from
+    // today's clock instead.
+    let leading = bin()
+        .args(["--current-date", "2030-01-01", "parse-phrase"])
+        .arg("завтра купить хлеб")
+        .output()
+        .expect("run parse-phrase");
+    assert!(
+        leading.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&leading.stderr)
+    );
+    let leading: serde_json::Value =
+        serde_json::from_slice(&leading.stdout).expect("stdout is a JSON object");
+    let trailing = parse_phrase(&["--current-date", "2030-01-01", "завтра купить хлеб"]);
+
+    assert_eq!(leading["current_date"], "2030-01-01");
+    assert_eq!(leading, trailing);
+}
+
+#[test]
+fn parse_phrase_reads_the_timezone_and_the_locales_from_either_side() {
+    let leading = bin()
+        .args(["--tz", "UTC", "--locale", "ru", "parse-phrase"])
+        .arg("позвонить сегодня")
+        .output()
+        .expect("run parse-phrase");
+    assert!(
+        leading.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&leading.stderr)
+    );
+    let leading: serde_json::Value =
+        serde_json::from_slice(&leading.stdout).expect("stdout is a JSON object");
+    let trailing = parse_phrase(&["--tz", "UTC", "--locale", "ru", "позвонить сегодня"]);
+
+    assert_eq!(leading, trailing);
+}
+
+#[test]
+fn parse_phrase_refuses_the_scan_flags_instead_of_ignoring_them() {
+    // Every one of these was accepted and then silently dropped: the run
+    // printed the phrase as JSON and exited 0, so `--output` produced no file
+    // and `--completions` produced no completion script.
+    for flag in [
+        vec![
+            "--output",
+            "/tmp/markdown-org-extract-should-not-exist.json",
+        ],
+        vec!["--format", "markdown"],
+        vec!["--dir", "/nonexistent/xyz"],
+        vec!["--glob", "*.txt"],
+        vec!["--tasks"],
+        vec!["--agenda", "week"],
+        vec!["--max-tasks", "5"],
+        vec!["--absolute-paths"],
+        vec!["--completions", "bash"],
+        vec!["--holidays", "2026"],
+    ] {
+        bin()
+            .args(&flag)
+            .args(["parse-phrase", "позвонить"])
+            .assert()
+            .failure()
+            .code(2);
+    }
+}
+
+#[test]
+fn parse_phrase_keeps_the_diagnostic_flags_usable() {
+    // The diagnostics apply to any run, so they stay allowed alongside the
+    // subcommand rather than being swept up by the conflict rule.
+    for flag in [vec!["-vv"], vec!["--quiet"], vec!["--color", "never"]] {
+        bin()
+            .args(&flag)
+            .args(["parse-phrase", "позвонить"])
+            .assert()
+            .success();
+    }
+}

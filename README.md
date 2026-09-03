@@ -1535,6 +1535,22 @@ replaces its value, a field it does not name keeps it, and text no rule
 consumes is appended to the heading. Correcting an hour is one short phrase
 ("в 16:00"), not the whole sentence again.
 
+`--current-date`, `--tz` and `--locale` mean the same to a scan and to a
+phrase, so they may be written on either side of the subcommand name and read
+the same:
+
+```bash
+markdown-org-extract --current-date 2026-08-31 parse-phrase "завтра купить хлеб"
+markdown-org-extract parse-phrase --current-date 2026-08-31 "завтра купить хлеб"
+```
+
+The flags that only a scan can honour — `--dir`, `--glob`, `--format`,
+`--output`, `--absolute-paths`, `--agenda`, `--tasks`, `--date`, `--from`,
+`--to`, `--week-start`, `--max-tasks`, `--holidays`, `--completions` — are
+refused alongside the subcommand with exit code 2, because the subcommand
+stands in place of the scan and there is nothing for them to act on. The
+answer always goes to stdout as JSON.
+
 ### What the rules understand
 
 | № | Field    | Russian                                                     | English                                                  |

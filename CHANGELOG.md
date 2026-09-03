@@ -40,7 +40,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No user-visible changes yet._
+### Changed
+
+- `--current-date`, `--tz` and `--locale` are now global: they read the
+  same whether they are written before or after `parse-phrase`. Before,
+  the leading form was parsed into a separate root-level copy that the
+  subcommand never read, so `--current-date 2030-01-01 parse-phrase …`
+  quietly dated the phrase from today's clock instead of the day asked
+  for. The trailing form is unchanged.
+
+### Fixed
+
+- A scan-only flag written alongside `parse-phrase` is refused with exit
+  code 2 instead of being accepted and dropped. `--output` used to print
+  the phrase to stdout, exit 0 and leave no file; `--completions` used to
+  print the phrase instead of the completion script, which could
+  overwrite a completion file with a line of JSON. The flags refused this
+  way are `--dir`, `--glob`, `--format`, `--output`, `--absolute-paths`,
+  `--agenda`, `--tasks`, `--tasks-include-done`,
+  `--tasks-include-cancelled`, `--date`, `--from`, `--to`,
+  `--week-start`, `--max-tasks`, `--holidays` and `--completions`. The
+  diagnostics (`-v`, `-q`, `--color`, `--no-color`) stay allowed.
 
 ## [0.21.0] — 2026-09-02
 

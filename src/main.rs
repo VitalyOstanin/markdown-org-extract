@@ -15,7 +15,6 @@ mod format;
 
 use chrono::NaiveDate;
 use chrono_tz::Tz;
-use clap::Parser;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -84,7 +83,7 @@ fn is_broken_pipe(e: &AppError) -> bool {
 }
 
 fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
-    let cli = Cli::parse();
+    let cli = cli::parse_args();
     cli.init_tracing();
 
     // Warn once when the user piles on more -v's than the level mapping
@@ -101,7 +100,7 @@ fn run(interrupt: &AtomicBool) -> Result<(), AppError> {
     }
 
     if let Some(Command::ParsePhrase(ref args)) = cli.command {
-        return handle_parse_phrase(args);
+        return handle_parse_phrase(&cli, args);
     }
 
     if let Some(shell) = cli.completions {
@@ -288,22 +287,25 @@ fn render_output(cli: &Cli, agenda_output: agenda::AgendaOutput) -> Result<(), A
 /// Nothing is scanned and nothing is written — the subcommand exists so the
 /// grammar is available to the VS Code extension, which runs this binary, and
 /// in a shell. The Android client links the same function directly.
-fn handle_parse_phrase(args: &ParsePhraseArgs) -> Result<(), AppError> {
-    let today = match args.current_date.as_deref() {
+fn handle_parse_phrase(cli: &Cli, args: &ParsePhraseArgs) -> Result<(), AppError> {
+    // The reference day, the timezone and the locales are global flags, so
+    // they are read off `Cli` and mean the same on either side of the
+    // subcommand name.
+    let today = match cli.current_date.as_deref() {
         Some(date) => NaiveDate::parse_from_str(date, "%Y-%m-%d")
             .map_err(|e| AppError::InvalidDate(format!("--current-date '{date}': {e}")))?,
         None => {
             // The same notion of today the agenda uses, so a phrase and an
             // agenda rendered in the same second agree on what day it is.
-            let tz: Tz = args
+            let tz: Tz = cli
                 .tz
                 .parse()
-                .map_err(|_| AppError::InvalidTimezone(args.tz.clone()))?;
+                .map_err(|_| AppError::InvalidTimezone(cli.tz.clone()))?;
             agenda::compute_today_in_tz(chrono::Utc::now(), tz)
         }
     };
 
-    let entry = parse_phrases(args.phrases.iter().map(String::as_str), &args.locale, today);
+    let entry = parse_phrases(args.phrases.iter().map(String::as_str), &cli.locale, today);
 
     #[derive(serde::Serialize)]
     struct Printed<'a> {

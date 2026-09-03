@@ -463,6 +463,35 @@ const CHAINS: &[Chain] = &[
         "15:00",
         "+1w",
     ),
+    // A zero step is no repeater: the timestamp grammar refuses `+0d`, so the
+    // words stay in the heading rather than becoming a value nothing reads back.
+    (
+        &["оплата каждые 0 недель"],
+        "оплата каждые 0 недель",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+    ),
+    (
+        &["pay every 0 weeks"],
+        "pay every 0 weeks",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+    ),
+    (
+        &["зарядка каждые 0 рабочих дней"],
+        "зарядка каждые 0 рабочих дней",
+        "-",
+        "-",
+        "-",
+        "-",
+        "-",
+    ),
 ];
 
 #[test]

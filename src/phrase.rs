@@ -939,6 +939,13 @@ fn match_repeater(tokens: &[Token<'_>], i: usize, langs: Languages) -> Option<(u
         }
     }
 
+    // A zero step is no repeater: `parse_repeater` refuses `+0d` because the
+    // occurrence math divides by the step, so the words stay in the heading
+    // instead of becoming a value the grammar cannot read back.
+    if count == 0 {
+        return None;
+    }
+
     // "каждый рабочий день" / "every working day" — the working-day repeater
     // the timestamp grammar spells `+1wd`.
     if let Some(token) = tokens.get(j) {

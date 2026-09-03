@@ -61,6 +61,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--tasks-include-cancelled`, `--date`, `--from`, `--to`,
   `--week-start`, `--max-tasks`, `--holidays` and `--completions`. The
   diagnostics (`-v`, `-q`, `--color`, `--no-color`) stay allowed.
+- A phrase no longer builds a repeater with a zero step. "каждые 0
+  дней" and "every 0 weeks" used to parse into `+0d` and `+0w`, values
+  the timestamp grammar refuses to read back: a client that wrote one
+  into a file lost the repeater silently on the next scan, and passing
+  one to `closest_date` divided by zero. Such a phrase now leaves the
+  words in the heading and names no repeater.
 
 ## [0.21.0] — 2026-09-02
 

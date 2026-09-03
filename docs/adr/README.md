@@ -70,7 +70,7 @@ was decided, and the trade-offs that came with it.
 | 0033 | [Nothing irreversible happens before the archives are checked](0033-nothing-irreversible-before-the-archives-are-checked.md) | Accepted |
 | 0034 | [A release is rehearsed on a branch, before it is tagged](0034-a-release-is-rehearsed-before-it-is-tagged.md) | Accepted |
 | 0035 | [A phrase is parsed into an entry by rules, in the core](0035-a-phrase-is-parsed-into-an-entry-by-rules.md) | Accepted |
-| 0036 | [A later phrase refines the entry, it does not replace it](0036-a-later-phrase-refines-the-entry.md) | Accepted |
+| 0036 | [A later phrase refines the entry, it does not replace it](0036-a-later-phrase-refines-the-entry.md) | Accepted, amended by 0037 |
 | 0037 | [A phrase also edits an entry that exists](0037-a-phrase-also-edits-an-entry-that-exists.md) | Accepted |
 
 ## Adding a new ADR

@@ -10,8 +10,10 @@
 
 ## Status
 
-Accepted (2026-08-31). Amends [ADR-0035](0035-a-phrase-is-parsed-into-an-entry-by-rules.md)
-in the shape of the parser, not in what the rules do.
+Accepted (2026-08-31), amended by
+[ADR-0037](0037-a-phrase-also-edits-an-entry-that-exists.md). Amends
+[ADR-0035](0035-a-phrase-is-parsed-into-an-entry-by-rules.md) in the shape of
+the parser, not in what the rules do.
 
 ## Context
 

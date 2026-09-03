@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [\[0.2.2\] — 2026-05-17](#022--2026-05-17)
 - [\[0.2.1\] — 2026-05-17](#021--2026-05-17)
 - [\[0.2.0\] — 2026-05-17](#020--2026-05-17)
-- [\[0.1.6\] — 2026-05-11](#016--2026-05-11)
+- [\[0.1.6\] — 2025-12-09](#016--2025-12-09)
 - [\[0.1.5\] — 2025-12-06..2025-12-09](#015--2025-12-062025-12-09)
 
 ## [Unreleased]
@@ -928,6 +928,11 @@ _No user-visible changes yet._
 
 ## [0.4.1] — 2026-05-22
 
+> Tagged but never published: no `0.4.0` or `0.4.1` reached crates.io or the
+> GitHub Releases, the release runs of that day having stopped on the macOS
+> packaging tests `0.4.2` went on to fix. What both sections describe is in
+> `0.4.2`, which is the first installable version of the three.
+
 ### Added
 
 - Release archives are now published for `x86_64-apple-darwin`
@@ -965,6 +970,11 @@ _No user-visible changes yet._
     are unaffected.
 
 ## [0.4.0] — 2026-05-22
+
+> Tagged but never published: no `0.4.0` or `0.4.1` reached crates.io or the
+> GitHub Releases, the release runs of that day having stopped on the macOS
+> packaging tests `0.4.2` went on to fix. What both sections describe is in
+> `0.4.2`, which is the first installable version of the three.
 
 ### Added
 
@@ -1735,7 +1745,7 @@ the crate as a dependency are not exposed to the failure.
 
 - `once_cell` runtime dependency (superseded by `std::sync::LazyLock`).
 
-## [0.1.6] — 2026-05-11
+## [0.1.6] — 2025-12-09
 
 - Version bump.
 

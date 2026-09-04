@@ -67,6 +67,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   into a file lost the repeater silently on the next scan, and passing
   one to `closest_date` divided by zero. Such a phrase now leaves the
   words in the heading and names no repeater.
+- A file whose only tasks are cancelled is read rather than skipped.
+  Every file is passed through one regex before it is parsed, and that
+  regex listed `TODO` and `DONE` but neither spelling of `CANCELLED`, so
+  a file holding nothing else matched nothing and was dropped whole:
+  `--tasks-include-cancelled` answered with an empty list, and writing
+  any other task into the same file brought the cancelled ones back. A
+  planning line under the heading hid the defect, which is why it
+  survived: most cancelled tasks carry one.
 
 ## [0.21.0] — 2026-09-02
 

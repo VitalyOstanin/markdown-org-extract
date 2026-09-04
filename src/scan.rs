@@ -243,8 +243,15 @@ fn scan_files(
     let glob_matcher = compile_glob(options.glob)?;
 
     let Run { tasks, stats } = run;
+    // A cheap first pass over the bytes of every file, so that a tree of notes
+    // is not parsed in full to find out it holds no tasks. Every keyword a
+    // heading can carry has to be listed here: a file whose only task is
+    // `CANCELLED`, with no planning line under it, matched nothing and was
+    // dropped before the parser ever saw it — `--tasks-include-cancelled`
+    // returned an empty list, and the same file came back to life the moment
+    // any other task was written into it.
     let matcher = RegexMatcher::new(
-        r"(?m)(^[#*]+\s+(TODO|DONE)\s|DEADLINE:|SCHEDULED:|CREATED:|CLOSED:|CLOCK:)",
+        r"(?m)(^[#*]+\s+(TODO|DONE|CANCELLED|CANCELED)\s|DEADLINE:|SCHEDULED:|CREATED:|CLOSED:|CLOCK:)",
     )
     .map_err(|e| AppError::Regex(e.to_string()))?;
 
@@ -594,6 +601,35 @@ mod tests {
         let mut buf = Vec::new();
         assert!(read_capped_into(&path, 64, &mut buf).unwrap());
         assert_eq!(buf, payload);
+    }
+
+    /// A file whose only tasks are cancelled is still a file with tasks.
+    ///
+    /// The walk reads every file through one regex before parsing it, and the
+    /// keywords listed there are what makes a file worth opening. `CANCELLED`
+    /// was missing from that list, so a file holding nothing else was dropped
+    /// whole: `--tasks-include-cancelled` answered with an empty list, and
+    /// writing any other task into the same file brought the cancelled one
+    /// back. Both spellings are checked, since both are read as cancelled.
+    #[test]
+    fn a_file_of_cancelled_tasks_alone_is_still_scanned() {
+        for keyword in ["CANCELLED", "CANCELED"] {
+            let dir = tempdir().unwrap();
+            fs::write(
+                dir.path().join("notes.md"),
+                format!("## {keyword} the one task here\n"),
+            )
+            .unwrap();
+
+            let outcome =
+                scan_directory(dir.path(), &ScanOptions::default(), None).expect("the scan runs");
+
+            assert_eq!(
+                outcome.tasks.len(),
+                1,
+                "{keyword} alone in a file left it unread"
+            );
+        }
     }
 
     #[test]

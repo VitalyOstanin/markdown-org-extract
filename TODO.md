@@ -14,6 +14,7 @@ package.
 - [Benchmarks (criterion)](#benchmarks-criterion)
 - [Deferred performance optimisations](#deferred-performance-optimisations)
 - [One grammar for every client, over WebAssembly](#one-grammar-for-every-client-over-webassembly)
+- [A move is keyed by a day, and an intra-day repeater would break that](#a-move-is-keyed-by-a-day-and-an-intra-day-repeater-would-break-that)
 - [Open info-level review notes](#open-info-level-review-notes)
 
 ## CI on the latest Ubuntu LTS
@@ -232,6 +233,26 @@ What the investigation has to establish:
 | 3 | How the extension loads it — bundled in the vsix, or fetched like the binary is today — and what that means for the web build of VS Code, where a native binary cannot run at all |
 | 4 | Which extension code moves: the `HEADING_REGEX` consumers and the two callers of `getTimestampPartAt` |
 | 5 | How the module is versioned against the crate, replacing the per-platform SHA256 table the extension pins today |
+
+## A move is keyed by a day, and an intra-day repeater would break that
+
+A `MOVED` line names the occurrence it moves by the day the series draws it on
+(ADR-0038), and one entry refuses a second line naming the same day. That is
+sound only while a series has at most one occurrence per day, which is what the
+agenda offers today: an `+Nh` repeater is projected onto the day grid and `N` is
+ignored, so every day counts as one occurrence (`timestamp/repeater.rs`,
+`RepeaterUnit::Hour`; README "Repeaters").
+
+Should hour repeaters ever be expanded within a day — an agenda that draws
+"every 2 hours" as several cells of one day — a day would no longer say which
+occurrence a line means, and the key would have to become a day and an hour.
+That is a breaking change to the written format, not an additive one: files
+already carrying day-keyed lines would have to keep being read.
+
+Action: decide it in a new ADR, superseding the key half of ADR-0038, before any
+work on intra-day expansion starts. The tests to look at first are
+`parser::tests::an_occurrence_moved_twice_by_one_entry_keeps_the_first_move` and
+the agenda's `push_moved_occurrence`.
 
 ## Open info-level review notes
 

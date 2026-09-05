@@ -18,6 +18,10 @@ through — and narrows what
 [ADR-0023](0023-next-occurrence-field.md) and
 [ADR-0029](0029-next-occurrence-after-the-rendered-day.md) name: an occurrence
 the series does not have is not the next one. None of the three is replaced.
+Superseded in part by [ADR-0038](0038-a-move-is-written-inside-the-series.md)
+(2026-09-05): a moved occurrence is now written as a `MOVED` line of the series
+itself rather than as a second entry, and the `SERIES_ID` / `RECURRENCE_ID` pair
+below is read but no longer written. The `EXDATE` half stands unchanged.
 
 ## Context
 

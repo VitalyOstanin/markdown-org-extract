@@ -65,13 +65,14 @@ was decided, and the trade-offs that came with it.
 | 0028 | [A week has a first day, and a month has a grid](0028-week-start-and-the-month-grid.md) | Accepted |
 | 0029 | [`timestamp_next_after` — the occurrence after the day being drawn](0029-next-occurrence-after-the-rendered-day.md) | Accepted, narrowed by 0031 |
 | 0030 | [An explicit window in the month grid is grown to whole weeks](0030-explicit-window-in-the-month-grid.md) | Accepted |
-| 0031 | [Exceptions to a repeating entry, in the iCalendar shape](0031-exceptions-to-a-repeating-entry.md) | Accepted |
+| 0031 | [Exceptions to a repeating entry, in the iCalendar shape](0031-exceptions-to-a-repeating-entry.md) | Accepted, superseded in part by 0038 |
 | 0032 | [What a missing occurrence owes, and what comes after it](0032-what-a-missing-occurrence-owes.md) | Accepted |
 | 0033 | [Nothing irreversible happens before the archives are checked](0033-nothing-irreversible-before-the-archives-are-checked.md) | Accepted |
 | 0034 | [A release is rehearsed on a branch, before it is tagged](0034-a-release-is-rehearsed-before-it-is-tagged.md) | Accepted |
 | 0035 | [A phrase is parsed into an entry by rules, in the core](0035-a-phrase-is-parsed-into-an-entry-by-rules.md) | Accepted |
 | 0036 | [A later phrase refines the entry, it does not replace it](0036-a-later-phrase-refines-the-entry.md) | Accepted, amended by 0037 |
 | 0037 | [A phrase also edits an entry that exists](0037-a-phrase-also-edits-an-entry-that-exists.md) | Accepted |
+| 0038 | [A moved occurrence is written inside the series](0038-a-move-is-written-inside-the-series.md) | Accepted |
 
 ## Adding a new ADR
 

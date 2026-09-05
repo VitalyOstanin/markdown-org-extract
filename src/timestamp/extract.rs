@@ -62,6 +62,14 @@ static CREATED_RE: LazyLock<Regex> = LazyLock::new(|| {
     ))
 });
 
+// The line that moves one occurrence of a series (ADR-0038). Only the keyword
+// is matched here; what follows it is a date, an arrow and a timestamp, and
+// reading those is `exceptions::parse_moved`'s -- a line that says `MOVED` and
+// then something unreadable is a line worth warning about, which a regex that
+// simply failed to match could not do.
+static MOVED_RE: LazyLock<Regex> =
+    LazyLock::new(|| compile_bounded(&format!(r"^\s*MOVED:\s*(\S[^\n]{{0,{TS_BODY_MAX}}})\s*$")));
+
 static DATE_RE: LazyLock<Regex> = LazyLock::new(|| compile_bounded(r"\b(\d{4}-\d{2}-\d{2})"));
 
 static TIME_RANGE_RE: LazyLock<Regex> =
@@ -82,6 +90,22 @@ pub fn extract_created_normalized(text: &str) -> Option<String> {
     CREATED_RE
         .captures(text)
         .map(|caps| format!("CREATED: [{}]", &caps[1]))
+}
+
+/// What a `MOVED` line says, from already-weekday-normalized text: everything
+/// after the keyword, trimmed.
+///
+/// Only the keyword is read here. Whether what follows it is a day, an arrow
+/// and a timestamp is [`crate::exceptions::parse_moved`]'s question, so that a
+/// line meant as a move and written wrongly is answered with a warning rather
+/// than passed over as prose.
+pub fn extract_moved_normalized(text: &str) -> Option<String> {
+    if !text.trim_start().starts_with("MOVED:") {
+        return None;
+    }
+    MOVED_RE
+        .captures(text)
+        .map(|caps| caps[1].trim().to_string())
 }
 
 /// Extract non-CREATED timestamp from already-weekday-normalized text.

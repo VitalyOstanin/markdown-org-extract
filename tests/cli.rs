@@ -4049,3 +4049,90 @@ fn parse_phrase_keeps_the_diagnostic_flags_usable() {
             .success();
     }
 }
+
+/// ADR-0038: a `MOVED` line takes the occurrence off its own day and draws it
+/// on the day it names, at the hour it names.
+#[test]
+fn a_moved_line_holds_the_occurrence_on_another_day() {
+    let dir = tempdir().unwrap();
+    let content = "### TODO English\n`SCHEDULED: <2026-08-13 Thu 15:00 +1w>`\n`MOVED: 2026-08-20 -> <2026-08-22 Sat 13:00>`\n\nBody.\n";
+    fs::write(dir.path().join("english.md"), content).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--agenda",
+            "week",
+            "--date",
+            "2026-08-17",
+            "--current-date",
+            "2026-08-17",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let day = |date: &str| {
+        parsed
+            .as_array()
+            .expect("array of days")
+            .iter()
+            .find(|day| day["date"] == date)
+            .unwrap_or_else(|| panic!("the week holds {date}"))
+            .clone()
+    };
+
+    assert_eq!(
+        day("2026-08-20")["scheduled_timed"],
+        serde_json::json!([]),
+        "the occurrence is not on the day the series draws it: {stdout}"
+    );
+    let saturday = day("2026-08-22");
+    let drawn = saturday["scheduled_timed"]
+        .as_array()
+        .expect("the day holds a list");
+    assert_eq!(drawn.len(), 1, "the occurrence is drawn once: {stdout}");
+    assert_eq!(drawn[0]["heading"], "English");
+    assert_eq!(
+        drawn[0]["timestamp_time"], "13:00",
+        "at the hour the move names: {stdout}"
+    );
+    assert_eq!(
+        drawn[0]["timestamp_date"], "2026-08-22",
+        "and on the day it names: {stdout}"
+    );
+}
+
+/// ADR-0038: the moves reach the wire as a field of their own, and a target
+/// that repeats is refused rather than read.
+#[test]
+fn tasks_json_carries_the_moved_occurrences_and_refuses_a_repeating_one() {
+    let dir = tempdir().unwrap();
+    let content = "### TODO English\n`SCHEDULED: <2026-08-13 Thu 15:00 +1w>`\n`MOVED: 2026-08-20 -> <2026-08-22 Sat 13:00>`\n`MOVED: 2026-08-27 -> <2026-08-29 Sat 13:00 +1w>`\n";
+    fs::write(dir.path().join("english.md"), content).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let moved = &parsed.as_array().expect("array of tasks")[0]["moved_occurrences"];
+
+    assert_eq!(
+        *moved,
+        serde_json::json!([{ "from": "2026-08-20", "to": "2026-08-22", "time": "13:00" }]),
+        "the repeating one is left out: {stdout}"
+    );
+}

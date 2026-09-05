@@ -989,6 +989,41 @@ fn push_scheduled_occurrence(
     }
 }
 
+/// Draw an occurrence this entry moved onto `day_date`, and say whether it
+/// drew one (ADR-0038).
+///
+/// The copy is the one `push_scheduled_occurrence` would have made, with the
+/// hour of the move where the move names one: what moved is the occurrence,
+/// and everything else about the entry -- its heading, its state, its notes --
+/// is the entry's.
+fn push_moved_occurrence(
+    task: &Task,
+    parsed: &crate::timestamp::ParsedTimestamp,
+    repeater: &crate::timestamp::Repeater,
+    day_date: NaiveDate,
+    excluded: &ExcludedOccurrences,
+    agenda: &mut DayAgenda,
+) -> bool {
+    let day = day_date.format("%Y-%m-%d").to_string();
+    let Some(moved) = task
+        .moved_occurrences
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .find(|held| held.to == day)
+    else {
+        return false;
+    };
+
+    let mut held = task.clone();
+    if moved.time.is_some() {
+        held.timestamp_time = moved.time.clone();
+        held.timestamp_end_time = moved.end_time.clone();
+    }
+    push_scheduled_occurrence(&held, parsed, repeater, day_date, excluded, agenda);
+    true
+}
+
 fn push_overdue_occurrence(
     task: &Task,
     repeater: &crate::timestamp::Repeater,
@@ -1059,6 +1094,13 @@ fn handle_repeating_task(
             push_scheduled_occurrence(task, parsed, repeater, day_date, excluded, agenda);
             shown_on_day = true;
         }
+    }
+    // An occurrence held on this day rather than on its own (ADR-0038). It is
+    // drawn whatever the repeater says about the day: that is the point of a
+    // move -- the class is on a Wednesday this week and the series knows only
+    // Mondays.
+    if push_moved_occurrence(task, parsed, repeater, day_date, excluded, agenda) {
+        shown_on_day = true;
     }
     if !shown_on_day
         && !day_is_excluded

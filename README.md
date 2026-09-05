@@ -1455,22 +1455,17 @@ during compilation rather than at runtime.
 
 A repeating timestamp describes an endless series, and there is nowhere in
 that line to say that one occurrence is cancelled or happens at another time.
-Two properties say it instead, in the shape iCalendar uses (see
-[ADR-0031](docs/adr/0031-exceptions-to-a-repeating-entry.md)):
+A `MOVED` line says where one occurrence went
+([ADR-0038](docs/adr/0038-a-move-is-written-inside-the-series.md)), and an
+`EXDATE` property says which ones are gone
+([ADR-0031](docs/adr/0031-exceptions-to-a-repeating-entry.md)):
 
 ````markdown
 ### TODO English
 `SCHEDULED: <2026-08-13 Thu 15:00 +1w>`
+`MOVED: 2026-08-20 -> <2026-08-22 Sat 18:00>`
 ```org-properties
-ID: series-1
 EXDATE: 2026-08-27
-```
-
-### TODO English, moved to the evening
-`SCHEDULED: <2026-08-20 Thu 18:00>`
-```org-properties
-SERIES_ID: series-1
-RECURRENCE_ID: 2026-08-20 15:00
 ```
 ````
 
@@ -1478,10 +1473,19 @@ RECURRENCE_ID: 2026-08-20 15:00
   and/or whitespace. The 27th above simply has no class. A date may carry a
   time (`2026-08-20 15:00`, the way RFC 5545 writes it for a timed series);
   the time is read and left out, since occurrences are matched by day.
-- A separate entry carrying `SERIES_ID` (the `ID` of the series) and
-  `RECURRENCE_ID` (the start the occurrence *would* have had) takes the place
-  of that one occurrence — the agenda draws the 20th at 18:00 and not at
-  15:00. No `EXDATE` is needed for it: a replacement is not a cancellation.
+- `MOVED` names an occurrence by the day the series draws it on, and where it
+  is held instead: the agenda leaves the 20th empty and draws the class on
+  Saturday the 22nd at 18:00. No `EXDATE` is needed beside it — a move is not a
+  cancellation. The target may carry a weekday, a time and a time range; a
+  repeater or a warning cookie there refuses the line, since one occurrence
+  does not repeat and how far ahead a `DEADLINE` warns belongs to the series.
+  An entry may hold as many `MOVED` lines as it has moved occurrences, and two
+  naming the same occurrence leave the first standing.
+- The older shape is still read: a separate entry carrying `SERIES_ID` (the
+  `ID` of the series) and `RECURRENCE_ID` (the start the occurrence *would*
+  have had) takes the place of that one occurrence. It is what this project
+  wrote before ADR-0038 and what a calendar export speaks, so files already
+  holding it keep resolving.
 - The series has to carry an `ID`, because that is what `SERIES_ID` names. An
   entry without one cannot be replaced by anything: the replacement stays an
   ordinary entry, the series keeps drawing the occurrence, and the day holds
@@ -1493,6 +1497,9 @@ RECURRENCE_ID: 2026-08-20 15:00
 - Matching is by date, because the agenda draws at most one occurrence of a
   series per day; the clock time in `RECURRENCE_ID` is carried for the reader
   and for calendar export.
+- The moves reach the JSON as `moved_occurrences`, a list of
+  `{from, to, time?, end_time?}` with the days as `YYYY-MM-DD` and the hours as
+  `HH:MM`. A line that cannot be read is left out of it and reported.
 - All three keys reach the JSON as `excluded_dates`, `recurrence_id` and
   `series_id`, normalised: dates as `YYYY-MM-DD`, `RECURRENCE_ID` as
   `YYYY-MM-DD` or `YYYY-MM-DD HH:MM`, and a date listed twice in `EXDATE` kept

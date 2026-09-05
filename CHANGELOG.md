@@ -40,6 +40,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- One occurrence of a repeating entry is moved by a line of the entry itself:
+  `MOVED: 2026-08-20 -> <2026-08-22 Sat 18:00>` leaves the 20th empty and draws
+  the class on the 22nd at 18:00 (ADR-0038). The target may name a weekday, an
+  hour and a range of hours; a repeater or a warning cookie there refuses the
+  line, since one occurrence does not repeat and how far ahead a `DEADLINE`
+  warns belongs to the series. An entry holds as many such lines as it has
+  moved occurrences, and the moves reach the JSON as `moved_occurrences`.
+  The older shape — a second entry carrying `SERIES_ID` and `RECURRENCE_ID`
+  (ADR-0031) — is still read, so files already written that way keep working.
+
 ### Changed
 
 - `--current-date`, `--tz` and `--locale` are now global: they read the

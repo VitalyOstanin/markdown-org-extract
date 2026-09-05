@@ -23,7 +23,10 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::NaiveDate;
 
-use crate::types::Task;
+use crate::types::{MovedOccurrence, Task};
+
+/// The keyword of the line that moves one occurrence of a series (ADR-0038).
+pub const MOVED_KEY: &str = "MOVED";
 
 /// Property key listing the occurrences a series does not have.
 pub const EXDATE_KEY: &str = "EXDATE";
@@ -105,6 +108,57 @@ pub fn parse_recurrence_id(raw: &str, mut on_dropped: impl FnMut(&str)) -> Optio
     Some(match time {
         Some(t) => format!("{} {}", date.format("%Y-%m-%d"), t.format("%H:%M")),
         None => date.format("%Y-%m-%d").to_string(),
+    })
+}
+
+/// What a `MOVED` line says: which occurrence is held elsewhere, and where.
+///
+/// The value read here is everything after the keyword — `2026-09-07 ->
+/// <2026-09-09 Wed 13:00>` — with the weekday already normalised by the
+/// caller, as every other timestamp of this crate is.
+///
+/// A line that cannot be read leaves `None` and says why through `on_refused`,
+/// in words a warning can carry. Two of those refusals are the format's rather
+/// than the reader's: a moved occurrence is one occurrence and cannot repeat,
+/// and it is warned about by whatever the series says, so a repeater and a
+/// warning cookie in the target are refused instead of being read and
+/// quietly dropped (ADR-0038).
+pub fn parse_moved(raw: &str, mut on_refused: impl FnMut(&str)) -> Option<MovedOccurrence> {
+    use crate::timestamp::{parse_org_timestamp, parse_timestamp_fields_normalized};
+
+    let Some((left, right)) = raw.split_once("->") else {
+        on_refused("no `->` between the occurrence and where it moved");
+        return None;
+    };
+    let Ok(from) = NaiveDate::parse_from_str(left.trim(), "%Y-%m-%d") else {
+        on_refused("the occurrence moved is not a date in YYYY-MM-DD form");
+        return None;
+    };
+
+    let target = right.trim();
+    let Some(parsed) = parse_org_timestamp(target, None) else {
+        on_refused("where it moved is not a timestamp");
+        return None;
+    };
+    if !parsed.active {
+        on_refused("where it moved is written inactive, and an occurrence held on a day is active");
+        return None;
+    }
+    if parsed.repeater.is_some() {
+        on_refused("where it moved carries a repeater, and one occurrence does not repeat");
+        return None;
+    }
+    if parsed.warning_days.is_some() {
+        on_refused("where it moved carries a warning cookie, which belongs to the series");
+        return None;
+    }
+
+    let (_, _, time, end_time, _) = parse_timestamp_fields_normalized(target);
+    Some(MovedOccurrence {
+        from: from.format("%Y-%m-%d").to_string(),
+        to: parsed.date.format("%Y-%m-%d").to_string(),
+        time,
+        end_time,
     })
 }
 
@@ -194,10 +248,19 @@ impl OccurrenceExceptions {
             // and one bad string must not take the whole list with it.
             .filter_map(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
             .collect();
-        let replaced = task_id(task)
+        let mut replaced = task_id(task)
             .and_then(|id| self.replaced.get(id))
             .cloned()
             .unwrap_or_default();
+        // The entry's own `MOVED` lines, which need no identifier and no
+        // second entry: the occurrence they name is held elsewhere by this
+        // same entry (ADR-0038), so it is out of the day it would have fallen
+        // on for the same reason a replacement takes it out.
+        for moved in task.moved_occurrences.as_deref().unwrap_or_default() {
+            if let Ok(date) = NaiveDate::parse_from_str(&moved.from, "%Y-%m-%d") {
+                replaced.insert(date);
+            }
+        }
         ExcludedOccurrences {
             cancelled,
             replaced,
@@ -431,6 +494,116 @@ mod tests {
 
         assert_eq!(occurrence.as_deref(), Some("2026-08-20 15:00"));
         assert_eq!(dropped, ["sharp"]);
+    }
+
+    /// A move that reads, for a test that expects it to.
+    fn moved_of(raw: &str) -> Option<MovedOccurrence> {
+        parse_moved(raw, |problem| panic!("unexpected refusal: {problem:?}"))
+    }
+
+    /// Why a move was refused, for a test about the refusal.
+    fn refusal_of(raw: &str) -> String {
+        let mut said = Vec::new();
+        let moved = parse_moved(raw, |problem| said.push(problem.to_string()));
+
+        assert!(moved.is_none(), "the line was read after all: {raw:?}");
+        said.join("; ")
+    }
+
+    #[test]
+    fn a_move_names_the_occurrence_and_where_it_is_held() {
+        assert_eq!(
+            moved_of("2026-09-07 -> <2026-09-09 Wed 13:00>"),
+            Some(MovedOccurrence {
+                from: "2026-09-07".to_string(),
+                to: "2026-09-09".to_string(),
+                time: Some("13:00".to_string()),
+                end_time: None,
+            })
+        );
+    }
+
+    #[test]
+    fn a_move_without_an_hour_keeps_none_of_its_own() {
+        // The hour of the series stands, which the agenda reads off the entry
+        // rather than off the move.
+        assert_eq!(
+            moved_of("2026-09-07 -> <2026-09-09>").map(|m| m.time),
+            Some(None)
+        );
+    }
+
+    #[test]
+    fn a_move_written_with_a_range_keeps_both_ends() {
+        let moved = moved_of("2026-09-07 -> <2026-09-09 Wed 13:00-14:30>").expect("a move");
+
+        assert_eq!(moved.time.as_deref(), Some("13:00"));
+        assert_eq!(moved.end_time.as_deref(), Some("14:30"));
+    }
+
+    #[test]
+    fn a_move_that_repeats_is_no_move() {
+        // One occurrence held elsewhere is one occurrence: a repeater there
+        // would describe a second series, and which of the two the agenda
+        // draws could not be decided from the file (ADR-0038).
+        assert!(refusal_of("2026-09-07 -> <2026-09-09 Wed 13:00 +1w>").contains("repeater"));
+    }
+
+    #[test]
+    fn a_move_carrying_a_warning_cookie_is_no_move() {
+        assert!(refusal_of("2026-09-07 -> <2026-09-09 Wed 13:00 -1d>").contains("warning cookie"));
+    }
+
+    #[test]
+    fn a_move_to_an_inactive_timestamp_is_no_move() {
+        assert!(refusal_of("2026-09-07 -> [2026-09-09 Wed 13:00]").contains("inactive"));
+    }
+
+    #[test]
+    fn a_line_without_an_arrow_or_a_date_is_no_move() {
+        assert!(refusal_of("2026-09-07 <2026-09-09>").contains("`->`"));
+        assert!(refusal_of("next monday -> <2026-09-09>").contains("not a date"));
+        assert!(refusal_of("2026-09-07 -> wednesday").contains("not a timestamp"));
+    }
+
+    #[test]
+    fn a_moved_occurrence_is_out_of_the_day_it_would_have_fallen_on() {
+        let mut english = series("series-1");
+        english.moved_occurrences = Some(vec![MovedOccurrence {
+            from: "2026-09-07".to_string(),
+            to: "2026-09-09".to_string(),
+            time: Some("13:00".to_string()),
+            end_time: None,
+        }]);
+        let missing =
+            OccurrenceExceptions::from_tasks(std::slice::from_ref(&english)).dates_for(&english);
+
+        assert!(missing.contains(&ymd(2026, 9, 7)));
+        assert!(
+            missing.is_replaced(&ymd(2026, 9, 7)),
+            "it moved rather than went: the debt travels with it"
+        );
+        assert!(!missing.contains(&ymd(2026, 9, 14)));
+    }
+
+    #[test]
+    fn a_series_needs_no_identifier_to_move_an_occurrence_of_itself() {
+        // The `ID`/`SERIES_ID` pair answers "which entry is this a
+        // replacement of"; a move written inside the entry has no such
+        // question to answer.
+        let anonymous = Task {
+            moved_occurrences: Some(vec![MovedOccurrence {
+                from: "2026-09-07".to_string(),
+                to: "2026-09-09".to_string(),
+                time: None,
+                end_time: None,
+            }]),
+            ..Task::default()
+        };
+        let missing = OccurrenceExceptions::from_tasks(std::slice::from_ref(&anonymous))
+            .dates_for(&anonymous);
+
+        assert!(missing.contains(&ymd(2026, 9, 7)));
     }
 
     #[test]

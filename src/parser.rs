@@ -17,8 +17,8 @@ use std::sync::LazyLock;
 use crate::clock::{calculate_total_minutes, extract_clocks, format_duration};
 use crate::regex_limits::compile_bounded;
 use crate::timestamp::{
-    extract_created_normalized, extract_repeater_normalized, extract_timestamp_normalized,
-    normalize_weekdays, parse_timestamp_fields_normalized,
+    extract_created_normalized, extract_moved_normalized, extract_repeater_normalized,
+    extract_timestamp_normalized, normalize_weekdays, parse_timestamp_fields_normalized,
 };
 use crate::types::{Priority, Task, TaskType, MAX_DIAGNOSTIC_ITEMS};
 
@@ -253,6 +253,11 @@ struct HeadingInfo {
     content: String,
     created: Option<String>,
     timestamp: Option<String>,
+    /// What the entry's `MOVED` lines say, as written (ADR-0038). Kept raw
+    /// here and read in `finalize_task`, which is where a line that cannot be
+    /// read has a path, a line number and a warning counter to be reported
+    /// with.
+    moved: Vec<String>,
     clocks: Vec<crate::types::ClockEntry>,
     properties: BTreeMap<String, String>,
 }
@@ -295,13 +300,14 @@ fn process_node<'a>(
                 content: String::new(),
                 created: None,
                 timestamp: None,
+                moved: Vec::new(),
                 clocks: Vec::new(),
                 properties: BTreeMap::new(),
             });
         }
         NodeValue::Paragraph => {
             if let Some(ref mut info) = current_heading {
-                let (created, timestamp) = extract_timestamps_from_node(node, mappings);
+                let (created, timestamp, moved) = extract_timestamps_from_node(node, mappings);
                 let content = extract_paragraph_text(node);
 
                 for child in node.children() {
@@ -316,6 +322,7 @@ fn process_node<'a>(
                 if timestamp.is_some() {
                     info.timestamp = timestamp;
                 }
+                info.moved.extend(moved);
                 if !content.is_empty() {
                     if info.content.is_empty() {
                         info.content = content;
@@ -363,6 +370,9 @@ fn process_node<'a>(
                     }
                     if timestamp.is_some() {
                         info.timestamp = timestamp;
+                    }
+                    if let Some(moved) = extract_moved_normalized(&normalized) {
+                        info.moved.push(moved);
                     }
                 }
             }
@@ -421,6 +431,7 @@ fn finalize_task(
     // occur on this day" needs them parsed, and parsing them once here keeps
     // the string handling out of the agenda.
     let exceptions = exception_fields(path, line, properties.as_ref(), prop_warning_counter);
+    let moved = moved_occurrences(path, line, &info.moved, prop_warning_counter);
 
     Some(Task {
         file: path.display().to_string(),
@@ -450,7 +461,47 @@ fn finalize_task(
         excluded_dates: exceptions.excluded_dates,
         recurrence_id: exceptions.recurrence_id,
         series_id: exceptions.series_id,
+        moved_occurrences: moved,
     })
+}
+
+/// The occurrences an entry's `MOVED` lines hold elsewhere (ADR-0038).
+///
+/// A line that cannot be read is dropped and reported: it looks like a move
+/// and behaves like none, which is the failure every exception warning here
+/// is about. Two lines naming the same occurrence are the same failure in
+/// another shape -- which of the two days the occurrence is on cannot be
+/// decided from the file -- so the second one is dropped rather than
+/// overwriting the first.
+fn moved_occurrences(
+    path: &Path,
+    line: u32,
+    lines: &[String],
+    prop_warning_counter: &mut usize,
+) -> Option<Vec<crate::types::MovedOccurrence>> {
+    use crate::exceptions::{parse_moved, MOVED_KEY};
+
+    let mut moved: Vec<crate::types::MovedOccurrence> = Vec::new();
+    for raw in lines {
+        let Some(one) = parse_moved(raw, |problem| {
+            warn_unusable_exception(prop_warning_counter, path, line, MOVED_KEY, raw, problem);
+        }) else {
+            continue;
+        };
+        if moved.iter().any(|held| held.from == one.from) {
+            warn_unusable_exception(
+                prop_warning_counter,
+                path,
+                line,
+                MOVED_KEY,
+                raw,
+                "the occurrence is moved twice by this entry, and the first move stands",
+            );
+            continue;
+        }
+        moved.push(one);
+    }
+    (!moved.is_empty()).then_some(moved)
 }
 
 /// What the exception keys of one entry read as. Named rather than a tuple:
@@ -876,19 +927,24 @@ fn parse_org_properties(
     }
 }
 
-/// Extract timestamps (CREATED and others) from paragraph node
+/// Extract timestamps (CREATED and others) and the `MOVED` lines from a
+/// paragraph node.
+///
+/// The moves are a list rather than an option: an entry can hold as many as
+/// the reader has moved occurrences of it, and each line stands on its own.
 fn extract_timestamps_from_node<'a>(
     node: &'a AstNode<'a>,
     mappings: &[(&str, &str)],
-) -> (Option<String>, Option<String>) {
+) -> (Option<String>, Option<String>, Vec<String>) {
     let mut created = None;
     let mut timestamp = None;
+    let mut moved = Vec::new();
 
     if let NodeValue::Paragraph = &node.data.borrow().value {
         for child in node.children() {
             if let NodeValue::Code(code) = &child.data.borrow().value {
-                // Normalize the literal once per inline-code node; both extractors
-                // would otherwise scan the same string in lockstep.
+                // Normalize the literal once per inline-code node; the
+                // extractors would otherwise scan the same string in lockstep.
                 let normalized = normalize_weekdays(&code.literal, mappings);
                 if created.is_none() {
                     created = extract_created_normalized(&normalized);
@@ -896,10 +952,13 @@ fn extract_timestamps_from_node<'a>(
                 if timestamp.is_none() {
                     timestamp = extract_timestamp_normalized(&normalized);
                 }
+                if let Some(line) = extract_moved_normalized(&normalized) {
+                    moved.push(line);
+                }
             }
         }
     }
-    (created, timestamp)
+    (created, timestamp, moved)
 }
 
 /// Extract plain text from paragraph, including text inside Emph/Strong/Link nodes

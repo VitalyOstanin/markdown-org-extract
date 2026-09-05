@@ -387,6 +387,37 @@ pub struct Task {
     /// (`UID`, `RECURRENCE-ID`) pair.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub series_id: Option<String>,
+    /// Occurrences of this series held on another day, read from the `MOVED`
+    /// lines of the entry itself (ADR-0038). `None` where the entry moved
+    /// none.
+    ///
+    /// Like [`Task::excluded_dates`] this belongs to the series rather than to
+    /// one occurrence, and travels on the copy in every agenda cell.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub moved_occurrences: Option<Vec<MovedOccurrence>>,
+}
+
+/// One occurrence of a repeating entry, held on another day than the series
+/// draws it (ADR-0038).
+///
+/// The occurrence is named by the day it would have fallen on, which is what
+/// makes it addressable at all: the series has nothing else to identify one
+/// repeat by. Where it goes is a timestamp of its own, and a single one — a
+/// moved occurrence cannot repeat, so a repeater there is refused rather than
+/// read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MovedOccurrence {
+    /// The day the series draws the occurrence on, as `YYYY-MM-DD`.
+    pub from: String,
+    /// The day it is held on instead, as `YYYY-MM-DD`.
+    pub to: String,
+    /// The hour it is held at, as `HH:MM`, or `None` where the line names
+    /// none — in which case the hour of the series stands.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time: Option<String>,
+    /// The hour it ends at, for a line written with a range.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_time: Option<String>,
 }
 
 /// Maximum file size to process (10 MB)

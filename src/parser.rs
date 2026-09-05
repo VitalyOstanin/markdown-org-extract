@@ -1721,6 +1721,48 @@ Second paragraph.\n\
     }
 
     #[test]
+    fn an_occurrence_moved_twice_by_one_entry_keeps_the_first_move() {
+        // Two lines naming the same day are a file with no answer for which
+        // of the two days the occurrence is on. The first stands and the
+        // second is reported, rather than the last write silently winning.
+        let (tasks, _, properties) = counted(
+            "### TODO T\n\
+             `SCHEDULED: <2026-08-13 Thu +1w>`\n\
+             `MOVED: 2026-08-20 -> <2026-08-22 Sat 18:00>`\n\
+             `MOVED: 2026-08-20 -> <2026-08-25 Tue 09:00>`\n",
+        );
+
+        let moved = tasks[0]
+            .moved_occurrences
+            .as_deref()
+            .expect("the entry moves an occurrence");
+        assert_eq!(moved.len(), 1, "the day is moved once, not twice");
+        assert_eq!(moved[0].to, "2026-08-22", "the first move stands");
+        assert_eq!(properties, 1, "the second line is reported");
+    }
+
+    #[test]
+    fn two_occurrences_moved_by_one_entry_are_both_kept() {
+        // The refusal above is about one day named twice, not about an entry
+        // holding more than one move.
+        let (tasks, _, properties) = counted(
+            "### TODO T\n\
+             `SCHEDULED: <2026-08-13 Thu +1w>`\n\
+             `MOVED: 2026-08-20 -> <2026-08-22 Sat 18:00>`\n\
+             `MOVED: 2026-08-27 -> <2026-08-29 Sat 18:00>`\n",
+        );
+
+        let moved = tasks[0]
+            .moved_occurrences
+            .as_deref()
+            .expect("the entry moves two occurrences");
+        assert_eq!(moved.len(), 2);
+        assert_eq!(moved[0].from, "2026-08-20");
+        assert_eq!(moved[1].from, "2026-08-27");
+        assert_eq!(properties, 0, "nothing here is refused");
+    }
+
+    #[test]
     fn half_of_an_exception_pair_is_reported() {
         // `SERIES_ID` alone replaces nothing: the day keeps both the series
         // occurrence and the entry that meant to stand in for it.

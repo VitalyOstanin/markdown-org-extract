@@ -130,10 +130,7 @@ pub fn parse_moved(raw: &str, mut on_refused: impl FnMut(&str)) -> Option<MovedO
         on_refused("no `->` between the occurrence and where it moved");
         return None;
     };
-    let Ok(from) = NaiveDate::parse_from_str(left.trim(), "%Y-%m-%d") else {
-        on_refused("the occurrence moved is not a date in YYYY-MM-DD form");
-        return None;
-    };
+    let from = moved_occurrence_day(left.trim(), &mut on_refused)?;
 
     let target = right.trim();
     let Some(parsed) = parse_org_timestamp(target, None) else {
@@ -160,6 +157,51 @@ pub fn parse_moved(raw: &str, mut on_refused: impl FnMut(&str)) -> Option<MovedO
         time,
         end_time,
     })
+}
+
+/// The day a `MOVED` line names, from what stands before the arrow.
+///
+/// Written as an inactive timestamp — `[2026-09-07 Mon]` — because the day is
+/// an address and not a time the entry is kept at, and because a timestamp is
+/// what an editor's date keys can walk (ADR-0039). The bare `2026-09-07` of
+/// ADR-0038 is still read: files were written with it.
+///
+/// What the day is not allowed to carry it is refused for rather than read
+/// past: an active bracket would say the entry is kept then, an hour would
+/// promise an address finer than a series has, and a repeater or a warning
+/// cookie belong to the series rather than to one of its occurrences.
+fn moved_occurrence_day(left: &str, on_refused: &mut impl FnMut(&str)) -> Option<NaiveDate> {
+    use crate::timestamp::{parse_org_timestamp, parse_timestamp_fields_normalized};
+
+    if let Ok(bare) = NaiveDate::parse_from_str(left, "%Y-%m-%d") {
+        return Some(bare);
+    }
+    let Some(parsed) = parse_org_timestamp(left, None) else {
+        on_refused("the occurrence moved is not a date in YYYY-MM-DD form");
+        return None;
+    };
+    if parsed.active {
+        on_refused(
+            "the occurrence moved is written active, and it names a day rather than a time kept",
+        );
+        return None;
+    }
+    if parsed.repeater.is_some() {
+        on_refused("the occurrence moved carries a repeater, and it names one day of the series");
+        return None;
+    }
+    if parsed.warning_days.is_some() {
+        on_refused("the occurrence moved carries a warning cookie, which belongs to the series");
+        return None;
+    }
+    let (_, _, time, _, _) = parse_timestamp_fields_normalized(left);
+    if time.is_some() {
+        on_refused(
+            "the occurrence moved is named to the hour, and an occurrence is named by its day",
+        );
+        return None;
+    }
+    Some(parsed.date)
 }
 
 /// The clock time of a `RECURRENCE_ID`: written to the minute, or with the
@@ -539,6 +581,54 @@ mod tests {
 
         assert_eq!(moved.time.as_deref(), Some("13:00"));
         assert_eq!(moved.end_time.as_deref(), Some("14:30"));
+    }
+
+    #[test]
+    fn an_occurrence_is_named_by_an_inactive_timestamp() {
+        // The day before the arrow is an address, not a time kept, and an
+        // inactive timestamp is how org writes a date that is not planning
+        // (ADR-0039). Written that way it is a timestamp an editor can walk.
+        assert_eq!(
+            moved_of("[2026-09-07 Mon] -> <2026-09-09 Wed 13:00>"),
+            Some(MovedOccurrence {
+                from: "2026-09-07".to_string(),
+                to: "2026-09-09".to_string(),
+                time: Some("13:00".to_string()),
+                end_time: None,
+            })
+        );
+    }
+
+    #[test]
+    fn an_occurrence_named_by_a_bare_date_is_read_as_it_was() {
+        // The form written before ADR-0039. Files already holding it keep
+        // working, which is the whole reason it is still read.
+        assert_eq!(
+            moved_of("2026-09-07 -> <2026-09-09 Wed 13:00>").map(|m| m.from),
+            Some("2026-09-07".to_string())
+        );
+    }
+
+    #[test]
+    fn an_occurrence_named_active_is_no_occurrence() {
+        // An active timestamp is a time the entry is kept at, and the day
+        // moved from is not kept at all -- that is what the move says.
+        assert!(refusal_of("<2026-09-07 Mon> -> <2026-09-09 Wed 13:00>").contains("active"));
+    }
+
+    #[test]
+    fn an_occurrence_named_to_the_hour_is_no_occurrence() {
+        // A series draws at most one occurrence a day, so a day names one;
+        // an hour there would promise an address the reader cannot honour.
+        assert!(
+            refusal_of("[2026-09-07 Mon 15:00] -> <2026-09-09 Wed 13:00>").contains("by its day")
+        );
+    }
+
+    #[test]
+    fn an_occurrence_named_with_a_repeater_or_a_cookie_is_no_occurrence() {
+        assert!(refusal_of("[2026-09-07 Mon +1w] -> <2026-09-09 Wed>").contains("repeater"));
+        assert!(refusal_of("[2026-09-07 Mon -1d] -> <2026-09-09 Wed>").contains("warning cookie"));
     }
 
     #[test]

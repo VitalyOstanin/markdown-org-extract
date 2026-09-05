@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Table of contents
 
 - [\[Unreleased\]](#unreleased)
+- [\[0.23.0\] — 2026-09-05](#0230--2026-09-05)
 - [\[0.22.0\] — 2026-09-05](#0220--2026-09-05)
 - [\[0.21.0\] — 2026-09-02](#0210--2026-09-02)
 - [\[0.20.0\] — 2026-08-31](#0200--2026-08-31)
@@ -41,7 +42,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No user-visible changes yet._
+## [0.23.0] — 2026-09-05
+
+### Changed
+
+- The occurrence a `MOVED` line names is written as an inactive timestamp:
+  `MOVED: [2026-08-20 Thu] -> <2026-08-22 Sat 18:00>` (ADR-0039). Both halves
+  of the line are timestamps now, and the brackets say which is which — the
+  occurrence is an address, so it is inactive, and the day it is kept on is
+  active. An editor that highlights timestamps and steps them with its date
+  keys now reaches both, where a bare date was neither highlighted nor
+  stepped. The address may carry a weekday and nothing more: written active,
+  named to the hour, or carrying a repeater or a warning cookie, the line is
+  refused the same way its target is. The bare `2026-08-20` written before
+  this release is still read and is not rewritten.
 
 ## [0.22.0] — 2026-09-05
 

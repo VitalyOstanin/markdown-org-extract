@@ -73,6 +73,7 @@ was decided, and the trade-offs that came with it.
 | 0036 | [A later phrase refines the entry, it does not replace it](0036-a-later-phrase-refines-the-entry.md) | Accepted, amended by 0037 |
 | 0037 | [A phrase also edits an entry that exists](0037-a-phrase-also-edits-an-entry-that-exists.md) | Accepted |
 | 0038 | [A moved occurrence is written inside the series](0038-a-move-is-written-inside-the-series.md) | Accepted |
+| 0039 | [The occurrence a move names is written as an inactive timestamp](0039-the-occurrence-a-move-names-is-a-timestamp.md) | Accepted |
 
 ## Adding a new ADR
 

@@ -17,6 +17,9 @@ already carrying them keep working. The `EXDATE` half of ADR-0031 is untouched:
 an occurrence that is gone is still cancelled the way it was. Non-breaking JSON
 addition under [ADR-0015](0015-json-schema-evolution.md).
 
+Amended by ADR-0039 (2026-09-05): the occurrence before the arrow is written
+as an inactive timestamp; the bare date decided here is still read.
+
 ## Context
 
 ADR-0031 answered "this Thursday the class is at six" the way iCalendar does:

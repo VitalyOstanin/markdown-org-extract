@@ -203,7 +203,7 @@ required where processes cannot be spawned at all, such as Android.
 
 ```toml
 [dependencies]
-markdown-org-extract = "0.22"
+markdown-org-extract = "0.23"
 ```
 
 Scanning and agenda building are separate steps, so one scan can feed
@@ -1463,7 +1463,7 @@ A `MOVED` line says where one occurrence went
 ````markdown
 ### TODO English
 `SCHEDULED: <2026-08-13 Thu 15:00 +1w>`
-`MOVED: 2026-08-20 -> <2026-08-22 Sat 18:00>`
+`MOVED: [2026-08-20 Thu] -> <2026-08-22 Sat 18:00>`
 ```org-properties
 EXDATE: 2026-08-27
 ```
@@ -1476,9 +1476,15 @@ EXDATE: 2026-08-27
 - `MOVED` names an occurrence by the day the series draws it on, and where it
   is held instead: the agenda leaves the 20th empty and draws the class on
   Saturday the 22nd at 18:00. No `EXDATE` is needed beside it — a move is not a
-  cancellation. The target may carry a weekday, a time and a time range; a
-  repeater or a warning cookie there refuses the line, since one occurrence
-  does not repeat and how far ahead a `DEADLINE` warns belongs to the series.
+  cancellation. Both halves are timestamps, and the brackets say which is
+  which: the occurrence is addressed with an inactive one, the day it is kept
+  on is active ([ADR-0039](docs/adr/0039-the-occurrence-a-move-names-is-a-timestamp.md)).
+  The target may carry a weekday, a time and a time range; a repeater or a
+  warning cookie there refuses the line, since one occurrence does not repeat
+  and how far ahead a `DEADLINE` warns belongs to the series. The address may
+  carry a weekday and nothing else: an active bracket, an hour, a repeater or a
+  cookie refuse the line the same way. A bare `2026-08-20`, which is what
+  ADR-0038 wrote, is still read.
   An entry may hold as many `MOVED` lines as it has moved occurrences, and two
   naming the same occurrence leave the first standing.
 - The older shape is still read: a separate entry carrying `SERIES_ID` (the

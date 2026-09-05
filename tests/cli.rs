@@ -4051,11 +4051,12 @@ fn parse_phrase_keeps_the_diagnostic_flags_usable() {
 }
 
 /// ADR-0038: a `MOVED` line takes the occurrence off its own day and draws it
-/// on the day it names, at the hour it names.
+/// on the day it names, at the hour it names. ADR-0039: the occurrence it
+/// names is written as an inactive timestamp.
 #[test]
 fn a_moved_line_holds_the_occurrence_on_another_day() {
     let dir = tempdir().unwrap();
-    let content = "### TODO English\n`SCHEDULED: <2026-08-13 Thu 15:00 +1w>`\n`MOVED: 2026-08-20 -> <2026-08-22 Sat 13:00>`\n\nBody.\n";
+    let content = "### TODO English\n`SCHEDULED: <2026-08-13 Thu 15:00 +1w>`\n`MOVED: [2026-08-20 Thu] -> <2026-08-22 Sat 13:00>`\n\nBody.\n";
     fs::write(dir.path().join("english.md"), content).unwrap();
 
     let out = bin()

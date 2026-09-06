@@ -15,6 +15,9 @@ package.
 - [Deferred performance optimisations](#deferred-performance-optimisations)
 - [One grammar for every client, over WebAssembly](#one-grammar-for-every-client-over-webassembly)
 - [A move is keyed by a day, and an intra-day repeater would break that](#a-move-is-keyed-by-a-day-and-an-intra-day-repeater-would-break-that)
+- [A cancelled occurrence is written where a moved one is](#a-cancelled-occurrence-is-written-where-a-moved-one-is)
+- [A series gains occurrences as well as losing them](#a-series-gains-occurrences-as-well-as-losing-them)
+- [One prefix for everything said about an occurrence](#one-prefix-for-everything-said-about-an-occurrence)
 - [Open info-level review notes](#open-info-level-review-notes)
 
 ## CI on the latest Ubuntu LTS
@@ -253,6 +256,164 @@ Action: decide it in a new ADR, superseding the key half of ADR-0038, before any
 work on intra-day expansion starts. The tests to look at first are
 `parser::tests::an_occurrence_moved_twice_by_one_entry_keeps_the_first_move` and
 the agenda's `push_moved_occurrence`.
+
+## A cancelled occurrence is written where a moved one is
+
+The two answers about one occurrence of a series are written in two places and
+in two notations. A move is a planning line of the entry, with the occurrence
+as an inactive timestamp; a cancellation is a date in the `EXDATE` property,
+written bare:
+
+````text
+## English on Mondays at 15:00
+`SCHEDULED: <2026-08-06 Thu 15:00 +1w>`
+`MOVED: [2026-08-20 Thu] -> <2026-08-27 Thu 18:00>`
+```org-properties
+EXDATE: 2026-08-13
+```
+````
+
+Both lines say something about one occurrence, and a reader has to know two
+forms to write either. The asymmetry is not visible from the file: nothing
+explains why one of them is a planning line and the other a property.
+
+The symmetry could be restored the other way round — a cancellation written as
+a planning line of the series, with the occurrence in the same inactive form a
+move addresses it with:
+
+````text
+`CANCELLED: [2026-08-13 Thu]`
+````
+
+What that would buy: one place to look, one notation for the occurrence, and a
+date the clients already step with the keys and controls they offer for
+timestamps — which is the argument that put the move on a planning line
+(ADR-0038). What it costs, and what has to be decided before any of it:
+
+1. `CANCELLED` is already a task keyword of these notes (a heading reads
+   `## CANCELLED Abandoned task`). The same word in two roles — the state of an
+   entry and an exception of a series — is a collision to resolve rather than
+   an oversight to fix: either a different word, or a rule that reads the two
+   apart by position.
+2. `EXDATE` is fixed by ADR-0020 as a property and by ADR-0031 as the way a
+   cancellation is written. Files already hold it, this project writes it, and
+   the extension and the Android client read it. Any new form is read
+   alongside the old one indefinitely, exactly as the bare `MOVED` address is.
+3. A cancellation carries no target, so a planning line for it is a keyword and
+   an address and nothing else — which is a thinner line than any other
+   planning line the format has. Whether that reads as a line or as noise is
+   the question the form has to answer.
+4. `EXDATE` is what iCalendar calls it, and the property maps onto RFC 5545
+   without translation. A planning line does not, and the Google Calendar
+   export of the extension reads the property today.
+
+Nothing here is urgent: both forms work and both are read. This is a note that
+the format has an asymmetry with a known cost, so the question is not
+rediscovered from the files a third time.
+
+## A series gains occurrences as well as losing them
+
+A series answers two questions about one of its occurrences today: it moved
+(`MOVED`) and it is gone (`EXDATE`). Real series ask a third. A course of
+English lessons every Thursday is rescheduled, cancelled for a week — and an
+extra lesson is arranged, on a day the series does not fall on, before an exam
+or to make up for one that was missed. There is nothing to write that with.
+
+What the reader is left to do instead is write a separate entry. That is the
+shape ADR-0031 used for a move and ADR-0038 moved away from, and it costs the
+same here: a second heading with the same title, standing wherever the file
+puts it, which the reader has to keep in mind when editing either. The extra
+lesson is not a different thing from the course — it is the course, on one more
+day.
+
+iCalendar has the pair: `RDATE` adds a date to a series as `EXDATE` takes one
+away. A form that follows the notes rather than the RFC would be a planning
+line beside the others, naming a whole timestamp because an added occurrence
+has an hour of its own:
+
+````text
+## TODO English on Thursdays at 15:00
+`SCHEDULED: <2026-08-06 Thu 15:00 +1w>`
+`ADDED: <2026-08-25 Tue 18:00>`
+````
+
+Questions to settle before any of it:
+
+1. **Which form.** A property (`RDATE`, list of dates, the `EXDATE` shape and
+   the iCalendar name) or a planning line (an editable timestamp, an hour of
+   its own, the `MOVED` shape). The same asymmetry the note above is about,
+   and the two should be decided together rather than one at a time.
+2. **What an added occurrence inherits.** The keyword, the priority, the body,
+   the clocks — all of the series, as a moved occurrence does. What it cannot
+   inherit is the hour, since a lesson added before an exam is usually held at
+   another one.
+3. **How it interacts with the other two.** An added occurrence can later be
+   moved or cancelled: whether `MOVED` may address a day the series does not
+   fall on, and whether `EXDATE` may name one, decides whether the three
+   operations compose or have to be special-cased against each other.
+4. **What it owes.** ADR-0032 says what a missing occurrence owes; an added one
+   that has gone by unfinished is arrears the same way, and the day it is
+   counted from is its own rather than the series'.
+5. **What the clients offer.** The sheet of a repeating row today offers "move"
+   and "cancel" about the day the row is drawn on. Adding is not about a day
+   the series falls on, so it is asked for from somewhere else — the entry, not
+   the occurrence — and needs its own place in both clients.
+6. **The Google Calendar export.** `RDATE` maps onto RFC 5545; a planning line
+   does not, and the extension's export would translate it.
+
+Not urgent, and larger than the note above: this is a third operation on the
+model rather than a change of notation for an existing one.
+
+## One prefix for everything said about an occurrence
+
+The two notes above are about the form of single operations. A third question
+is about the set of them. Everything a series says about one of its occurrences
+could carry a common prefix, so that the family is visible as a family:
+
+````text
+## TODO English on Thursdays at 15:00
+`SCHEDULED: <2026-08-06 Thu 15:00 +1w>`
+`OCCURRENCE_MOVED: [2026-08-20 Thu] -> <2026-08-27 Thu 18:00>`
+`OCCURRENCE_CANCELLED: [2026-08-13 Thu]`
+`OCCURRENCE_ADDED: <2026-08-25 Tue 18:00>`
+````
+
+Written with an underscore rather than a hyphen: ADR-0020 fixes keys as
+`UPPER_SNAKE_CASE`, and a hyphen in one key while every other key of these
+notes uses an underscore is a second convention for no gain.
+
+What the prefix buys:
+
+1. A reader who meets one of the three can guess the other two, and a reader
+   who meets none of them can tell at a glance that the line is about one
+   occurrence rather than about the series.
+2. It is a namespace, which settles the collision the `CANCELLED` note runs
+   into: `CANCELLED` alone is already a task keyword of these notes, while
+   `OCCURRENCE_CANCELLED` cannot be mistaken for the state of an entry.
+3. A fourth operation, whatever it turns out to be, has a place to go and a
+   name that reads like the ones before it.
+4. Every line of the family is found by one search, in a file or across the
+   notes, and a client can route them by prefix rather than by a list of
+   keywords it has to keep in step with the extractor.
+
+What it costs:
+
+1. `MOVED` is written today, by this project and by both clients, and files
+   hold it. A rename is read alongside the old form indefinitely — the bare
+   address of ADR-0038 is already carried that way — and every client rewrites
+   what it touches. The gain has to be worth two spellings of one thing.
+2. The lines get long. `OCCURRENCE_MOVED: [2026-08-20 Thu] -> <2026-08-27 Thu
+   18:00>` is 60 characters before the entry is even named, and these are
+   inline-code spans in a Markdown file a person reads.
+3. The prefix repeats what the line already says: an address in inactive
+   brackets followed by an arrow is not a statement about the series under any
+   reading. Whether the repetition is redundancy or signposting is exactly what
+   has to be decided.
+
+Decide this together with the two notes above: whether a cancellation moves to
+a planning line, and what an addition is written as, are the same question
+asked about three operations, and answering them one at a time is how the
+format ends up with three conventions.
 
 ## Open info-level review notes
 

@@ -42,6 +42,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A moved occurrence is now counted everywhere the series is read, not only
+  drawn on the day it moved to. Its debt travels with it (ADR-0032): an
+  occurrence held on a day already past is arrears from that day, where before
+  the arrears named the day the series would have drawn and the move went
+  unowed. `timestamp_next` and the upcoming window name the day a move holds
+  the occurrence on when that day is the nearer one.
+- Two occurrences moved onto one day are both drawn, each at the hour its own
+  line names. Only the first was drawn before, which left the second on no day
+  at all.
+- A file whose entries carry a bare timestamp — `<2026-09-07 Mon>` with no
+  `SCHEDULED:` or `DEADLINE:` before it and no keyword in the heading — is no
+  longer skipped by the scan's prefilter and its tasks are read.
+
+### Changed
+
+- A `MOVED` line addressing a day the series does not fall on is refused and
+  reported, as is one on an entry that does not repeat or has no timestamp
+  (ADR-0040). Read as before, such a line gave the series a day it never had,
+  which is an operation this format does not have; a mistyped address produced
+  it silently. Where a move meets a cancellation or an occurrence the series
+  already draws on the same day, both stand — the same ADR says which is which.
+
 ## [0.23.0] — 2026-09-05
 
 ### Changed

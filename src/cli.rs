@@ -444,31 +444,28 @@ pub(crate) fn decide_use_color(
     is_tty
 }
 
-/// The scan's own flags, by the id clap knows them under. A subcommand stands
-/// in place of the scan, so none of these has anything to act on when one is
-/// given. They are refused rather than ignored — see [`parse_args`].
+/// The scan's own flags, by the id clap knows them under: every argument of
+/// [`Cli`] that is not `global`. A subcommand stands in place of the scan, so
+/// none of these has anything to act on when one is given; they are refused
+/// rather than ignored -- see [`parse_args`].
 ///
-/// The list deliberately leaves out the flags that mean the same to every run:
-/// `--current-date`, `--tz`, `--locale` and the diagnostics are declared
-/// `global` on [`Cli`] and read the same on either side of the subcommand name.
-const SCAN_ONLY_ARGS: &[&str] = &[
-    "dir",
-    "glob",
-    "format",
-    "output",
-    "absolute_paths",
-    "agenda",
-    "tasks",
-    "tasks_include_done",
-    "tasks_include_cancelled",
-    "date",
-    "from",
-    "to",
-    "week_start",
-    "max_tasks",
-    "holidays",
-    "completions",
-];
+/// Read off the command rather than written out, because a written list is a
+/// second place to remember: a new scan flag added to [`Cli`] and forgotten
+/// here would be accepted next to a subcommand and dropped without a word,
+/// which is the failure this check exists to end. The flags that mean the
+/// same to every run -- `--current-date`, `--tz`, `--locale` and the
+/// diagnostics -- are declared `global` and are left out by that alone.
+///
+/// `help` and `version` are clap's own and never reach here: both print and
+/// exit while the command line is still being read.
+fn scan_only_args(command: &clap::Command) -> Vec<clap::Id> {
+    command
+        .get_arguments()
+        .filter(|arg| !arg.is_global_set())
+        .map(|arg| arg.get_id().clone())
+        .filter(|id| id != "help" && id != "version")
+        .collect()
+}
 
 /// Parse the command line, refusing a scan-only flag written alongside a
 /// subcommand instead of accepting it and dropping it.
@@ -489,16 +486,16 @@ pub fn parse_args() -> Cli {
     let matches = command.clone().get_matches();
 
     if matches.subcommand_name().is_some() {
-        let offenders: Vec<String> = SCAN_ONLY_ARGS
+        let offenders: Vec<String> = scan_only_args(&command)
             .iter()
-            .filter(|id| matches.value_source(id) == Some(ValueSource::CommandLine))
+            .filter(|id| matches.value_source(id.as_str()) == Some(ValueSource::CommandLine))
             .filter_map(|id| {
                 // `get_long`, not `Display`: the latter reads the value count,
                 // which is only filled in once clap has built the command, and
                 // panics on an unbuilt one.
                 command
                     .get_arguments()
-                    .find(|arg| arg.get_id() == *id)
+                    .find(|arg| arg.get_id() == id)
                     .and_then(|arg| arg.get_long())
                     .map(|long| format!("--{long}"))
             })
@@ -713,6 +710,54 @@ fn validate_locale(s: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Which flags a subcommand refuses, stated apart from the rule that
+    /// works it out. The rule reads them off `Cli`, so it cannot fall behind
+    /// a new flag; this says which flags that comes to, so that marking one
+    /// `global` -- or forgetting to -- is a failure here rather than a flag
+    /// quietly accepted next to a subcommand and dropped.
+    ///
+    /// The same sixteen are driven through the binary by
+    /// `parse_phrase_refuses_the_scan_flags_instead_of_ignoring_them` in
+    /// `tests/cli.rs`; add a flag there when this list grows.
+    const SCAN_ONLY_REFERENCE: &[&str] = &[
+        "absolute_paths",
+        "agenda",
+        "completions",
+        "date",
+        "dir",
+        "format",
+        "from",
+        "glob",
+        "holidays",
+        "max_tasks",
+        "output",
+        "tasks",
+        "tasks_include_cancelled",
+        "tasks_include_done",
+        "to",
+        "week_start",
+    ];
+
+    #[test]
+    fn the_scan_only_args_are_the_arguments_that_are_not_global() {
+        use clap::CommandFactory;
+
+        let command = Cli::command();
+        let mut ids: Vec<String> = scan_only_args(&command)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        ids.sort();
+
+        assert_eq!(
+            ids, SCAN_ONLY_REFERENCE,
+            "the flags a subcommand refuses are not the ones written down; a flag \
+             added to Cli belongs in SCAN_ONLY_REFERENCE and in \
+             parse_phrase_refuses_the_scan_flags_instead_of_ignoring_them, or it \
+             belongs marked global"
+        );
+    }
 
     #[test]
     fn validate_max_tasks_accepts_valid() {

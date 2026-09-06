@@ -4008,28 +4008,41 @@ fn parse_phrase_reads_the_timezone_and_the_locales_from_either_side() {
     assert_eq!(leading, trailing);
 }
 
+/// The sixteen flags a subcommand refuses, with a value for those that take
+/// one. The unit test `the_scan_only_args_are_the_arguments_that_are_not_global`
+/// in `src/cli.rs` states that the run refuses exactly sixteen and names them,
+/// so a seventeenth flag added to `Cli` fails there, naming the flag to add
+/// here.
+const SCAN_FLAGS: &[&[&str]] = &[
+    &[
+        "--output",
+        "/tmp/markdown-org-extract-should-not-exist.json",
+    ],
+    &["--format", "markdown"],
+    &["--dir", "/nonexistent/xyz"],
+    &["--glob", "*.txt"],
+    &["--tasks"],
+    &["--tasks-include-done"],
+    &["--tasks-include-cancelled"],
+    &["--agenda", "week"],
+    &["--date", "2026-09-15"],
+    &["--from", "2026-09-15"],
+    &["--to", "2026-09-20"],
+    &["--week-start", "sunday"],
+    &["--max-tasks", "5"],
+    &["--absolute-paths"],
+    &["--completions", "bash"],
+    &["--holidays", "2026"],
+];
+
 #[test]
 fn parse_phrase_refuses_the_scan_flags_instead_of_ignoring_them() {
     // Every one of these was accepted and then silently dropped: the run
     // printed the phrase as JSON and exited 0, so `--output` produced no file
     // and `--completions` produced no completion script.
-    for flag in [
-        vec![
-            "--output",
-            "/tmp/markdown-org-extract-should-not-exist.json",
-        ],
-        vec!["--format", "markdown"],
-        vec!["--dir", "/nonexistent/xyz"],
-        vec!["--glob", "*.txt"],
-        vec!["--tasks"],
-        vec!["--agenda", "week"],
-        vec!["--max-tasks", "5"],
-        vec!["--absolute-paths"],
-        vec!["--completions", "bash"],
-        vec!["--holidays", "2026"],
-    ] {
+    for flag in SCAN_FLAGS {
         bin()
-            .args(&flag)
+            .args(*flag)
             .args(["parse-phrase", "позвонить"])
             .assert()
             .failure()
@@ -4037,11 +4050,47 @@ fn parse_phrase_refuses_the_scan_flags_instead_of_ignoring_them() {
     }
 }
 
+/// The README calls its list of refused flags exhaustive, so it has to be.
+/// It was short of `--tasks-include-done` and `--tasks-include-cancelled`,
+/// and a reader taking it at its word would have written a run that exits 2.
+#[test]
+fn the_readme_names_every_flag_a_subcommand_refuses() {
+    let readme =
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"))
+            .expect("the README is readable");
+
+    let opening = "The flags that only a scan can honour";
+    let start = readme.find(opening).expect("the README says which flags");
+    let end = readme[start..]
+        .find("refused alongside the subcommand")
+        .expect("the paragraph reads as it did")
+        + start;
+
+    let mut named: Vec<&str> = readme[start..end]
+        .split('`')
+        .filter(|piece| piece.starts_with("--"))
+        .collect();
+    named.sort_unstable();
+
+    let mut refused: Vec<&str> = SCAN_FLAGS.iter().map(|flag| flag[0]).collect();
+    refused.sort_unstable();
+
+    assert_eq!(
+        named, refused,
+        "the README names a different set of flags than the run refuses"
+    );
+}
+
 #[test]
 fn parse_phrase_keeps_the_diagnostic_flags_usable() {
     // The diagnostics apply to any run, so they stay allowed alongside the
     // subcommand rather than being swept up by the conflict rule.
-    for flag in [vec!["-vv"], vec!["--quiet"], vec!["--color", "never"]] {
+    for flag in [
+        vec!["-vv"],
+        vec!["--quiet"],
+        vec!["--color", "never"],
+        vec!["--no-color"],
+    ] {
         bin()
             .args(&flag)
             .args(["parse-phrase", "позвонить"])
@@ -4108,6 +4157,279 @@ fn a_moved_line_holds_the_occurrence_on_another_day() {
     );
 }
 
+/// ADR-0038: "it moved rather than went, so the debt travels with it". The
+/// day the move takes the occurrence off is not a day the series is in
+/// arrears for; the day it holds it on is.
+#[test]
+fn the_debt_of_a_moved_occurrence_travels_to_the_day_it_moved_to() {
+    let dir = tempdir().unwrap();
+    let content = "## TODO English homework\n`DEADLINE: <2026-08-06 Thu +1w>`\n`MOVED: [2026-09-03 Thu] -> <2026-09-01 Tue>`\n";
+    fs::write(dir.path().join("english.md"), content).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--agenda",
+            "day",
+            "--date",
+            "2026-09-06",
+            "--current-date",
+            "2026-09-06",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let overdue = parsed[0]["overdue"]
+        .as_array()
+        .expect("the day holds a list of arrears");
+
+    assert_eq!(
+        overdue.len(),
+        1,
+        "the series is still in arrears after the move: {stdout}"
+    );
+    assert_eq!(overdue[0]["heading"], "English homework");
+    assert_eq!(
+        overdue[0]["timestamp_date"], "2026-09-01",
+        "for the day the occurrence moved to: {stdout}"
+    );
+    assert_eq!(
+        overdue[0]["days_offset"], -5,
+        "counted from that day: {stdout}"
+    );
+}
+
+/// ADR-0038: "every pass that asks whether this series occurs on this day
+/// consults the moves as well as the exclusions". The pass that answers
+/// "when is the next one" is one of them.
+#[test]
+fn the_next_occurrence_is_the_day_a_move_holds_it_on() {
+    let dir = tempdir().unwrap();
+    let content = "## TODO English lesson\n`SCHEDULED: <2026-09-10 Thu 15:00 +1w>`\n`MOVED: [2026-09-10 Thu] -> <2026-09-08 Tue 10:00>`\n";
+    fs::write(dir.path().join("english.md"), content).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--agenda",
+            "week",
+            "--from",
+            "2026-09-06",
+            "--to",
+            "2026-09-20",
+            "--current-date",
+            "2026-09-06",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let tuesday = parsed
+        .as_array()
+        .expect("array of days")
+        .iter()
+        .find(|day| day["date"] == "2026-09-08")
+        .expect("the week holds 2026-09-08");
+    let drawn = tuesday["scheduled_timed"]
+        .as_array()
+        .expect("the day holds a list");
+
+    assert_eq!(drawn.len(), 1, "the occurrence is drawn once: {stdout}");
+    assert_eq!(
+        drawn[0]["timestamp_next"], "2026-09-08",
+        "the day drawn and the day named as next are the same day: {stdout}"
+    );
+}
+
+/// The same for a DEADLINE drawn into today ahead of its date: the warning
+/// names the day the occurrence is held on, not the one after the move.
+#[test]
+fn an_upcoming_deadline_counts_to_the_day_a_move_holds_it_on() {
+    let dir = tempdir().unwrap();
+    let content = "## TODO Report\n`DEADLINE: <2026-09-10 Thu +1w>`\n`MOVED: [2026-09-10 Thu] -> <2026-09-08 Tue>`\n";
+    fs::write(dir.path().join("report.md"), content).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--agenda",
+            "day",
+            "--date",
+            "2026-09-06",
+            "--current-date",
+            "2026-09-06",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let upcoming = parsed[0]["upcoming"]
+        .as_array()
+        .expect("the day holds a list of what is coming up");
+
+    assert_eq!(upcoming.len(), 1, "the deadline is drawn in: {stdout}");
+    assert_eq!(upcoming[0]["heading"], "Report");
+    assert_eq!(
+        upcoming[0]["days_offset"], 2,
+        "two days off, not the nine of the occurrence after the move: {stdout}"
+    );
+}
+
+/// Two occurrences moved onto one day are two occurrences on that day. The
+/// pass used to draw the first move whose day matched and stop, so the second
+/// occurrence was drawn nowhere: not on the day the series names, which the
+/// move takes it off, and not on the day it moved to.
+#[test]
+fn two_occurrences_moved_onto_one_day_are_both_drawn() {
+    let dir = tempdir().unwrap();
+    let content = "### TODO English\n`SCHEDULED: <2026-08-13 Thu 15:00 +1w>`\n`MOVED: [2026-08-20 Thu] -> <2026-08-22 Sat 13:00>`\n`MOVED: [2026-08-27 Thu] -> <2026-08-22 Sat 17:00>`\n";
+    fs::write(dir.path().join("english.md"), content).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--agenda",
+            "week",
+            "--from",
+            "2026-08-17",
+            "--to",
+            "2026-08-30",
+            "--current-date",
+            "2026-08-17",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let day = |date: &str| {
+        parsed
+            .as_array()
+            .expect("array of days")
+            .iter()
+            .find(|day| day["date"] == date)
+            .unwrap_or_else(|| panic!("the range holds {date}"))
+            .clone()
+    };
+
+    let saturday = day("2026-08-22");
+    let drawn = saturday["scheduled_timed"]
+        .as_array()
+        .expect("the day holds a list");
+    let hours: Vec<&str> = drawn
+        .iter()
+        .map(|one| one["timestamp_time"].as_str().unwrap_or_default())
+        .collect();
+
+    assert_eq!(
+        hours,
+        vec!["13:00", "17:00"],
+        "both occurrences held that day are drawn, each at its own hour: {stdout}"
+    );
+    assert_eq!(
+        day("2026-08-20")["scheduled_timed"],
+        serde_json::json!([]),
+        "and neither is left on the day the series draws it: {stdout}"
+    );
+    assert_eq!(
+        day("2026-08-27")["scheduled_timed"],
+        serde_json::json!([]),
+        "and neither is left on the day the series draws it: {stdout}"
+    );
+}
+
+/// A move onto a day the series already occupies leaves both: the series
+/// keeps its own occurrence there, and the moved one joins it.
+#[test]
+fn a_move_onto_a_day_the_series_occupies_leaves_both() {
+    let dir = tempdir().unwrap();
+    let content = "### TODO English\n`SCHEDULED: <2026-08-13 Thu 15:00 +1w>`\n`MOVED: [2026-08-20 Thu] -> <2026-08-27 Thu 18:00>`\n";
+    fs::write(dir.path().join("english.md"), content).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--agenda",
+            "day",
+            "--date",
+            "2026-08-27",
+            "--current-date",
+            "2026-08-27",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let drawn = parsed[0]["scheduled_timed"]
+        .as_array()
+        .expect("the day holds a list");
+    let hours: Vec<&str> = drawn
+        .iter()
+        .map(|one| one["timestamp_time"].as_str().unwrap_or_default())
+        .collect();
+
+    assert_eq!(
+        hours,
+        vec!["15:00", "18:00"],
+        "the series keeps its own occurrence and the moved one joins it: {stdout}"
+    );
+}
+
+/// An `EXDATE` on the day a move names cancels the occurrence the series
+/// draws there, not the one the move holds there: the move names that day
+/// itself, and naming it is the more particular statement.
+#[test]
+fn a_move_is_drawn_on_a_day_the_entry_cancels() {
+    let dir = tempdir().unwrap();
+    let content = "### TODO English\n`SCHEDULED: <2026-08-13 Thu 15:00 +1w>`\n`MOVED: [2026-08-20 Thu] -> <2026-08-22 Sat 13:00>`\n`EXDATE: 2026-08-22`\n";
+    fs::write(dir.path().join("english.md"), content).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--agenda",
+            "day",
+            "--date",
+            "2026-08-22",
+            "--current-date",
+            "2026-08-22",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let drawn = parsed[0]["scheduled_timed"]
+        .as_array()
+        .expect("the day holds a list");
+
+    assert_eq!(drawn.len(), 1, "the moved occurrence is drawn: {stdout}");
+    assert_eq!(drawn[0]["timestamp_time"], "13:00");
+}
+
 /// ADR-0038: the moves reach the wire as a field of their own, and a target
 /// that repeats is refused rather than read.
 #[test]
@@ -4135,5 +4457,71 @@ fn tasks_json_carries_the_moved_occurrences_and_refuses_a_repeating_one() {
         *moved,
         serde_json::json!([{ "from": "2026-08-20", "to": "2026-08-22", "time": "13:00" }]),
         "the repeating one is left out: {stdout}"
+    );
+}
+
+/// A move relocates an occurrence the series has. A line naming a day off the
+/// series would give the entry a day it never had, and no keyword of this
+/// format adds an occurrence, so the line is refused and the day stays empty.
+#[test]
+fn a_move_from_a_day_the_series_misses_draws_nothing() {
+    let dir = tempdir().unwrap();
+    // The series falls on Thursdays; the 21st is a Friday.
+    let content = "### TODO English\n`SCHEDULED: <2026-08-13 Thu 15:00 +1w>`\n`MOVED: [2026-08-21 Fri] -> <2026-08-22 Sat 13:00>`\n";
+    fs::write(dir.path().join("english.md"), content).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--agenda",
+            "day",
+            "--date",
+            "2026-08-22",
+            "--current-date",
+            "2026-08-22",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+
+    assert!(
+        parsed[0]["scheduled_timed"]
+            .as_array()
+            .is_none_or(|drawn| drawn.is_empty()),
+        "the day the refused line named holds nothing: {stdout}"
+    );
+}
+
+/// The refusal is said out loud, in the same shape as every other exception
+/// line that cannot be used as written: a file that looks like it moves an
+/// occurrence and moves none is the failure worth naming.
+#[test]
+fn a_move_from_a_day_the_series_misses_is_reported() {
+    let dir = tempdir().unwrap();
+    let content = "### TODO English\n`SCHEDULED: <2026-08-13 Thu 15:00 +1w>`\n`MOVED: [2026-08-21 Fri] -> <2026-08-22 Sat 13:00>`\n";
+    fs::write(dir.path().join("english.md"), content).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+            "-v",
+        ])
+        .assert()
+        .success();
+
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+
+    assert!(
+        stderr.contains("not a day this series falls on"),
+        "the refusal names what is wrong with the line: {stderr}"
     );
 }

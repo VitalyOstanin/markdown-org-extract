@@ -244,15 +244,22 @@ fn scan_files(
 
     let Run { tasks, stats } = run;
     // A cheap first pass over the bytes of every file, so that a tree of notes
-    // is not parsed in full to find out it holds no tasks. Every keyword a
-    // heading can carry has to be listed here: a file whose only task is
-    // `CANCELLED`, with no planning line under it, matched nothing and was
-    // dropped before the parser ever saw it — `--tasks-include-cancelled`
-    // returned an empty list, and the same file came back to life the moment
-    // any other task was written into it.
-    let matcher = RegexMatcher::new(
-        r"(?m)(^[#*]+\s+(TODO|DONE|CANCELLED|CANCELED)\s|DEADLINE:|SCHEDULED:|CREATED:|CLOSED:|CLOCK:)",
-    )
+    // is not parsed in full to find out it holds no tasks. What the parser
+    // reads as an entry has to be able to match here, or the file is dropped
+    // before the parser ever sees it: a file whose only task was `CANCELLED`
+    // matched nothing and came back to life the moment any other task was
+    // written into it, and so did a file whose heading carried nothing but a
+    // bare timestamp.
+    //
+    // `finalize_task` asks for one of three things -- a keyword, a `CREATED`
+    // line or a timestamp -- so all three are named: the keywords through the
+    // one list that also builds the parser's own heading regex, the planning
+    // keywords by name, and a timestamp by its shape, `<YYYY-MM-DD` or
+    // `[YYYY-MM-DD`, rather than by listing the forms it comes in.
+    let matcher = RegexMatcher::new(&format!(
+        r"(?m)(^[#*]+\s+({})\s|DEADLINE:|SCHEDULED:|CREATED:|CLOSED:|CLOCK:|[<\[]\d{{4}}-\d{{2}}-\d{{2}})",
+        crate::types::heading_keyword_alternation()
+    ))
     .map_err(|e| AppError::Regex(e.to_string()))?;
 
     // Defense-in-depth: refuse to follow symlinks and stay within the chosen
@@ -603,17 +610,20 @@ mod tests {
         assert_eq!(buf, payload);
     }
 
-    /// A file whose only tasks are cancelled is still a file with tasks.
+    /// A file whose only task carries any one keyword is still a file with
+    /// tasks.
     ///
     /// The walk reads every file through one regex before parsing it, and the
     /// keywords listed there are what makes a file worth opening. `CANCELLED`
     /// was missing from that list, so a file holding nothing else was dropped
     /// whole: `--tasks-include-cancelled` answered with an empty list, and
     /// writing any other task into the same file brought the cancelled one
-    /// back. Both spellings are checked, since both are read as cancelled.
+    /// back. The walk here is over `HEADING_KEYWORDS` rather than over two
+    /// spellings written out again, so a keyword added to the list without
+    /// reaching the prefilter fails here instead of dropping files quietly.
     #[test]
-    fn a_file_of_cancelled_tasks_alone_is_still_scanned() {
-        for keyword in ["CANCELLED", "CANCELED"] {
+    fn a_file_of_one_keyword_alone_is_still_scanned() {
+        for keyword in crate::types::HEADING_KEYWORDS {
             let dir = tempdir().unwrap();
             fs::write(
                 dir.path().join("notes.md"),
@@ -628,6 +638,41 @@ mod tests {
                 outcome.tasks.len(),
                 1,
                 "{keyword} alone in a file left it unread"
+            );
+        }
+    }
+
+    /// An entry needs no keyword: a heading with a bare timestamp under it is
+    /// an entry too, and the prefilter has to let its file through.
+    ///
+    /// The prefilter used to name the keywords of a heading and the keywords
+    /// of a planning line, and nothing else. `finalize_task` asks for one of
+    /// three things -- a keyword, a `CREATED` line or a timestamp -- so a file
+    /// written with the third alone matched nothing and was dropped before the
+    /// parser saw it, exactly as a file of cancelled tasks once was. Both
+    /// spellings of a timestamp and the range form are checked, since all
+    /// three are read as one.
+    #[test]
+    fn a_file_of_bare_timestamps_alone_is_still_scanned() {
+        for planning in [
+            "<2026-09-10 Thu 10:00>",
+            "[2026-09-10 Thu 10:00]",
+            "<2026-09-10 Thu 10:00>--<2026-09-10 Thu 11:00>",
+        ] {
+            let dir = tempdir().unwrap();
+            fs::write(
+                dir.path().join("notes.md"),
+                format!("## Meeting with the team\n`{planning}`\n"),
+            )
+            .unwrap();
+
+            let outcome =
+                scan_directory(dir.path(), &ScanOptions::default(), None).expect("the scan runs");
+
+            assert_eq!(
+                outcome.tasks.len(),
+                1,
+                "{planning} alone in a file left it unread"
             );
         }
     }

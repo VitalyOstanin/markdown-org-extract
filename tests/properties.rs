@@ -167,9 +167,14 @@ fn reference_day() -> NaiveDate {
     NaiveDate::from_ymd_opt(2026, 8, 31).expect("a date that exists")
 }
 
-/// The words the Russian grammar knows, from every rule it has, mixed with
-/// words it knows nothing about. A phrase built from these is one a person
-/// could say and one the parser has to survive.
+/// A sample of the words the Russian grammar knows, one or more from each
+/// rule it has, to be mixed with words it knows nothing about: a phrase built
+/// from these is one a person could say and one the parser has to survive.
+///
+/// A sample, not a mirror of the parser's tables. Those are checked against a
+/// reference of their own in `src/phrase.rs`; a word missing here weakens the
+/// generator without making any statement false, so this list is not kept in
+/// step with them.
 const KNOWN_WORDS: &[&str] = &[
     "напомни",
     "мне",
@@ -231,6 +236,19 @@ fn any_phrase() -> impl Strategy<Value = String> {
     prop::collection::vec(phrase_word(), 0..8).prop_map(|words| words.join(" "))
 }
 
+/// A word no rule of the grammar can know: Russian words do not begin with
+/// "ы", so no table holds one, and a word of letters is neither a number nor
+/// a date nor an hour. What the parser does with these says whether it keeps
+/// what it did not consume.
+fn an_unknown_word() -> impl Strategy<Value = String> {
+    proptest::string::string_regex("ы[а-я]{0,6}").expect("a valid generator pattern")
+}
+
+/// A phrase of up to eight words, none of which any rule can consume.
+fn a_phrase_of_unknown_words() -> impl Strategy<Value = String> {
+    prop::collection::vec(an_unknown_word(), 1..8).prop_map(|words| words.join(" "))
+}
+
 /// Whether `part` appears inside `whole` in order, word by word.
 fn is_a_subsequence_of(part: &str, whole: &str) -> bool {
     let mut words = whole.split_whitespace();
@@ -254,6 +272,22 @@ proptest! {
             is_a_subsequence_of(&entry.heading, &phrase),
             "heading {:?} is not what was said in {:?}",
             entry.heading,
+            phrase
+        );
+    }
+
+    /// The other side of the same statement. The property above says the
+    /// heading invents nothing; on its own it holds for a parser that always
+    /// returns an empty heading, which is the very failure ADR-0036 calls the
+    /// worst one. A phrase no rule can consume has to come back whole.
+    #[test]
+    fn a_phrase_no_rule_consumes_comes_back_whole(phrase in a_phrase_of_unknown_words()) {
+        let entry = parse_phrases([phrase.as_str()], "ru", reference_day());
+
+        prop_assert_eq!(
+            &entry.heading,
+            &phrase,
+            "nothing in {:?} is a word the grammar knows, so all of it is the heading",
             phrase
         );
     }

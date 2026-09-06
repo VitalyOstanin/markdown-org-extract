@@ -1487,6 +1487,21 @@ EXDATE: 2026-08-27
   ADR-0038 wrote, is still read.
   An entry may hold as many `MOVED` lines as it has moved occurrences, and two
   naming the same occurrence leave the first standing.
+- The day a `MOVED` line addresses has to be an occurrence the entry actually
+  has: the series its timestamp describes must fall on that day. A line
+  addressing any other day is refused and reported, because reading it would
+  give the series a day it never had, and no line of this format adds an
+  occurrence ([ADR-0040](docs/adr/0040-what-a-move-conflicts-with.md)). An
+  entry whose timestamp does not repeat has one occurrence — the timestamp
+  itself, which is edited rather than moved — and an entry with no timestamp
+  has none, so a `MOVED` line on either is refused the same way.
+- Where a move meets something else that speaks about the same day, both
+  stand. Two occurrences moved onto one day are both drawn, each at the hour
+  its own line names. An occurrence moved onto a day the series already draws
+  on leaves that day holding both. An `EXDATE` naming the day a move holds an
+  occurrence on cancels the occurrence the series draws there and not the
+  moved one — the move names that day itself, which is the more particular
+  statement; to cancel a moved occurrence, remove its `MOVED` line.
 - The older shape is still read: a separate entry carrying `SERIES_ID` (the
   `ID` of the series) and `RECURRENCE_ID` (the start the occurrence *would*
   have had) takes the place of that one occurrence. It is what this project
@@ -1558,7 +1573,8 @@ markdown-org-extract parse-phrase --current-date 2026-08-31 "завтра куп
 ```
 
 The flags that only a scan can honour — `--dir`, `--glob`, `--format`,
-`--output`, `--absolute-paths`, `--agenda`, `--tasks`, `--date`, `--from`,
+`--output`, `--absolute-paths`, `--agenda`, `--tasks`,
+`--tasks-include-done`, `--tasks-include-cancelled`, `--date`, `--from`,
 `--to`, `--week-start`, `--max-tasks`, `--holidays`, `--completions` — are
 refused alongside the subcommand with exit code 2, because the subcommand
 stands in place of the scan and there is nothing for them to act on. The

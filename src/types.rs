@@ -57,6 +57,19 @@ impl fmt::Display for TaskType {
     }
 }
 
+/// Every keyword a heading can carry, in the order an alternation reading
+/// them has to try: the double-L `CANCELLED` before the single-L `CANCELED`,
+/// so the longer spelling wins. `TaskType::from_keyword` reads exactly these,
+/// and the two regexes that find a heading are built from this list rather
+/// than repeating it -- a keyword added here and forgotten there used to drop
+/// whole files before the parser saw them.
+pub const HEADING_KEYWORDS: &[&str] = &["TODO", "DONE", "CANCELLED", "CANCELED"];
+
+/// The keywords as one regex alternation, `TODO|DONE|CANCELLED|CANCELED`.
+pub fn heading_keyword_alternation() -> String {
+    HEADING_KEYWORDS.join("|")
+}
+
 impl TaskType {
     /// Parse task type from an org-mode keyword
     /// (`TODO` / `DONE` / `CANCELLED` / `CANCELED`). The two cancelled
@@ -620,6 +633,38 @@ impl DayAgenda {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The list and the rule that reads it say the same thing, in both
+    /// directions: every keyword named is read, and every keyword read is
+    /// named. A keyword added to `from_keyword` alone leaves the two regexes
+    /// built from the list behind, which is how a file of cancelled tasks
+    /// came to be dropped before the parser saw it.
+    #[test]
+    fn the_keyword_list_and_the_rule_that_reads_it_agree() {
+        for keyword in HEADING_KEYWORDS {
+            let parsed = TaskType::from_keyword(keyword)
+                .unwrap_or_else(|| panic!("{keyword} is listed but not read"));
+            assert_eq!(
+                &parsed.to_string(),
+                keyword,
+                "{keyword} is read as something that prints differently"
+            );
+        }
+
+        for spelling in [CancelledSpelling::DoubleL, CancelledSpelling::SingleL] {
+            for task_type in [
+                TaskType::Todo,
+                TaskType::Done,
+                TaskType::Cancelled(spelling),
+            ] {
+                let printed = task_type.to_string();
+                assert!(
+                    HEADING_KEYWORDS.contains(&printed.as_str()),
+                    "{printed} is a keyword the list does not name"
+                );
+            }
+        }
+    }
 
     #[test]
     fn task_type_from_keyword() {

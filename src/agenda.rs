@@ -568,7 +568,15 @@ fn next_occurrence(
     } else {
         next
     };
-    skip_excluded(base, repeater, next, excluded, Walk::Upcoming)
+    // The earliest day an answer may name: today, or tomorrow when today's
+    // slot has already gone by. A day a move holds an occurrence on counts
+    // from the same line.
+    let earliest = if slot_passed_today {
+        today.succ_opt()?
+    } else {
+        today
+    };
+    skip_excluded(base, repeater, next, excluded, Walk::Upcoming, earliest)
 }
 
 /// Which way a walk over a series runs, and what an occurrence that moved
@@ -584,6 +592,8 @@ enum Walk {
     /// did take place — in the entry that replaced it, which owes the debt
     /// itself — so the walk ends there rather than reaching further back and
     /// making the series look older than it was before the move (ADR-0032).
+    /// A moved one is still this entry's: the debt travels to the day the
+    /// move holds it on, and is owed once that day is behind.
     Arrears,
 }
 
@@ -637,13 +647,48 @@ fn skip_excluded(
     from: Option<NaiveDate>,
     excluded: &ExcludedOccurrences,
     walk: Walk,
+    boundary: NaiveDate,
+) -> Option<NaiveDate> {
+    let series = walk_the_series(base, repeater, from, excluded, walk, boundary);
+    match walk {
+        // A day a move holds an occurrence on is not a day the series draws
+        // one, so the walk above steps straight past it. It is a candidate
+        // all the same, and the nearer of the two is what is coming up
+        // (ADR-0038).
+        Walk::Upcoming => match (series, excluded.first_day_held_from(boundary)) {
+            (Some(from_series), Some(held)) => Some(from_series.min(held)),
+            (answer, None) => answer,
+            (None, held) => held,
+        },
+        Walk::Arrears => series,
+    }
+}
+
+/// The occurrence the series itself has on the side of the day `walk` names,
+/// stepping over the ones the entry does not have there.
+fn walk_the_series(
+    base: NaiveDate,
+    repeater: &crate::timestamp::Repeater,
+    from: Option<NaiveDate>,
+    excluded: &ExcludedOccurrences,
+    walk: Walk,
+    boundary: NaiveDate,
 ) -> Option<NaiveDate> {
     use crate::timestamp::closest_date;
 
     let mut candidate = from?;
     for _ in 0..=excluded.len() {
-        if walk.ends_at_a_replacement() && excluded.is_replaced(&candidate) {
-            return None;
+        if walk.ends_at_a_replacement() {
+            // The debt of a moved occurrence is the day it moved to, once
+            // that day is behind: an occurrence held ahead of today is not
+            // late, and the walk answers with nothing rather than reaching
+            // past it to an older one the move did not leave owing.
+            if let Some(held) = excluded.moved_to(&candidate) {
+                return (held <= boundary).then_some(held);
+            }
+            if excluded.is_replaced(&candidate) {
+                return None;
+            }
         }
         if !excluded.contains(&candidate) {
             return Some(candidate);
@@ -1005,22 +1050,30 @@ fn push_moved_occurrence(
     agenda: &mut DayAgenda,
 ) -> bool {
     let day = day_date.format("%Y-%m-%d").to_string();
-    let Some(moved) = task
+    // Every move that names the day, not the first of them: two occurrences
+    // moved onto one day are two occurrences on that day, each at the hour
+    // its own line names. Drawing only the first left the second nowhere --
+    // off the day the series draws it, which the move takes it from, and off
+    // the day it moved to.
+    let held_today: Vec<&crate::types::MovedOccurrence> = task
         .moved_occurrences
         .as_deref()
         .unwrap_or_default()
         .iter()
-        .find(|held| held.to == day)
-    else {
+        .filter(|held| held.to == day)
+        .collect();
+    if held_today.is_empty() {
         return false;
-    };
-
-    let mut held = task.clone();
-    if moved.time.is_some() {
-        held.timestamp_time = moved.time.clone();
-        held.timestamp_end_time = moved.end_time.clone();
     }
-    push_scheduled_occurrence(&held, parsed, repeater, day_date, excluded, agenda);
+
+    for moved in held_today {
+        let mut held = task.clone();
+        if moved.time.is_some() {
+            held.timestamp_time = moved.time.clone();
+            held.timestamp_end_time = moved.end_time.clone();
+        }
+        push_scheduled_occurrence(&held, parsed, repeater, day_date, excluded, agenda);
+    }
     true
 }
 
@@ -1075,6 +1128,7 @@ fn handle_repeating_task(
         closest_date(base_date, current_date, DatePreference::Past, repeater),
         excluded,
         Walk::Arrears,
+        current_date,
     );
     // `repeat` is "should this exact day show the recurring task?" — that
     // question is local to `day_date`, not to `current_date`, otherwise past
@@ -1211,6 +1265,7 @@ fn push_upcoming_deadline(
         Some(day.base_date),
         day.excluded,
         Walk::Upcoming,
+        day.current_date,
     ) else {
         return;
     };

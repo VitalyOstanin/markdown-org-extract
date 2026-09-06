@@ -348,9 +348,13 @@ Questions to settle before any of it:
    inherit is the hour, since a lesson added before an exam is usually held at
    another one.
 3. **How it interacts with the other two.** An added occurrence can later be
-   moved or cancelled: whether `MOVED` may address a day the series does not
-   fall on, and whether `EXDATE` may name one, decides whether the three
-   operations compose or have to be special-cased against each other.
+   moved or cancelled, and whether the three operations compose or have to be
+   special-cased against each other turns on whether `MOVED` and `EXDATE` may
+   name a day the series does not fall on. Half of that is now answered:
+   ADR-0040 refuses a `MOVED` line addressing such a day, precisely so that
+   adding an occurrence stays an operation this format has not decided on.
+   Whatever form adding takes, it has to say how a move addresses what it
+   added — the days a series falls on will no longer be the whole answer.
 4. **What it owes.** ADR-0032 says what a missing occurrence owes; an added one
    that has gone by unfinished is arrears the same way, and the day it is
    counted from is its own rather than the series'.

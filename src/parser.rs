@@ -6,10 +6,11 @@
 //!
 //! [`Task`]: crate::types::Task
 
+use chrono::NaiveDate;
 use comrak::nodes::{AstNode, NodeValue};
 use comrak::{parse_document, Arena, Options};
 use regex::Regex;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -18,7 +19,8 @@ use crate::clock::{calculate_total_minutes, extract_clocks, format_duration};
 use crate::regex_limits::compile_bounded;
 use crate::timestamp::{
     extract_created_normalized, extract_moved_normalized, extract_repeater_normalized,
-    extract_timestamp_normalized, normalize_weekdays, parse_timestamp_fields_normalized,
+    extract_timestamp_normalized, normalize_weekdays, parse_repeater,
+    parse_timestamp_fields_normalized,
 };
 use crate::types::{Priority, Task, TaskType, MAX_DIAGNOSTIC_ITEMS};
 
@@ -115,8 +117,12 @@ fn warn_unusable_exception(
 /// character. The double-L `CANCELLED` is listed before the single-L
 /// `CANCELED` so the alternation prefers the longer spelling. Used as the
 /// first step of heading parsing — see `parse_heading`.
-static HEADING_TODO_RE: LazyLock<Regex> =
-    LazyLock::new(|| compile_bounded(r"^(TODO|DONE|CANCELLED|CANCELED)\s+"));
+static HEADING_TODO_RE: LazyLock<Regex> = LazyLock::new(|| {
+    compile_bounded(&format!(
+        r"^({})\s+",
+        crate::types::heading_keyword_alternation()
+    ))
+});
 
 /// Priority cookie `[#X]` with an optional trailing space, matching anywhere
 /// in the heading text.
@@ -431,7 +437,14 @@ fn finalize_task(
     // occur on this day" needs them parsed, and parsing them once here keeps
     // the string handling out of the agenda.
     let exceptions = exception_fields(path, line, properties.as_ref(), prop_warning_counter);
-    let moved = moved_occurrences(path, line, &info.moved, prop_warning_counter);
+    // What a `MOVED` line names has to be an occurrence this entry draws, and
+    // that is the entry's own timestamp and repeater -- the same pair the
+    // agenda walks the series with.
+    let series = ts_date
+        .as_deref()
+        .and_then(|day| NaiveDate::parse_from_str(day, "%Y-%m-%d").ok())
+        .zip(ts_repeater.as_deref().and_then(parse_repeater));
+    let moved = moved_occurrences(path, line, &info.moved, series, prop_warning_counter);
 
     Some(Task {
         file: path.display().to_string(),
@@ -473,22 +486,52 @@ fn finalize_task(
 /// another shape -- which of the two days the occurrence is on cannot be
 /// decided from the file -- so the second one is dropped rather than
 /// overwriting the first.
+///
+/// A line whose day is not an occurrence of `series` is the third shape of
+/// it, and the one that used to pass: a move relocates an occurrence the
+/// entry has, so naming a day off the series -- or naming one at all where
+/// the entry draws no series -- would add an occurrence through a keyword
+/// that says nothing about adding.
 fn moved_occurrences(
     path: &Path,
     line: u32,
     lines: &[String],
+    series: Option<(NaiveDate, crate::timestamp::Repeater)>,
     prop_warning_counter: &mut usize,
 ) -> Option<Vec<crate::types::MovedOccurrence>> {
-    use crate::exceptions::{parse_moved, MOVED_KEY};
+    use crate::exceptions::{moved_day_is_an_occurrence, parse_moved, MOVED_KEY};
 
     let mut moved: Vec<crate::types::MovedOccurrence> = Vec::new();
+    let mut held_days: HashSet<String> = HashSet::new();
     for raw in lines {
         let Some(one) = parse_moved(raw, |problem| {
             warn_unusable_exception(prop_warning_counter, path, line, MOVED_KEY, raw, problem);
         }) else {
             continue;
         };
-        if moved.iter().any(|held| held.from == one.from) {
+        let Some((base, ref repeater)) = series else {
+            warn_unusable_exception(
+                prop_warning_counter,
+                path,
+                line,
+                MOVED_KEY,
+                raw,
+                "the entry draws no series, and a moved occurrence is one of a series",
+            );
+            continue;
+        };
+        if !moved_day_is_an_occurrence(base, repeater, &one) {
+            warn_unusable_exception(
+                prop_warning_counter,
+                path,
+                line,
+                MOVED_KEY,
+                raw,
+                "the occurrence moved is not a day this series falls on",
+            );
+            continue;
+        }
+        if !held_days.insert(one.from.clone()) {
             warn_unusable_exception(
                 prop_warning_counter,
                 path,
@@ -1759,6 +1802,85 @@ Second paragraph.\n\
         assert_eq!(moved.len(), 2);
         assert_eq!(moved[0].from, "2026-08-20");
         assert_eq!(moved[1].from, "2026-08-27");
+        assert_eq!(properties, 0, "nothing here is refused");
+    }
+
+    #[test]
+    fn a_move_from_a_day_the_series_misses_is_refused() {
+        // The series falls on Thursdays and the 21st is a Friday. A move
+        // relocates an occurrence the series has; there is no line that gives
+        // the series a day it never had, so reading this one would add an
+        // occurrence through a keyword that says nothing about adding.
+        let (tasks, _, properties) = counted(
+            "### TODO T\n\
+             `SCHEDULED: <2026-08-13 Thu +1w>`\n\
+             `MOVED: 2026-08-21 -> <2026-08-22 Sat 18:00>`\n",
+        );
+
+        assert_eq!(tasks[0].moved_occurrences, None, "the line is not read");
+        assert_eq!(properties, 1, "the line is reported");
+    }
+
+    #[test]
+    fn a_move_from_a_day_before_the_series_begins_is_refused() {
+        // The 6th is a Thursday, which is the day of the week the series
+        // falls on, and still not an occurrence: the series starts on the
+        // 13th and has nothing behind it.
+        let (tasks, _, properties) = counted(
+            "### TODO T\n\
+             `SCHEDULED: <2026-08-13 Thu +1w>`\n\
+             `MOVED: 2026-08-06 -> <2026-08-22 Sat 18:00>`\n",
+        );
+
+        assert_eq!(tasks[0].moved_occurrences, None, "the line is not read");
+        assert_eq!(properties, 1, "the line is reported");
+    }
+
+    #[test]
+    fn a_move_by_an_entry_that_does_not_repeat_is_refused() {
+        // One occurrence is the timestamp itself, and a timestamp is edited
+        // rather than moved: `MOVED` exists because one occurrence of a
+        // series has nowhere else to be written.
+        let (tasks, _, properties) = counted(
+            "### TODO T\n\
+             `SCHEDULED: <2026-08-13 Thu>`\n\
+             `MOVED: 2026-08-13 -> <2026-08-22 Sat 18:00>`\n",
+        );
+
+        assert_eq!(tasks[0].moved_occurrences, None, "the line is not read");
+        assert_eq!(properties, 1, "the line is reported");
+    }
+
+    #[test]
+    fn a_move_by_an_entry_without_a_timestamp_is_refused() {
+        // Nothing here draws occurrences, so there is none for the line to
+        // name. It used to be kept and then never looked at.
+        let (tasks, _, properties) = counted(
+            "### TODO T\n\
+             `CREATED: [2026-08-13 Thu]`\n\
+             `MOVED: 2026-08-13 -> <2026-08-22 Sat 18:00>`\n",
+        );
+
+        assert_eq!(tasks[0].moved_occurrences, None, "the line is not read");
+        assert_eq!(properties, 1, "the line is reported");
+    }
+
+    #[test]
+    fn a_move_from_a_day_a_monthly_series_falls_on_is_kept() {
+        // The grid a move is checked against is the one the agenda walks, not
+        // a week counted in days: a monthly series falls on the 31st of the
+        // months that have one.
+        let (tasks, _, properties) = counted(
+            "### TODO T\n\
+             `SCHEDULED: <2026-01-31 Sat +1m>`\n\
+             `MOVED: 2026-03-31 -> <2026-04-02 Thu 18:00>`\n",
+        );
+
+        let moved = tasks[0]
+            .moved_occurrences
+            .as_deref()
+            .expect("the entry moves an occurrence");
+        assert_eq!(moved.len(), 1);
         assert_eq!(properties, 0, "nothing here is refused");
     }
 

@@ -19,7 +19,7 @@
 //! occurrence of a series per day; the clock time a `RECURRENCE_ID` may carry
 //! is kept for the reader and for export, and is not matched on.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::NaiveDate;
 
@@ -204,6 +204,32 @@ fn moved_occurrence_day(left: &str, on_refused: &mut impl FnMut(&str)) -> Option
     Some(parsed.date)
 }
 
+/// Whether the day a `MOVED` line names is an occurrence the series has.
+///
+/// A move says where an occurrence is held instead of where the series draws
+/// it. There is no line that gives a series a day it never had, so a line
+/// naming a day off the series would add an occurrence through a keyword that
+/// says nothing about adding: `MOVED: 2026-09-08 -> <2026-09-20 Sun>` against
+/// a series of Mondays used to draw the 20th, a day the entry never had.
+///
+/// The grid asked here is the one the agenda walks -- `closest_date` from the
+/// entry's own timestamp -- so a day this answers `true` for is a day the
+/// agenda would have drawn, whatever shape the repeater has. A `from` that
+/// cannot be read back as a date answers `false`, which refuses the line: the
+/// day it names is not an occurrence either way.
+pub fn moved_day_is_an_occurrence(
+    base: NaiveDate,
+    repeater: &crate::timestamp::Repeater,
+    moved: &MovedOccurrence,
+) -> bool {
+    use crate::timestamp::{closest_date, DatePreference};
+
+    let Ok(from) = NaiveDate::parse_from_str(&moved.from, "%Y-%m-%d") else {
+        return false;
+    };
+    closest_date(base, from, DatePreference::Past, repeater) == Some(from)
+}
+
 /// The clock time of a `RECURRENCE_ID`: written to the minute, or with the
 /// seconds a calendar export adds. Occurrences are named to the minute here,
 /// so the seconds are read and then left out of the normalised value.
@@ -290,22 +316,33 @@ impl OccurrenceExceptions {
             // and one bad string must not take the whole list with it.
             .filter_map(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
             .collect();
-        let mut replaced = task_id(task)
+        let replaced = task_id(task)
             .and_then(|id| self.replaced.get(id))
             .cloned()
             .unwrap_or_default();
         // The entry's own `MOVED` lines, which need no identifier and no
         // second entry: the occurrence they name is held elsewhere by this
-        // same entry (ADR-0038), so it is out of the day it would have fallen
-        // on for the same reason a replacement takes it out.
-        for moved in task.moved_occurrences.as_deref().unwrap_or_default() {
-            if let Ok(date) = NaiveDate::parse_from_str(&moved.from, "%Y-%m-%d") {
-                replaced.insert(date);
-            }
-        }
+        // same entry (ADR-0038). Kept apart from the replacements rather than
+        // folded in with them: a replacement hands the occurrence and its debt
+        // to another entry, while a move keeps both and only says which day
+        // they are on, so every walk that meets one has to be told where it
+        // went.
+        let moved = task
+            .moved_occurrences
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|moved| {
+                Some((
+                    NaiveDate::parse_from_str(&moved.from, "%Y-%m-%d").ok()?,
+                    NaiveDate::parse_from_str(&moved.to, "%Y-%m-%d").ok()?,
+                ))
+            })
+            .collect();
         ExcludedOccurrences {
             cancelled,
             replaced,
+            moved,
         }
     }
 }
@@ -315,23 +352,52 @@ fn task_id(task: &Task) -> Option<&str> {
     task.properties.as_ref()?.get(ID_KEY).map(String::as_str)
 }
 
-/// The occurrences one entry does not have, kept apart by reason.
+/// The occurrences one entry does not have on the day the series draws them,
+/// kept apart by reason.
 ///
-/// Both reasons take the occurrence out of the day it would have fallen on.
-/// They part ways over the arrears: a cancelled occurrence never was, so the
-/// debt is whichever earlier one still stands, while a replaced occurrence did
-/// take place — elsewhere — and its debt travels with the entry that replaced
-/// it (ADR-0031).
+/// All three reasons take the occurrence out of that day. They part ways over
+/// the arrears: a cancelled occurrence never was, so the debt is whichever
+/// earlier one still stands; a replaced occurrence did take place — elsewhere,
+/// in the entry that replaced it, which owes the debt itself (ADR-0031); a
+/// moved one is still this entry's, on the day it names, and the debt travels
+/// with it (ADR-0038, ADR-0032).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ExcludedOccurrences {
     cancelled: HashSet<NaiveDate>,
     replaced: HashSet<NaiveDate>,
+    /// The day a move takes an occurrence off, against the day it holds it
+    /// on. Ordered, because the walk that looks for what is coming up asks
+    /// for the nearest day held.
+    moved: BTreeMap<NaiveDate, NaiveDate>,
 }
 
 impl ExcludedOccurrences {
-    /// Whether the series skips `date`, for either reason.
+    /// Whether the series skips `date`, for any of the three reasons.
     pub fn contains(&self, date: &NaiveDate) -> bool {
-        self.cancelled.contains(date) || self.replaced.contains(date)
+        self.cancelled.contains(date)
+            || self.replaced.contains(date)
+            || self.moved.contains_key(date)
+    }
+
+    /// The day the occurrence of `date` is held on instead, where the entry
+    /// moved it.
+    pub fn moved_to(&self, date: &NaiveDate) -> Option<NaiveDate> {
+        self.moved.get(date).copied()
+    }
+
+    /// The earliest day this entry holds a moved occurrence on that is not
+    /// before `boundary`.
+    ///
+    /// The day a move names is not an occurrence of the series -- the series
+    /// knows only its own rhythm -- so a walk looking for what is coming up
+    /// would step straight past it. This is what it has to weigh its own
+    /// answer against.
+    pub fn first_day_held_from(&self, boundary: NaiveDate) -> Option<NaiveDate> {
+        self.moved
+            .values()
+            .copied()
+            .filter(|to| *to >= boundary)
+            .min()
     }
 
     /// Whether another entry of the run stands in for the occurrence on
@@ -348,14 +414,14 @@ impl ExcludedOccurrences {
     /// Whether this entry misses no occurrence at all — the fast path for the
     /// overwhelmingly common case of an entry without an exception.
     pub fn is_empty(&self) -> bool {
-        self.cancelled.is_empty() && self.replaced.is_empty()
+        self.cancelled.is_empty() && self.replaced.is_empty() && self.moved.is_empty()
     }
 
     /// How many occurrences are missing, counting a date named by both
     /// reasons twice. An upper bound is all the walks over a series need, and
     /// an exact count would cost a pass over the smaller set.
     pub fn len(&self) -> usize {
-        self.cancelled.len() + self.replaced.len()
+        self.cancelled.len() + self.replaced.len() + self.moved.len()
     }
 }
 
@@ -669,10 +735,21 @@ mod tests {
             OccurrenceExceptions::from_tasks(std::slice::from_ref(&english)).dates_for(&english);
 
         assert!(missing.contains(&ymd(2026, 9, 7)));
-        assert!(
-            missing.is_replaced(&ymd(2026, 9, 7)),
-            "it moved rather than went: the debt travels with it"
+        assert_eq!(
+            missing.moved_to(&ymd(2026, 9, 7)),
+            Some(ymd(2026, 9, 9)),
+            "it moved rather than went: the day it moved to is where it is"
         );
+        assert!(
+            !missing.is_replaced(&ymd(2026, 9, 7)),
+            "no other entry stands in for it, so no other entry owes its debt"
+        );
+        assert_eq!(
+            missing.first_day_held_from(ymd(2026, 9, 8)),
+            Some(ymd(2026, 9, 9)),
+            "the day held is a day the walks have to weigh"
+        );
+        assert_eq!(missing.first_day_held_from(ymd(2026, 9, 10)), None);
         assert!(!missing.contains(&ymd(2026, 9, 14)));
     }
 

@@ -516,11 +516,8 @@ fn field_noun(key: &str, langs: Languages) -> Option<Field> {
 
 // --- keyword ---------------------------------------------------------------
 
-/// "отметь выполненной", "в работу", "mark as done".
-///
-/// The forms are the ones said about an entry that exists, in the genders and
-/// cases they are said in; the imperative in front of them is a lead-in verb
-/// and is eaten before the rules run.
+/// The Russian words that say an entry is done or cancelled, in the genders
+/// and cases they are said in.
 const RU_KEYWORDS: &[(&str, PhraseKeyword)] = &[
     ("выполнено", PhraseKeyword::Done),
     ("выполнена", PhraseKeyword::Done),
@@ -539,6 +536,7 @@ const RU_KEYWORDS: &[(&str, PhraseKeyword)] = &[
     ("отмененную", PhraseKeyword::Cancelled),
 ];
 
+/// The English words that say the same, plus the one that reopens an entry.
 const EN_KEYWORDS: &[(&str, PhraseKeyword)] = &[
     ("done", PhraseKeyword::Done),
     ("completed", PhraseKeyword::Done),
@@ -551,6 +549,11 @@ const EN_KEYWORDS: &[(&str, PhraseKeyword)] = &[
 /// "в работе".
 const RU_BACK_TO_WORK: &[&str] = &["работу", "работе"];
 
+/// "отметь выполненной", "в работу", "mark as done".
+///
+/// The forms are the ones said about an entry that exists, in the genders and
+/// cases they are said in; the imperative in front of them is a lead-in verb
+/// and is eaten before the rules run.
 fn match_keyword(
     tokens: &[Token<'_>],
     i: usize,
@@ -1230,7 +1233,7 @@ fn ru_numeral(key: &str) -> Option<u32> {
     lookup(RU_NUMERALS, key)
 }
 
-/// The hours as they are said: "в час дня", "в три часа".
+/// The Russian hour words, "час" through "двенадцать".
 const RU_HOUR_WORDS: &[(&str, u32)] = &[
     ("час", 1),
     ("два", 2),
@@ -1247,13 +1250,12 @@ const RU_HOUR_WORDS: &[(&str, u32)] = &[
     ("двенадцать", 12),
 ];
 
+/// The hours as they are said: "в час дня", "в три часа".
 fn ru_hour_word(key: &str) -> Option<u32> {
     lookup(RU_HOUR_WORDS, key)
 }
 
-/// Weekday names in the cases they are said in: nominative, accusative after
-/// "в", dative after "к", genitive after "до", and the abbreviations the
-/// timestamp grammar already knows.
+/// The Russian weekday names, in every case the rules look up.
 const RU_WEEKDAYS: &[(&str, Weekday)] = &[
     ("понедельник", Weekday::Mon),
     ("понедельника", Weekday::Mon),
@@ -1744,12 +1746,107 @@ mod tests {
         }
     }
 
+    /// What each word says about the state of an entry, written apart from
+    /// the parser's table: "выполнено" and its kin close an entry, "отменено"
+    /// and its kin cancel it. Swapping the two halves of the table reads a
+    /// phrase as the opposite of what was said, and the walk over the table
+    /// cannot see it.
+    const RU_KEYWORD_REFERENCE: &[(&[&str], PhraseKeyword)] = &[
+        (
+            &[
+                "выполнено",
+                "выполнена",
+                "выполнен",
+                "выполненной",
+                "выполненную",
+                "сделано",
+                "сделана",
+                "готово",
+                "завершено",
+                "завершена",
+            ],
+            PhraseKeyword::Done,
+        ),
+        (
+            &[
+                "отменено",
+                "отменена",
+                "отменен",
+                "отмененной",
+                "отмененную",
+            ],
+            PhraseKeyword::Cancelled,
+        ),
+    ];
+
+    const EN_KEYWORD_REFERENCE: &[(&[&str], PhraseKeyword)] = &[
+        (&["done", "completed"], PhraseKeyword::Done),
+        (&["todo"], PhraseKeyword::Todo),
+        (&["cancelled", "canceled"], PhraseKeyword::Cancelled),
+    ];
+
+    /// Which level each word asks for. "срочно" and "критично" are the top
+    /// one, "важно" the one below; the three levels are not visible in the
+    /// words themselves, so the table alone cannot say a form was filed
+    /// under the wrong one.
+    const RU_PRIORITY_REFERENCE: &[(&[&str], Priority)] = &[
+        (
+            &[
+                "срочно",
+                "срочное",
+                "срочная",
+                "срочную",
+                "срочной",
+                "критично",
+                "критичное",
+                "критичная",
+                "критичную",
+                "критичной",
+            ],
+            Priority::A,
+        ),
+        (
+            &["важно", "важное", "важная", "важную", "важной"],
+            Priority::B,
+        ),
+    ];
+
+    const EN_PRIORITY_REFERENCE: &[(&[&str], Priority)] = &[
+        (&["urgent", "asap", "critical"], Priority::A),
+        (&["important"], Priority::B),
+    ];
+
+    /// Which half of the day each word names. `true` is the afternoon, the
+    /// half that shifts an hour by twelve.
+    const RU_HALF_DAY_REFERENCE: &[(&[&str], bool)] =
+        &[(&["дня", "вечера"], true), (&["утра", "ночи"], false)];
+
+    const EN_HALF_DAY_REFERENCE: &[(&[&str], bool)] = &[(&["pm"], true), (&["am"], false)];
+
     #[test]
     fn the_russian_tables_agree_with_a_list_written_apart_from_them() {
         agrees_with("RU_MONTHS", RU_MONTHS, RU_MONTH_REFERENCE);
         agrees_with("RU_WEEKDAYS", RU_WEEKDAYS, RU_WEEKDAY_REFERENCE);
         agrees_with("RU_NUMERALS", RU_NUMERALS, RU_NUMERAL_REFERENCE);
         agrees_with("RU_HOUR_WORDS", RU_HOUR_WORDS, RU_HOUR_REFERENCE);
+        agrees_with("RU_KEYWORDS", RU_KEYWORDS, RU_KEYWORD_REFERENCE);
+        agrees_with(
+            "RU_PRIORITY_WORDS",
+            RU_PRIORITY_WORDS,
+            RU_PRIORITY_REFERENCE,
+        );
+        agrees_with("RU_HALF_DAYS", RU_HALF_DAYS, RU_HALF_DAY_REFERENCE);
+    }
+
+    #[test]
+    fn the_english_tables_agree_with_a_list_written_apart_from_them() {
+        agrees_with("EN_KEYWORDS", EN_KEYWORDS, EN_KEYWORD_REFERENCE);
+        agrees_with(
+            "EN_PRIORITY_WORDS",
+            EN_PRIORITY_WORDS,
+            EN_PRIORITY_REFERENCE,
+        );
+        agrees_with("EN_HALF_DAYS", EN_HALF_DAYS, EN_HALF_DAY_REFERENCE);
     }
 
     #[test]
@@ -1939,17 +2036,22 @@ mod tests {
                 "hours word {word}"
             );
         }
-        for (word, afternoon) in RU_HALF_DAYS {
+        // The hour is written down rather than computed by `shift_half_day`:
+        // the parser applies that same function, so an expectation built with
+        // it agrees with any table, including one that files "утра" as the
+        // afternoon and reads "3 утра" as 15:00.
+        for (word, hour) in [("дня", 15), ("вечера", 15), ("утра", 3), ("ночи", 3)]
+        {
             assert_eq!(
                 parsed(&format!("позвонить 3 {word}"), "ru").time,
-                NaiveTime::from_hms_opt(shift_half_day(3, *afternoon), 0, 0),
+                NaiveTime::from_hms_opt(hour, 0, 0),
                 "half-day word {word}"
             );
         }
-        for (word, afternoon) in EN_HALF_DAYS {
+        for (word, hour) in [("pm", 15), ("am", 3)] {
             assert_eq!(
                 parsed(&format!("call 3 {word}"), "en").time,
-                NaiveTime::from_hms_opt(shift_half_day(3, *afternoon), 0, 0),
+                NaiveTime::from_hms_opt(hour, 0, 0),
                 "half-day word {word}"
             );
         }

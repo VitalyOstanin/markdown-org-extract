@@ -12,6 +12,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
+use crate::reminder::ReminderLead;
+
 /// Original spelling of the cancelled TODO keyword, preserved verbatim.
 ///
 /// Both spellings are user conventions (neither is built into upstream
@@ -408,6 +410,16 @@ pub struct Task {
     /// one occurrence, and travels on the copy in every agenda cell.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub moved_occurrences: Option<Vec<MovedOccurrence>>,
+    /// How far ahead of an occurrence this entry asks to be reminded, read
+    /// from the `REMINDER` property (ADR-0041). `None` where the entry names
+    /// no lead time of its own, and where the one it names could not be read
+    /// — in both cases the reminding client's own setting stands.
+    ///
+    /// A count and a unit rather than a number of minutes: a month and a year
+    /// have no fixed length, and the subtraction belongs to the client, which
+    /// knows the occurrence it counts back from and the hour it reminds at.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reminder: Option<ReminderLead>,
 }
 
 /// One occurrence of a repeating entry, held on another day than the series

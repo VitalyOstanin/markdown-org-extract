@@ -42,6 +42,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- An entry can say how long before an occurrence it asks to be reminded, with
+  the `REMINDER` key of its `org-properties` block (ADR-0041). The value is a
+  count and a unit — `30min`, `1h`, `1m` — where minutes are spelled `min`
+  because `m` is a calendar month, as it is in a repeater. It reaches the JSON
+  as a `reminder` object of a value and a unit rather than a number of
+  minutes: a month has no fixed length, and the subtraction belongs to the
+  client that knows the occurrence and the hour it reminds at. A value written
+  any other way is refused and reported through the `org-properties` warning
+  channel, and the entry is reminded about the way one without the key is.
+- A phrase names that lead time and takes it back: "напомни за час до
+  созвона", "за 15 минут", "за полчаса", "an hour before", "15 minutes
+  before", "half an hour before", and "убрать напоминание" / "no reminder" for
+  removing it. `parse-phrase` prints it as `reminder` and lists `reminder`
+  under `cleared` when a phrase emptied it. Each language marks the lead time
+  with a word of its own — "за" in front, "before" behind — so an ordinary
+  span in a phrase is not read as one.
+
 ### Fixed
 
 - A moved occurrence is now counted everywhere the series is read, not only

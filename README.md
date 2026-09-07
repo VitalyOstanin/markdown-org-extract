@@ -1337,6 +1337,39 @@ The raw keys stay in `properties` exactly as the file wrote them, beside the
 parsed fields, so a consumer that read them itself before these fields existed
 keeps working.
 
+#### Reminder lead time
+
+A fourth key is read out of the block the same way. `REMINDER` says how long
+before an occurrence the entry asks to be reminded, which a reminding client
+otherwise has only one setting for, shared by every entry it reminds about
+(see [ADR-0041](docs/adr/0041-a-reminder-lead-time-is-a-property.md)):
+
+````markdown
+### TODO Call the doctor
+`SCHEDULED: <2026-09-15 Tue 15:00>`
+```org-properties
+REMINDER: 30min
+```
+````
+
+- `reminder` (object, optional) — the lead time as a count and a unit:
+  `{"value": 30, "unit": "min"}`. Absent when the entry names none, and when
+  the value could not be read.
+
+The value is one count and one unit: `min` minutes, `h` hours, `d` days, `w`
+weeks, `m` months, `y` years. Minutes are spelled `min` because `m` is a
+calendar month, in a repeater and here alike — `REMINDER: 1m` is a month
+before, `REMINDER: 30min` half an hour before. A value written any other way
+is refused and reported on stderr, and the entry is then reminded about the
+way an entry without the key is.
+
+Nothing is converted on the way out: a month and a year have no fixed length,
+so the count and the unit arrive apart and the subtraction belongs to the
+client, which knows the occurrence it counts back from and the hour it
+reminds at. The warning cookie of a timestamp (`-3d`) is a different thing
+and keeps its own meaning — the window in which the agenda starts showing a
+deadline.
+
 ## Repeating tasks
 
 The utility honours org-mode repeater syntax for automatically scheduling
@@ -1555,7 +1588,7 @@ markdown-org-extract parse-phrase --current-date 2026-08-31 \
 ```json
 {"current_date":"2026-08-31","heading":"позвонить врачу","keyword":null,
  "priority":null,"planning":"scheduled","date":"2026-09-01","time":"15:00",
- "repeater":"+1w","cleared":[]}
+ "repeater":"+1w","reminder":null,"cleared":[]}
 ```
 
 Each phrase refines what the earlier ones left: a field the new phrase names
@@ -1590,8 +1623,9 @@ answer always goes to stdout as JSON.
 | 4 | repeater | `каждый день`, `каждые 2 недели`, `каждый рабочий день`, `еженедельно` | `every day`, `every 2 weeks`, `every workday`, `weekly` |
 | 5 | priority | `срочно`, `критично` → `A`; `важно` → `B`; `приоритет C`     | `urgent`, `asap`, `critical` → `A`; `important` → `B`; `priority C` |
 | 6 | keyword  | `выполнено`, `сделано`, `завершено` → `DONE`; `в работу` → `TODO`; `отменено` → `CANCELLED` | `done`, `completed` → `DONE`; `todo` → `TODO`; `cancelled` → `CANCELLED` |
-| 7 | cleared  | `убрать дату`, `снять срок`, `без времени`, `убрать повтор`, `без приоритета` | `no date`, `remove the time`, `no repeat`, `clear the priority` |
-| 8 | heading  | everything the rules did not consume                          | everything the rules did not consume                       |
+| 7 | reminder | `за час до`, `за 15 минут`, `за два дня`, `за полчаса`        | `an hour before`, `15 minutes before`, `half an hour before` |
+| 8 | cleared  | `убрать дату`, `снять срок`, `без времени`, `убрать повтор`, `без приоритета`, `убрать напоминание` | `no date`, `remove the time`, `no repeat`, `clear the priority`, `no reminder` |
+| 9 | heading  | everything the rules did not consume                          | everything the rules did not consume                       |
 
 A weekday resolves to the nearest one **on or after** the reference day, which
 is what a bare weekday name does in upstream's `org-read-date`: "во вторник"
@@ -1612,7 +1646,7 @@ markdown-org-extract parse-phrase --current-date 2026-08-31 \
 
 ```json
 {"current_date":"2026-08-31","heading":"","keyword":"DONE","priority":null,
- "planning":null,"date":null,"time":null,"repeater":null,
+ "planning":null,"date":null,"time":null,"repeater":null,"reminder":null,
  "cleared":["repeater"]}
 ```
 
@@ -1686,6 +1720,7 @@ markdown-org-extract/
 │   ├── locale.rs           # Weekday translation tables
 │   ├── error.rs            # AppError
 │   ├── exceptions.rs       # EXDATE / SERIES_ID / RECURRENCE_ID: the occurrences a series does not have
+│   ├── reminder.rs         # REMINDER: how long before an occurrence a reminder is due
 │   ├── types.rs            # Task / Priority / DayAgenda / ProcessingStats
 │   ├── clock.rs            # CLOCK parsing and time aggregation
 │   ├── holidays.rs         # RF workday calendar (singleton, binary search)

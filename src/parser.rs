@@ -17,6 +17,7 @@ use std::sync::LazyLock;
 
 use crate::clock::{calculate_total_minutes, extract_clocks, format_duration};
 use crate::regex_limits::compile_bounded;
+use crate::reminder::ReminderLead;
 use crate::timestamp::{
     extract_created_normalized, extract_moved_normalized, extract_repeater_normalized,
     extract_timestamp_normalized, normalize_weekdays, parse_repeater,
@@ -72,9 +73,10 @@ fn warn_invalid_property_line(counter: &mut usize, path: &Path, line: u32, raw: 
     }
 }
 
-// Mirror of `warn_invalid_property_line` for an exception key whose value
-// cannot be used as written (ADR-0031): a date in `EXDATE` that does not
-// read, a `RECURRENCE_ID` that names no occurrence, half a pair. It shares
+// Mirror of `warn_invalid_property_line` for a property key whose value
+// cannot be used as written: a date in `EXDATE` that does not read, a
+// `RECURRENCE_ID` that names no occurrence, half a pair (ADR-0031), a
+// `REMINDER` that is not a count and a unit (ADR-0041). It shares
 // the `org-properties` counter -- typically
 // `ProcessingStats::prop_warnings_emitted` -- because the mistake is in a
 // property and not in the entry's timestamp: a file full of unreadable
@@ -82,7 +84,7 @@ fn warn_invalid_property_line(counter: &mut usize, path: &Path, line: u32, raw: 
 // of every file after it, and a run summary must not file property mistakes
 // under timestamps. `key` and `problem` tell the classes apart inside the
 // shared channel.
-fn warn_unusable_exception(
+fn warn_unusable_property(
     counter: &mut usize,
     path: &Path,
     line: u32,
@@ -445,6 +447,10 @@ fn finalize_task(
         .and_then(|day| NaiveDate::parse_from_str(day, "%Y-%m-%d").ok())
         .zip(ts_repeater.as_deref().and_then(parse_repeater));
     let moved = moved_occurrences(path, line, &info.moved, series, prop_warning_counter);
+    // The lead time of ADR-0041, read here for the same reason the exception
+    // keys are: every client that reminds would otherwise read the syntax
+    // again, and a second reader is a second answer.
+    let reminder = reminder_lead(path, line, properties.as_ref(), prop_warning_counter);
 
     Some(Task {
         file: path.display().to_string(),
@@ -475,6 +481,7 @@ fn finalize_task(
         recurrence_id: exceptions.recurrence_id,
         series_id: exceptions.series_id,
         moved_occurrences: moved,
+        reminder,
     })
 }
 
@@ -505,12 +512,12 @@ fn moved_occurrences(
     let mut held_days: HashSet<String> = HashSet::new();
     for raw in lines {
         let Some(one) = parse_moved(raw, |problem| {
-            warn_unusable_exception(prop_warning_counter, path, line, MOVED_KEY, raw, problem);
+            warn_unusable_property(prop_warning_counter, path, line, MOVED_KEY, raw, problem);
         }) else {
             continue;
         };
         let Some((base, ref repeater)) = series else {
-            warn_unusable_exception(
+            warn_unusable_property(
                 prop_warning_counter,
                 path,
                 line,
@@ -521,7 +528,7 @@ fn moved_occurrences(
             continue;
         };
         if !moved_day_is_an_occurrence(base, repeater, &one) {
-            warn_unusable_exception(
+            warn_unusable_property(
                 prop_warning_counter,
                 path,
                 line,
@@ -532,7 +539,7 @@ fn moved_occurrences(
             continue;
         }
         if !held_days.insert(one.from.clone()) {
-            warn_unusable_exception(
+            warn_unusable_property(
                 prop_warning_counter,
                 path,
                 line,
@@ -545,6 +552,37 @@ fn moved_occurrences(
         moved.push(one);
     }
     (!moved.is_empty()).then_some(moved)
+}
+
+/// The lead time an entry's `REMINDER` property names (ADR-0041).
+///
+/// A value that cannot be read is refused and reported, and the entry is left
+/// with no lead time of its own: it is then reminded about the way an entry
+/// without the key is, and the warning is the only place the mistake shows.
+/// Reported through the capped `org-properties` channel, for the reason
+/// `warn_unusable_property` gives — the mistake is in a property, not in the
+/// entry's timestamp.
+fn reminder_lead(
+    path: &Path,
+    line: u32,
+    properties: Option<&BTreeMap<String, String>>,
+    prop_warning_counter: &mut usize,
+) -> Option<ReminderLead> {
+    use crate::reminder::{parse_reminder_lead, REMINDER_KEY};
+
+    let raw = properties?.get(REMINDER_KEY)?;
+    let lead = parse_reminder_lead(raw);
+    if lead.is_none() {
+        warn_unusable_property(
+            prop_warning_counter,
+            path,
+            line,
+            REMINDER_KEY,
+            raw,
+            "not a count and a unit, as in 30min or 1m",
+        );
+    }
+    lead
 }
 
 /// What the exception keys of one entry read as. Named rather than a tuple:
@@ -571,7 +609,7 @@ struct ExceptionFields {
 /// [`crate::exceptions::OccurrenceExceptions::unknown_series`]).
 ///
 /// Reported through the capped `org-properties` channel: see
-/// `warn_unusable_exception` for why that one rather than the timestamp one.
+/// `warn_unusable_property` for why that one rather than the timestamp one.
 fn exception_fields(
     path: &Path,
     line: u32,
@@ -590,7 +628,7 @@ fn exception_fields(
         let mut rejected = 0_usize;
         let dates = parse_excluded_dates(raw, |field| {
             rejected += 1;
-            warn_unusable_exception(
+            warn_unusable_property(
                 prop_warning_counter,
                 path,
                 line,
@@ -603,7 +641,7 @@ fn exception_fields(
         // key, or one written of separators. A value whose fields were all
         // rejected has been reported field by field already.
         if dates.is_empty() && rejected == 0 {
-            warn_unusable_exception(
+            warn_unusable_property(
                 prop_warning_counter,
                 path,
                 line,
@@ -618,7 +656,7 @@ fn exception_fields(
 
     let recurrence = props.get(RECURRENCE_ID_KEY).and_then(|raw| {
         let parsed = parse_recurrence_id(raw, |dropped| {
-            warn_unusable_exception(
+            warn_unusable_property(
                 prop_warning_counter,
                 path,
                 line,
@@ -628,7 +666,7 @@ fn exception_fields(
             );
         });
         if parsed.is_none() {
-            warn_unusable_exception(
+            warn_unusable_property(
                 prop_warning_counter,
                 path,
                 line,
@@ -698,7 +736,7 @@ fn warn_about_half_a_pair(
         // there.
         _ => (SERIES_ID_KEY, ""),
     };
-    warn_unusable_exception(
+    warn_unusable_property(
         prop_warning_counter,
         path,
         line,
@@ -1096,6 +1134,7 @@ fn collect_block_text<'a>(node: &'a AstNode<'a>, out: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reminder::{ReminderLead, ReminderUnit, REMINDER_KEY};
     use crate::types::{CancelledSpelling, DEFAULT_MAX_TASKS};
 
     #[test]
@@ -1724,6 +1763,48 @@ Second paragraph.\n\
         format!(
             "### TODO T\n`SCHEDULED: <2026-08-13 Thu +1w>`\n```org-properties\n{properties}\n```\n"
         )
+    }
+
+    #[test]
+    fn a_reminder_property_is_read_into_a_field_of_its_own() {
+        let (tasks, _, properties) = counted(&with_properties("REMINDER: 30min"));
+
+        assert_eq!(
+            tasks[0].reminder,
+            Some(ReminderLead {
+                value: 30,
+                unit: ReminderUnit::Minute
+            })
+        );
+        assert_eq!(properties, 0, "the value reads");
+        assert_eq!(
+            tasks[0]
+                .properties
+                .as_ref()
+                .and_then(|props| props.get(REMINDER_KEY))
+                .map(String::as_str),
+            Some("30min"),
+            "the key stays in the property map, written as the file wrote it"
+        );
+    }
+
+    #[test]
+    fn an_entry_without_the_reminder_key_has_no_lead_time_of_its_own() {
+        let (tasks, _, properties) = counted(&with_properties("ID: t-1"));
+
+        assert_eq!(tasks[0].reminder, None);
+        assert_eq!(properties, 0);
+    }
+
+    #[test]
+    fn a_reminder_that_cannot_be_read_is_reported_and_left_empty() {
+        // An entry that looks like it carries a lead time and carries none is
+        // the failure ADR-0041 refuses to leave quiet.
+        let (tasks, timestamps, properties) = counted(&with_properties("REMINDER: soon"));
+
+        assert_eq!(tasks[0].reminder, None);
+        assert_eq!(timestamps, 0, "nothing here is a timestamp");
+        assert_eq!(properties, 1, "the value that does not read is reported");
     }
 
     #[test]

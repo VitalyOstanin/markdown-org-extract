@@ -51,6 +51,7 @@ pub mod locale;
 pub mod parser;
 pub mod phrase;
 mod regex_limits;
+pub mod reminder;
 pub mod render;
 pub mod scan;
 pub mod timestamp;
@@ -70,6 +71,7 @@ pub use crate::parser::{
 pub use crate::phrase::{
     parse_phrases, refine_entry, ClearedFields, PhraseEntry, PhraseKeyword, PlanningKind,
 };
+pub use crate::reminder::{parse_reminder_lead, ReminderLead, ReminderUnit, REMINDER_KEY};
 pub use crate::render::{render_days_html, render_days_markdown, render_html, render_markdown};
 pub use crate::scan::{scan_directories, scan_directory, ScanOptions, ScanOutcome};
 pub use crate::timestamp::{

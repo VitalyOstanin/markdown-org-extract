@@ -18,8 +18,9 @@
 //! | 4 | repeater | `каждый день`, `каждые 2 недели`, `еженедельно`, `every week`, `daily`     |
 //! | 5 | priority | `срочно`, `важно`, `urgent`, `important`, `приоритет B`, `priority B`      |
 //! | 6 | keyword  | `выполнено`, `в работу`, `отменено`, `done`, `todo`, `cancelled`           |
-//! | 7 | cleared  | `убрать дату`, `без приоритета`, `no repeat`, `remove the time`            |
-//! | 8 | heading  | everything the rules did not consume                                       |
+//! | 7 | reminder | `за час до`, `за 15 минут`, `за полчаса`, `an hour before`, `15 minutes before` |
+//! | 8 | cleared  | `убрать дату`, `без приоритета`, `no repeat`, `remove the time`, `убрать напоминание` |
+//! | 9 | heading  | everything the rules did not consume                                       |
 //!
 //! Two costs are accepted deliberately, both visible on the screen the fields
 //! are shown on and correctable there:
@@ -29,7 +30,11 @@
 //!   loses that word;
 //! - `в N` / `at N` with nothing after the number reads as an hour, so
 //!   "в 5 минутах ходьбы" sets 05:00 and leaves "минутах ходьбы" in the
-//!   heading.
+//!   heading;
+//! - `за` in front of a span reads as a reminder's lead time, so "отчёт за
+//!   неделю" asks to be reminded a week ahead and leaves "отчёт" as the
+//!   heading. The mark is required in both languages — "before" behind the
+//!   English one — because without it every span in a phrase would be one.
 //!
 //! The last two fields are what an edit of an existing entry needs: a keyword
 //! to move the entry between TODO and DONE, and a field said to be empty. The
@@ -45,6 +50,7 @@
 use chrono::{Datelike, Days, Months, NaiveDate, NaiveTime, Timelike, Weekday};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 
+use crate::reminder::{ReminderLead, ReminderUnit};
 use crate::timestamp::{Repeater, RepeaterType, RepeaterUnit};
 use crate::types::Priority;
 
@@ -117,6 +123,8 @@ pub struct ClearedFields {
     pub repeater: bool,
     /// The priority cookie.
     pub priority: bool,
+    /// The lead time of the entry's own reminder.
+    pub reminder: bool,
 }
 
 impl ClearedFields {
@@ -129,6 +137,7 @@ impl ClearedFields {
             (self.time, "time"),
             (self.repeater, "repeater"),
             (self.priority, "priority"),
+            (self.reminder, "reminder"),
         ]
         .into_iter()
         .filter_map(|(cleared, name)| cleared.then_some(name))
@@ -137,7 +146,7 @@ impl ClearedFields {
 
     /// Whether the phrase emptied nothing at all.
     pub fn is_empty(self) -> bool {
-        !(self.date || self.time || self.repeater || self.priority)
+        !(self.date || self.time || self.repeater || self.priority || self.reminder)
     }
 }
 
@@ -168,6 +177,11 @@ pub struct PhraseEntry {
     /// The keyword, when a phrase named one. Only an edit of an entry that
     /// exists has anywhere to put it.
     pub keyword: Option<PhraseKeyword>,
+    /// How far ahead of the entry a reminder is wanted, when a phrase said
+    /// so ("за час до", "an hour before"). Written to the entry as the
+    /// `REMINDER` property of ADR-0041; when the phrase said nothing, the
+    /// reminding client's own setting stands.
+    pub reminder: Option<ReminderLead>,
     /// The fields a phrase said to empty, which is not the same as the fields
     /// it left unnamed.
     pub cleared: ClearedFields,
@@ -327,6 +341,7 @@ enum Effect {
     Repeat(Repeater),
     Prio(Priority),
     Keyword(PhraseKeyword),
+    Lead(ReminderLead),
     Clear(Field),
 }
 
@@ -337,6 +352,7 @@ enum Field {
     Time,
     Repeater,
     Priority,
+    Reminder,
 }
 
 /// Filling a field and emptying it are the same rule read twice, so each of
@@ -362,6 +378,10 @@ fn apply(entry: &mut PhraseEntry, effect: Effect) {
             entry.cleared.priority = false;
         }
         Effect::Keyword(keyword) => entry.keyword = Some(keyword),
+        Effect::Lead(lead) => {
+            entry.reminder = Some(lead);
+            entry.cleared.reminder = false;
+        }
         Effect::Clear(Field::Date) => {
             entry.date = None;
             entry.planning = None;
@@ -378,6 +398,10 @@ fn apply(entry: &mut PhraseEntry, effect: Effect) {
         Effect::Clear(Field::Priority) => {
             entry.priority = None;
             entry.cleared.priority = true;
+        }
+        Effect::Clear(Field::Reminder) => {
+            entry.reminder = None;
+            entry.cleared.reminder = true;
         }
     }
 }
@@ -400,6 +424,11 @@ fn match_rule(
     }
     if let Some((consumed, keyword)) = match_keyword(tokens, i, langs) {
         return Some((consumed, Effect::Keyword(keyword)));
+    }
+    // Before the date: "за 2 дня" is a lead time and "через 2 дня" a day,
+    // and the two are one word apart.
+    if let Some((consumed, lead)) = match_lead_time(tokens, i, langs) {
+        return Some((consumed, Effect::Lead(lead)));
     }
     if let Some((consumed, date, planning)) = match_planned_date(tokens, i, langs, today) {
         return Some((consumed, Effect::Date { date, planning }));
@@ -492,6 +521,9 @@ const RU_FIELD_NOUNS: &[(&str, Field)] = &[
     ("повторения", Field::Repeater),
     ("приоритет", Field::Priority),
     ("приоритета", Field::Priority),
+    ("напоминание", Field::Reminder),
+    ("напоминания", Field::Reminder),
+    ("напоминаний", Field::Reminder),
 ];
 
 const EN_FIELD_NOUNS: &[(&str, Field)] = &[
@@ -507,6 +539,8 @@ const EN_FIELD_NOUNS: &[(&str, Field)] = &[
     ("repetition", Field::Repeater),
     ("recurrence", Field::Repeater),
     ("priority", Field::Priority),
+    ("reminder", Field::Reminder),
+    ("reminders", Field::Reminder),
 ];
 
 /// The names of the fields as they are said when one is emptied.
@@ -796,6 +830,158 @@ fn match_relative_date(
     let span = span_of(&tokens.get(j)?.key, langs)?;
     let date = shift(today, count, span)?;
     Some((j + 1 - i, date))
+}
+
+// --- lead time of a reminder ----------------------------------------------
+
+/// The word a Russian lead time is said with: "за час до звонка".
+const RU_LEAD_HEADS: &[&str] = &["за"];
+
+/// The word an English lead time ends with: "an hour before the call". It is
+/// required rather than optional, because a count and a unit on their own
+/// ("an hour") say nothing about a reminder.
+const EN_LEAD_TAILS: &[&str] = &["before"];
+
+/// The Russian word that is a count and a unit at once.
+const RU_HALF_HOUR: &str = "полчаса";
+
+/// The units a lead time is counted in, in the cases they are said in.
+const RU_LEAD_UNITS: &[(&str, ReminderUnit)] = &[
+    ("минуту", ReminderUnit::Minute),
+    ("минуты", ReminderUnit::Minute),
+    ("минут", ReminderUnit::Minute),
+    ("мин", ReminderUnit::Minute),
+    ("час", ReminderUnit::Hour),
+    ("часа", ReminderUnit::Hour),
+    ("часов", ReminderUnit::Hour),
+    ("день", ReminderUnit::Day),
+    ("дня", ReminderUnit::Day),
+    ("дней", ReminderUnit::Day),
+    ("сутки", ReminderUnit::Day),
+    ("суток", ReminderUnit::Day),
+    ("неделю", ReminderUnit::Week),
+    ("недели", ReminderUnit::Week),
+    ("недель", ReminderUnit::Week),
+    ("месяц", ReminderUnit::Month),
+    ("месяца", ReminderUnit::Month),
+    ("месяцев", ReminderUnit::Month),
+    ("год", ReminderUnit::Year),
+    ("года", ReminderUnit::Year),
+    ("лет", ReminderUnit::Year),
+];
+
+const EN_LEAD_UNITS: &[(&str, ReminderUnit)] = &[
+    ("minute", ReminderUnit::Minute),
+    ("minutes", ReminderUnit::Minute),
+    ("min", ReminderUnit::Minute),
+    ("mins", ReminderUnit::Minute),
+    ("hour", ReminderUnit::Hour),
+    ("hours", ReminderUnit::Hour),
+    ("day", ReminderUnit::Day),
+    ("days", ReminderUnit::Day),
+    ("week", ReminderUnit::Week),
+    ("weeks", ReminderUnit::Week),
+    ("month", ReminderUnit::Month),
+    ("months", ReminderUnit::Month),
+    ("year", ReminderUnit::Year),
+    ("years", ReminderUnit::Year),
+];
+
+/// How long before an occurrence a reminder is wanted: "за час до созвона",
+/// "15 minutes before the call" (ADR-0041).
+///
+/// Each language marks it with a word of its own, and the mark is required:
+/// "за" in front, "before" behind. Without it a count and a unit are a span
+/// like any other, and "через 2 дня" — a day, not a lead time — is one word
+/// away from it.
+fn match_lead_time(
+    tokens: &[Token<'_>],
+    i: usize,
+    langs: Languages,
+) -> Option<(usize, ReminderLead)> {
+    if langs.ru {
+        if let Some(found) = match_russian_lead_time(tokens, i) {
+            return Some(found);
+        }
+    }
+    if langs.en {
+        if let Some(found) = match_english_lead_time(tokens, i) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// "за час", "за 15 минут", "за два дня", "за полчаса до созвона".
+///
+/// A "до" right behind the unit belongs to the phrasing rather than to the
+/// heading: what follows it is the entry the reminder is about, which the
+/// entry already is.
+fn match_russian_lead_time(tokens: &[Token<'_>], i: usize) -> Option<(usize, ReminderLead)> {
+    if !RU_LEAD_HEADS.contains(&tokens.get(i)?.key.as_str()) {
+        return None;
+    }
+    let mut j = i + 1;
+    let lead = if tokens.get(j)?.key == RU_HALF_HOUR {
+        j += 1;
+        ReminderLead {
+            value: 30,
+            unit: ReminderUnit::Minute,
+        }
+    } else {
+        let mut value = 1;
+        if let Some(token) = tokens.get(j) {
+            if let Ok(count) = token.key.parse::<u32>() {
+                value = count;
+                j += 1;
+            } else if let Some(count) = ru_numeral(&token.key) {
+                value = count;
+                j += 1;
+            }
+        }
+        let unit = lookup(RU_LEAD_UNITS, &tokens.get(j)?.key)?;
+        j += 1;
+        ReminderLead { value, unit }
+    };
+    if word_at(tokens, j) == "до" {
+        j += 1;
+    }
+    Some((j - i, lead))
+}
+
+/// "an hour before", "15 minutes before", "half an hour before".
+fn match_english_lead_time(tokens: &[Token<'_>], i: usize) -> Option<(usize, ReminderLead)> {
+    let mut j = i;
+    let head = tokens.get(j)?.key.as_str();
+    let lead = if head == "half" {
+        j += 1;
+        if matches!(word_at(tokens, j), "a" | "an") {
+            j += 1;
+        }
+        if lookup(EN_LEAD_UNITS, word_at(tokens, j))? != ReminderUnit::Hour {
+            return None;
+        }
+        j += 1;
+        ReminderLead {
+            value: 30,
+            unit: ReminderUnit::Minute,
+        }
+    } else {
+        let mut value = 1;
+        if let Ok(count) = head.parse::<u32>() {
+            value = count;
+            j += 1;
+        } else if matches!(head, "a" | "an") {
+            j += 1;
+        }
+        let unit = lookup(EN_LEAD_UNITS, word_at(tokens, j))?;
+        j += 1;
+        ReminderLead { value, unit }
+    };
+    if !EN_LEAD_TAILS.contains(&word_at(tokens, j)) {
+        return None;
+    }
+    Some((j + 1 - i, lead))
 }
 
 /// A calendar date: `15 сентября`, `15 september 2026`, `september 15`.
@@ -1411,7 +1597,7 @@ fn append_heading(heading: &mut String, leftover: &[&str]) {
 /// ignores keys it does not know.
 impl Serialize for PhraseEntry {
     fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-        let mut state = ser.serialize_struct("PhraseEntry", 8)?;
+        let mut state = ser.serialize_struct("PhraseEntry", 9)?;
         state.serialize_field("heading", &self.heading)?;
         state.serialize_field("keyword", &self.keyword.map(PhraseKeyword::as_str))?;
         state.serialize_field("priority", &self.priority)?;
@@ -1422,6 +1608,10 @@ impl Serialize for PhraseEntry {
             &self.time.map(|time| time.format("%H:%M").to_string()),
         )?;
         state.serialize_field("repeater", &self.repeater.as_ref().map(Repeater::canonical))?;
+        // The pair rather than the string it is written as: a client that
+        // subtracts it needs the number and the unit apart, and the string is
+        // one `canonical()` away for a client that writes the property.
+        state.serialize_field("reminder", &self.reminder)?;
         state.serialize_field("cleared", &self.cleared.names())?;
         state.end()
     }
@@ -1586,6 +1776,7 @@ mod tests {
             Field::Time => "time",
             Field::Repeater => "repeater",
             Field::Priority => "priority",
+            Field::Reminder => "reminder",
         }
     }
 
@@ -2323,6 +2514,175 @@ mod tests {
         }
     }
 
+    /// The lead time a phrase names, for a test that expects it to name one.
+    fn lead_of(phrase: &str, locale: &str) -> ReminderLead {
+        parsed(phrase, locale)
+            .reminder
+            .unwrap_or_else(|| panic!("no lead time in {phrase:?}"))
+    }
+
+    #[test]
+    fn a_lead_time_is_said_with_за_in_russian() {
+        assert_eq!(
+            lead_of("напомни за час", "ru"),
+            ReminderLead {
+                value: 1,
+                unit: ReminderUnit::Hour
+            }
+        );
+        assert_eq!(
+            lead_of("напомни за 15 минут", "ru"),
+            ReminderLead {
+                value: 15,
+                unit: ReminderUnit::Minute
+            }
+        );
+        assert_eq!(
+            lead_of("за два дня", "ru"),
+            ReminderLead {
+                value: 2,
+                unit: ReminderUnit::Day
+            }
+        );
+        assert_eq!(
+            lead_of("за неделю", "ru"),
+            ReminderLead {
+                value: 1,
+                unit: ReminderUnit::Week
+            }
+        );
+        assert_eq!(
+            lead_of("напомни за полчаса", "ru"),
+            ReminderLead {
+                value: 30,
+                unit: ReminderUnit::Minute
+            },
+            "half an hour is said as one word"
+        );
+    }
+
+    #[test]
+    fn a_lead_time_is_said_with_before_in_english() {
+        assert_eq!(
+            lead_of("remind me an hour before", "en"),
+            ReminderLead {
+                value: 1,
+                unit: ReminderUnit::Hour
+            }
+        );
+        assert_eq!(
+            lead_of("remind 15 minutes before", "en"),
+            ReminderLead {
+                value: 15,
+                unit: ReminderUnit::Minute
+            }
+        );
+        assert_eq!(
+            lead_of("a day before", "en"),
+            ReminderLead {
+                value: 1,
+                unit: ReminderUnit::Day
+            }
+        );
+        assert_eq!(
+            lead_of("half an hour before", "en"),
+            ReminderLead {
+                value: 30,
+                unit: ReminderUnit::Minute
+            }
+        );
+    }
+
+    #[test]
+    fn a_count_and_a_unit_alone_are_not_a_lead_time() {
+        // Each language marks a lead time with a word of its own, and without
+        // that mark the words are ordinary ones: "an hour" is part of what the
+        // entry says, and "час до созвона" is too.
+        let english = parsed("call an hour", "en");
+
+        assert_eq!(english.reminder, None);
+        assert_eq!(english.heading, "call an hour");
+
+        let russian = parsed("час до созвона", "ru");
+
+        assert_eq!(russian.reminder, None);
+    }
+
+    #[test]
+    fn the_words_of_a_lead_time_do_not_reach_the_heading() {
+        let entry = parsed("напомни за час до созвона", "ru");
+
+        assert_eq!(entry.heading, "созвона");
+        assert_eq!(
+            entry.reminder.map(|lead| lead.canonical()).as_deref(),
+            Some("1h")
+        );
+
+        let english = parsed("remind me an hour before the call", "en");
+
+        assert_eq!(english.heading, "the call");
+    }
+
+    #[test]
+    fn a_span_counted_ahead_is_not_a_lead_time() {
+        // "через 2 дня" says when the entry is; "за 2 дня" says how long
+        // before it the reminder is. One word apart, and the rules must not
+        // read either as the other.
+        let ahead = parsed("через 2 дня", "ru");
+
+        assert_eq!(ahead.date, reference_day().checked_add_days(Days::new(2)));
+        assert_eq!(ahead.reminder, None);
+
+        let lead = parsed("за 2 дня", "ru");
+
+        assert_eq!(lead.date, None);
+        assert_eq!(
+            lead.reminder,
+            Some(ReminderLead {
+                value: 2,
+                unit: ReminderUnit::Day
+            })
+        );
+    }
+
+    #[test]
+    fn a_lead_time_is_emptied_by_name() {
+        for (phrase, locale) in [
+            ("убрать напоминание", "ru"),
+            ("без напоминания", "ru"),
+            ("remove the reminder", "en"),
+            ("no reminder", "en"),
+        ] {
+            let entry = parse_phrases(
+                ["напомни за час", phrase],
+                if locale == "ru" { "ru" } else { "ru,en" },
+                reference_day(),
+            );
+
+            assert_eq!(entry.reminder, None, "phrase {phrase:?}");
+            assert!(entry.cleared.reminder, "phrase {phrase:?}");
+            assert!(
+                entry.cleared.names().contains(&"reminder"),
+                "phrase {phrase:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_lead_time_said_again_takes_back_the_emptying() {
+        let entry = parse_phrases(
+            ["убрать напоминание", "напомни за 10 минут"],
+            "ru",
+            reference_day(),
+        );
+
+        assert!(!entry.cleared.reminder);
+        assert_eq!(
+            entry.reminder.map(|lead| lead.canonical()).as_deref(),
+            Some("10min")
+        );
+    }
+
     #[test]
     fn no_word_table_states_the_same_word_twice() {
         fn unique<T>(name: &str, table: &[(&str, T)]) {
@@ -2351,6 +2711,8 @@ mod tests {
         unique("EN_NAMED_DAYS", EN_NAMED_DAYS);
         unique("RU_SINGLE_WORD_REPEATERS", RU_SINGLE_WORD_REPEATERS);
         unique("EN_SINGLE_WORD_REPEATERS", EN_SINGLE_WORD_REPEATERS);
+        unique("RU_LEAD_UNITS", RU_LEAD_UNITS);
+        unique("EN_LEAD_UNITS", EN_LEAD_UNITS);
         unique("RU_FIELD_NOUNS", RU_FIELD_NOUNS);
         unique("EN_FIELD_NOUNS", EN_FIELD_NOUNS);
         unique("RU_DATE_PREFIXES", RU_DATE_PREFIXES);
@@ -2380,5 +2742,7 @@ mod tests {
         unique_words("RU_CONJUNCTIONS", RU_CONJUNCTIONS);
         unique_words("EN_CONJUNCTIONS", EN_CONJUNCTIONS);
         unique_words("RU_BACK_TO_WORK", RU_BACK_TO_WORK);
+        unique_words("RU_LEAD_HEADS", RU_LEAD_HEADS);
+        unique_words("EN_LEAD_TAILS", EN_LEAD_TAILS);
     }
 }

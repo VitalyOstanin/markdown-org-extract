@@ -3667,6 +3667,34 @@ fn tasks_json_carries_the_excluded_dates() {
     );
 }
 
+/// ADR-0041: an entry's own lead time reaches the wire as a count and a unit.
+#[test]
+fn tasks_json_carries_the_reminder_lead_time() {
+    let dir = tempdir().unwrap();
+    let content = "### TODO Call\n`SCHEDULED: <2026-08-13 Thu 15:00>`\n```org-properties\nREMINDER: 30min\n```\n\nBody.\n";
+    fs::write(dir.path().join("english.md"), content).unwrap();
+
+    let out = bin()
+        .args([
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--tasks",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let task = &parsed.as_array().expect("array of tasks")[0];
+    assert_eq!(
+        task["reminder"],
+        serde_json::json!({ "value": 30, "unit": "min" }),
+        "the lead time must reach the wire whole: {stdout}"
+    );
+}
+
 /// The other half of the wire contract: what a replacement carries. The
 /// fields exist so a consumer outside this process can match a replacement to
 /// its series — the Google Calendar export withholds the occurrence from the
@@ -3909,6 +3937,25 @@ fn parse_phrase_prints_the_keyword_and_the_emptied_fields() {
 
     assert_eq!(created["keyword"], serde_json::Value::Null);
     assert_eq!(created["cleared"], serde_json::json!([]));
+}
+
+#[test]
+fn parse_phrase_prints_the_lead_time_as_a_count_and_a_unit() {
+    // The number and the unit arrive apart, because the client subtracts them
+    // from an occurrence it knows and a month has no fixed length to reduce
+    // them to (ADR-0041).
+    let value = parse_phrase(&["--current-date", "2026-08-31", "напомни за час до созвона"]);
+
+    assert_eq!(
+        value["reminder"],
+        serde_json::json!({ "value": 1, "unit": "h" })
+    );
+    assert_eq!(value["heading"], "созвона");
+
+    let cleared = parse_phrase(&["--current-date", "2026-08-31", "убрать напоминание"]);
+
+    assert_eq!(cleared["reminder"], serde_json::Value::Null);
+    assert_eq!(cleared["cleared"], serde_json::json!(["reminder"]));
 }
 
 #[test]

@@ -1623,7 +1623,7 @@ answer always goes to stdout as JSON.
 | 4 | repeater | `каждый день`, `каждые 2 недели`, `каждый рабочий день`, `еженедельно` | `every day`, `every 2 weeks`, `every workday`, `weekly` |
 | 5 | priority | `срочно`, `критично` → `A`; `важно` → `B`; `приоритет C`     | `urgent`, `asap`, `critical` → `A`; `important` → `B`; `priority C` |
 | 6 | keyword  | `выполнено`, `сделано`, `завершено` → `DONE`; `в работу` → `TODO`; `отменено` → `CANCELLED` | `done`, `completed` → `DONE`; `todo` → `TODO`; `cancelled` → `CANCELLED` |
-| 7 | reminder | `за час до`, `за 15 минут`, `за два дня`, `за полчаса`        | `an hour before`, `15 minutes before`, `half an hour before` |
+| 7 | reminder | `за час до`, `за 15 минут`, `за два дня`, `за полчаса`, `напомни за час` | `an hour before`, `15 minutes before`, `half an hour before`, `remind me an hour before` |
 | 8 | cleared  | `убрать дату`, `снять срок`, `без времени`, `убрать повтор`, `без приоритета`, `убрать напоминание` | `no date`, `remove the time`, `no repeat`, `clear the priority`, `no reminder` |
 | 9 | heading  | everything the rules did not consume                          | everything the rules did not consume                       |
 

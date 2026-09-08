@@ -43,6 +43,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A verb of reminding said in front of a lead time no longer stays in the
+  heading. Such a verb is eaten as a lead-in only at the head of a phrase, so
+  "позвонить врачу, напомни за час" — where a person naturally says it —
+  came back as an entry called "позвонить врачу, напомни", and "call the
+  doctor, remind me an hour before" as "call the doctor remind me". The verb
+  is now read together with the lead time it introduces (`напомни`,
+  `напомнить`, `напомните`, `напоминай`, `напоминать`, `remind`, each with
+  the pronoun it takes). A verb saying nothing about a lead time is left where
+  it stands: "напомни про отчёт" is what the entry is called.
+
 ## [0.24.0] — 2026-09-08
 
 ### Added

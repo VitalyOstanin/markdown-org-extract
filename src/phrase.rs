@@ -18,7 +18,7 @@
 //! | 4 | repeater | `каждый день`, `каждые 2 недели`, `еженедельно`, `every week`, `daily`     |
 //! | 5 | priority | `срочно`, `важно`, `urgent`, `important`, `приоритет B`, `priority B`      |
 //! | 6 | keyword  | `выполнено`, `в работу`, `отменено`, `done`, `todo`, `cancelled`           |
-//! | 7 | reminder | `за час до`, `за 15 минут`, `за полчаса`, `an hour before`, `15 minutes before` |
+//! | 7 | reminder | `за час до`, `напомни за 15 минут`, `за полчаса`, `remind me an hour before` |
 //! | 8 | cleared  | `убрать дату`, `без приоритета`, `no repeat`, `remove the time`, `убрать напоминание` |
 //! | 9 | heading  | everything the rules did not consume                                       |
 //!
@@ -27,7 +27,9 @@
 //!
 //! - a lead-in verb (`напомни`, `создай`, `remind me to`, `add a task`) is
 //!   eaten at the start of a phrase, so an entry that really begins with one
-//!   loses that word;
+//!   loses that word; a verb of reminding is eaten anywhere a lead time
+//!   follows it ("позвонить врачу, напомни за час"), and left alone where
+//!   none does;
 //! - `в N` / `at N` with nothing after the number reads as an hour, so
 //!   "в 5 минутах ходьбы" sets 05:00 and leaves "минутах ходьбы" in the
 //!   heading;
@@ -845,6 +847,26 @@ const EN_LEAD_TAILS: &[&str] = &["before"];
 /// The Russian word that is a count and a unit at once.
 const RU_HALF_HOUR: &str = "полчаса";
 
+/// The verbs a lead time is asked with, and the pronoun they take. A verb of
+/// reminding is eaten as a lead-in only at the head of a phrase; said where a
+/// person naturally says it -- after what the entry is, "позвонить врачу,
+/// напомни за час" -- it introduces the lead time behind it instead.
+const RU_REMIND_VERBS: &[&str] = &[
+    "напомни",
+    "напомнить",
+    "напомните",
+    "напоминай",
+    "напоминать",
+];
+
+const EN_REMIND_VERBS: &[&str] = &["remind"];
+
+/// The pronoun the verb takes: "напомни мне за час", "remind me an hour
+/// before".
+const RU_REMIND_OBJECT: &str = "мне";
+
+const EN_REMIND_OBJECT: &str = "me";
+
 /// The units a lead time is counted in, in the cases they are said in.
 const RU_LEAD_UNITS: &[(&str, ReminderUnit)] = &[
     ("минуту", ReminderUnit::Minute),
@@ -900,16 +922,47 @@ fn match_lead_time(
     langs: Languages,
 ) -> Option<(usize, ReminderLead)> {
     if langs.ru {
-        if let Some(found) = match_russian_lead_time(tokens, i) {
+        if let Some(found) = asked_for(tokens, i, RU_REMIND_VERBS, RU_REMIND_OBJECT, |at| {
+            match_russian_lead_time(tokens, at)
+        }) {
             return Some(found);
         }
     }
     if langs.en {
-        if let Some(found) = match_english_lead_time(tokens, i) {
+        if let Some(found) = asked_for(tokens, i, EN_REMIND_VERBS, EN_REMIND_OBJECT, |at| {
+            match_english_lead_time(tokens, at)
+        }) {
             return Some(found);
         }
     }
     None
+}
+
+/// The lead time at `i`, with the verb that asks for it where one stands in
+/// front: "напомни за час", "remind me an hour before".
+///
+/// The verb is eaten only together with a lead time that follows it. On its
+/// own it is what the entry is called -- "напомни про отчёт" is a task, and a
+/// rule that ate the verb alone would leave it named "про отчёт".
+fn asked_for(
+    tokens: &[Token<'_>],
+    i: usize,
+    verbs: &[&str],
+    object: &str,
+    lead_at: impl Fn(usize) -> Option<(usize, ReminderLead)>,
+) -> Option<(usize, ReminderLead)> {
+    if let Some((consumed, lead)) = lead_at(i) {
+        return Some((consumed, lead));
+    }
+    if !verbs.contains(&word_at(tokens, i)) {
+        return None;
+    }
+    let mut j = i + 1;
+    if word_at(tokens, j) == object {
+        j += 1;
+    }
+    let (consumed, lead) = lead_at(j)?;
+    Some((j + consumed - i, lead))
 }
 
 /// "за час", "за 15 минут", "за два дня", "за полчаса до созвона".
@@ -2624,6 +2677,50 @@ mod tests {
     }
 
     #[test]
+    fn a_verb_of_reminding_in_front_of_a_lead_time_stays_out_of_the_heading() {
+        // The verb is eaten as a lead-in only at the head of a phrase. Said
+        // where a person naturally says it -- after what the entry is -- it
+        // belongs to the lead time behind it rather than to the heading.
+        for (phrase, locale) in [
+            ("позвонить врачу, напомни за час", "ru"),
+            ("позвонить врачу, напомнить за час", "ru"),
+            ("позвонить врачу, напомни мне за час", "ru"),
+            ("позвонить врачу, напоминай за час", "ru"),
+            ("call the doctor, remind me an hour before", "en"),
+            ("call the doctor, remind an hour before", "en"),
+        ] {
+            let entry = parsed(phrase, locale);
+            let heading = if locale == "ru" {
+                "позвонить врачу"
+            } else {
+                "call the doctor"
+            };
+
+            assert_eq!(entry.heading, heading, "phrase {phrase:?}");
+            assert_eq!(
+                entry.reminder.map(|lead| lead.canonical()).as_deref(),
+                Some("1h"),
+                "phrase {phrase:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_verb_of_reminding_saying_nothing_about_a_lead_time_is_left_alone() {
+        // Eaten only together with the lead time it introduces: "напомни про
+        // отчёт" is what the entry is called, and a rule that ate the verb on
+        // its own would leave the entry named "про отчёт".
+        let entry = parsed("позвонить врачу и напомни про отчёт", "ru");
+
+        assert_eq!(entry.heading, "позвонить врачу и напомни про отчёт");
+        assert_eq!(entry.reminder, None);
+
+        let english = parsed("call the doctor and remind the team", "en");
+
+        assert_eq!(english.heading, "call the doctor and remind the team");
+    }
+
+    #[test]
     fn a_span_counted_ahead_is_not_a_lead_time() {
         // "через 2 дня" says when the entry is; "за 2 дня" says how long
         // before it the reminder is. One word apart, and the rules must not
@@ -2744,5 +2841,7 @@ mod tests {
         unique_words("RU_BACK_TO_WORK", RU_BACK_TO_WORK);
         unique_words("RU_LEAD_HEADS", RU_LEAD_HEADS);
         unique_words("EN_LEAD_TAILS", EN_LEAD_TAILS);
+        unique_words("RU_REMIND_VERBS", RU_REMIND_VERBS);
+        unique_words("EN_REMIND_VERBS", EN_REMIND_VERBS);
     }
 }

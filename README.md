@@ -6,6 +6,7 @@
 
 Extracts tasks from markdown files with support for Emacs Org-mode markers.
 Ships as a command-line tool and as a Rust library — both run the same code.
+It reads notes and builds the agenda; it does not write them.
 
 It is the core of a three-part ecosystem, all reading the same files:
 
@@ -22,20 +23,21 @@ about what a file means.
 ## What the name says, and what the crate does
 
 The name records what the crate started as: a reader that extracted tasks from
-markdown and printed them. Reading is still the entry point, but it is no
-longer the whole of it. What is here now:
+markdown and printed them. That is still what it is: the core of reading and of
+the agenda. What is here:
 
 | № | Part                | What it does                                                                                              |
 |---|---------------------|-----------------------------------------------------------------------------------------------------------|
-| 1 | Reading             | walks a directory — or several at once — and returns the tasks it finds, with the agenda already bucketed  |
-| 2 | Writing             | sets and clears the keyword and the priority cookie, moves a planning date, and completes a repeating task by advancing its repeater |
-| 3 | Bulk writing        | applies one action to a whole group in a single pass per file, and takes it back from a snapshot            |
-| 4 | Version control     | commits what it wrote, clones, fetches, fast-forwards and pushes over `https://` and `ssh://`               |
+| 1 | Reading             | walks a directory — or several at once — and returns the tasks it finds                                   |
+| 2 | Agenda              | buckets tasks into day, week, month and month-grid windows, with repeaters, holidays and the workday calendar applied; `--tasks` gives the flat list |
 
-So a caller does not read here and write elsewhere: everything that touches a
-note is in this crate, and a client is the screen in front of it. The name is
-kept because the crate is published under it — renaming on crates.io means a
-second crate rather than a new name for this one.
+Writing is not here. Setting and clearing the keyword and the priority cookie,
+moving a planning date, completing a repeating task, applying one action to a
+group of tasks and taking it back, and the git side of syncing (commit, clone,
+fetch, fast-forward, push) live in `markdown-org-ffi`, the UniFFI crate of the
+Android client, which depends on this one. The CLI therefore cannot mark a task
+done either. The name is kept because the crate is published under it —
+renaming on crates.io means a second crate rather than a new name for this one.
 
 ## Table of contents
 
@@ -199,7 +201,9 @@ the names).
 
 The crate is also a library, so a Rust consumer can extract tasks
 in-process instead of spawning the binary and parsing its JSON. This is
-required where processes cannot be spawned at all, such as Android.
+required where processes cannot be spawned at all, such as Android. The
+library is the read side only: scanning, parsing and the agenda. Code that
+writes a note or talks to git is built on top of it, in `markdown-org-ffi`.
 
 ```toml
 [dependencies]

@@ -5,6 +5,7 @@ package.
 
 ## Table of contents
 
+- [Refresh RF holidays every autumn](#refresh-rf-holidays-every-autumn)
 - [CI on the latest Ubuntu LTS](#ci-on-the-latest-ubuntu-lts)
 - [Switch to edition 2024](#switch-to-edition-2024)
 - [Parallel walker (rayon)](#parallel-walker-rayon)
@@ -19,6 +20,14 @@ package.
 - [A series gains occurrences as well as losing them](#a-series-gains-occurrences-as-well-as-losing-them)
 - [One prefix for everything said about an occurrence](#one-prefix-for-everything-said-about-an-occurrence)
 - [Open info-level review notes](#open-info-level-review-notes)
+
+## Refresh RF holidays every autumn
+
+`holidays_ru.json` needs the next year's calendar once the RF Government
+decree moving the days off is published (usually September-October). Add the
+year block with its holidays and moved workdays, a test matching the decree
+(see `holidays_2027_match_the_government_decree` in `tests/cli.rs`), and
+release a patch version. The 2027 calendar was added after 0.24.1.
 
 ## CI on the latest Ubuntu LTS
 

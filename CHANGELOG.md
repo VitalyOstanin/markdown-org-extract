@@ -44,6 +44,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The RF holiday calendar knows 2027 and the last day of 2026. December 31,
+  2026 is a day off (Government decree No. 1466 of 2025-09-24 moves the
+  January 4 day off there), and 2027 follows decree No. 1187 of 2026-09-17:
+  January 1-8, February 22-23, March 8, May 3 and 10, June 14, November 4-5
+  and December 31 are days off, and Saturday, February 20 is worked. Before
+  this, `--holidays 2027` printed `[]` and a `+Nwd` repeater counted January
+  1-8, 2027 as working days.
+
 ## [0.24.1] — 2026-09-08
 
 ### Fixed

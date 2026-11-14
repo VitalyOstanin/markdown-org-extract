@@ -575,6 +575,21 @@ mod tests {
     // --- Regression tests for fixed bugs ---
 
     #[test]
+    fn test_workday_repeater_skips_new_year_2027_holidays() {
+        // Closed on Wed 2026-12-30: 12-31 is a transfer day off, 2027-01-01..08
+        // are holidays and 01-09/10 are a weekend, so the next workday is Mon 01-11.
+        let base = NaiveDate::from_ymd_opt(2026, 12, 30).unwrap();
+        let repeater = Repeater {
+            repeater_type: RepeaterType::Cumulative,
+            value: 1,
+            unit: RepeaterUnit::Workday,
+        };
+        let current = NaiveDate::from_ymd_opt(2026, 12, 31).unwrap();
+        let next = closest_date(base, current, DatePreference::Future, &repeater).unwrap();
+        assert_eq!(next, NaiveDate::from_ymd_opt(2027, 1, 11).unwrap());
+    }
+
+    #[test]
     fn test_closest_date_workday_value_2() {
         // base = Mon 2025-12-08, +2wd → 12-08, 12-10, 12-12, 12-16, 12-18, ...
         let base = NaiveDate::from_ymd_opt(2025, 12, 8).unwrap();

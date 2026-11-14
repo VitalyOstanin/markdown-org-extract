@@ -242,6 +242,20 @@ mod tests {
     }
 
     #[test]
+    fn test_february_transfer_2027() {
+        // Decree No. 1187 of 2026 moves the Saturday 2027-02-20 day off to
+        // Monday 2027-02-22, so the Saturday is worked.
+        let calendar = HolidayCalendar::global();
+        let saturday = NaiveDate::from_ymd_opt(2027, 2, 20).unwrap();
+        assert!(
+            calendar.is_workday(saturday),
+            "2027-02-20 should be workday"
+        );
+        let monday = NaiveDate::from_ymd_opt(2027, 2, 22).unwrap();
+        assert!(!calendar.is_workday(monday), "2027-02-22 should be holiday");
+    }
+
+    #[test]
     fn test_march_8_transfer_2026() {
         let calendar = HolidayCalendar::global();
         let march_9 = NaiveDate::from_ymd_opt(2026, 3, 9).unwrap();

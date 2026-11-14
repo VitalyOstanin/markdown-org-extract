@@ -152,6 +152,44 @@ fn holidays_year_returns_json_array() {
 }
 
 #[test]
+fn holidays_2026_include_the_december_31_transfer() {
+    // Decree No. 1466 of 2025 moves the January 4 day off to 2026-12-31.
+    let out = bin().args(["--holidays", "2026"]).output().expect("run");
+    assert!(out.status.success());
+    let dates: Vec<String> = serde_json::from_slice(&out.stdout).expect("JSON array");
+    assert!(dates.contains(&"2026-12-31".to_string()), "got {dates:?}");
+}
+
+#[test]
+fn holidays_2027_match_the_government_decree() {
+    // Decree No. 1187 of 2026. `--holidays` lists days off only; the moved
+    // working Saturday (2027-02-20) is not part of its output.
+    let out = bin().args(["--holidays", "2027"]).output().expect("run");
+    assert!(out.status.success());
+    let dates: Vec<String> = serde_json::from_slice(&out.stdout).expect("JSON array");
+    let expected = [
+        "2027-01-01",
+        "2027-01-02",
+        "2027-01-03",
+        "2027-01-04",
+        "2027-01-05",
+        "2027-01-06",
+        "2027-01-07",
+        "2027-01-08",
+        "2027-02-22",
+        "2027-02-23",
+        "2027-03-08",
+        "2027-05-03",
+        "2027-05-10",
+        "2027-06-14",
+        "2027-11-04",
+        "2027-11-05",
+        "2027-12-31",
+    ];
+    assert_eq!(dates, expected);
+}
+
+#[test]
 fn invalid_year_rejected() {
     bin().args(["--holidays", "1800"]).assert().failure();
 }
